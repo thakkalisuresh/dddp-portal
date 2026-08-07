@@ -33,6 +33,8 @@ Ask the bot a code and it will explain it.
 | `DDP-BILL-007` | error | planned | Generation attempted on a locked period |
 | `DDP-BILL-008` | **fatal** | live | Late fee carries paise — reconciliation would break |
 | `DDP-BILL-009` | error | planned | Late fee cron re-applied to an already-charged bill |
+| `DDP-BILL-010` | **fatal** | live | Rate was inherited from a previous period instead of set for this one |
+| `DDP-BILL-011` | warn | planned | Rate differs sharply from the previous period |
 
 ## PAY
 
@@ -76,7 +78,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-36 codes across 6 domains — 7 fatal, 17 awaiting their call site.
+38 codes across 6 domains — 8 fatal, 18 awaiting their call site.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

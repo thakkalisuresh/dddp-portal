@@ -30,6 +30,8 @@ export const ERROR_CODES = {
   'DDP-BILL-007': { severity: 'error', message: 'Generation attempted on a locked period', planned: true },
   'DDP-BILL-008': { severity: 'fatal', message: 'Late fee carries paise — reconciliation would break' },
   'DDP-BILL-009': { severity: 'error', message: 'Late fee cron re-applied to an already-charged bill', planned: true },
+  'DDP-BILL-010': { severity: 'fatal', message: 'Rate was inherited from a previous period instead of set for this one' },
+  'DDP-BILL-011': { severity: 'warn',  message: 'Rate differs sharply from the previous period', planned: true },
 
   // ── PAY ────────────────────────────────────────────────────────────────
   'DDP-PAY-001': { severity: 'error', message: 'UPI URI requested for a bill that does not exist', planned: true },

@@ -99,6 +99,81 @@ export function applyLateFee(currentTotal, lateFee) {
 }
 
 /**
+ * The rate moves every month, so it is set per period and never carried
+ * forward automatically. A silently inherited rate is the worst failure this
+ * system can have: 52 bills go out looking completely normal and every one of
+ * them is wrong, and nobody notices until someone checks a supplier invoice.
+ *
+ * Generation is therefore blocked until the rate has been set FOR THAT PERIOD.
+ */
+export function assertRateSetForPeriod(period) {
+  if (!period || !Number.isFinite(period.rate_per_kg) || period.rate_per_kg <= 0) {
+    fail('DDP-BILL-005', { period: period?.period });
+  }
+  if (period.rate_inherited) {
+    fail('DDP-BILL-010', { period: period.period, rate: period.rate_per_kg });
+  }
+  return true;
+}
+
+/**
+ * Catch a fat-fingered rate before 52 bills are generated from it. This warns
+ * rather than blocks — gas prices genuinely do jump, and a treasurer who means
+ * it must be able to proceed.
+ */
+export const RATE_JUMP_THRESHOLD = 0.25;
+
+export function rateSanity(newRate, previousRate) {
+  if (!Number.isFinite(newRate) || newRate <= 0) {
+    return { ok: false, level: 'error', message: 'Enter a rate greater than zero.' };
+  }
+  if (!Number.isFinite(previousRate) || previousRate <= 0) {
+    return { ok: true, level: 'none' };
+  }
+  const change = (newRate - previousRate) / previousRate;
+  if (Math.abs(change) < RATE_JUMP_THRESHOLD) return { ok: true, level: 'none' };
+  return {
+    ok: true,
+    level: 'warn',
+    change,
+    message: `That is ${Math.abs(change * 100).toFixed(0)}% ${change > 0 ? 'higher' : 'lower'} than last month (₹${previousRate}). Check the supplier bill before generating.`,
+  };
+}
+
+/**
+ * Many RWAs do not get a published per-kg tariff — they get one bulk invoice
+ * and divide it across the sub-metered flats, which is why the effective rate
+ * moves every month even when the supplier's tariff hasn't.
+ *
+ * Deriving the rate this way means it can only be known AFTER every reading is
+ * in, which inverts the admin flow: readings first, then rate, then generate.
+ */
+export function deriveRate(supplierTotal, totalKg) {
+  if (!Number.isFinite(supplierTotal) || supplierTotal <= 0) fail('DDP-BILL-005', { supplierTotal });
+  if (!Number.isFinite(totalKg) || totalKg <= 0) fail('DDP-BILL-005', { totalKg });
+  return Math.round((supplierTotal / totalKg) * 100) / 100;
+}
+
+/**
+ * Sub-meters never sum to the bulk meter — there are line losses and unmetered
+ * common usage. Surfacing the gap lets the treasurer see what they are actually
+ * spreading across the flats instead of it disappearing into the rate.
+ */
+export function meterReconciliation(bulkKg, sumOfFlatsKg) {
+  const gap = round2(bulkKg - sumOfFlatsKg);
+  const pct = bulkKg > 0 ? gap / bulkKg : 0;
+  return {
+    bulkKg: round2(bulkKg),
+    sumOfFlatsKg: round2(sumOfFlatsKg),
+    gap,
+    percent: Math.round(pct * 1000) / 10,
+    // A negative gap means the flats measured MORE than the bulk meter, which
+    // is physically impossible and means a reading is wrong.
+    impossible: gap < 0,
+  };
+}
+
+/**
  * Which bills the nightly cron should charge.
  *
  * `initiated` is deliberately HELD, not charged: someone who tapped Pay on the
