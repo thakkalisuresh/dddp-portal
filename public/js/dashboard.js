@@ -190,14 +190,21 @@ function consumptionSection(readings) {
             style: `height:${Math.max(4, (r.consumption / peak) * 100)}%`,
             title: `${periodLabel(r.period)} — ${kg(r.consumption)}`,
           }, el('span', {}, periodLabel(r.period).slice(0, 3).toUpperCase()))))),
-    el('table', { class: 'table' },
-      el('thead', {}, el('tr', {},
-        el('th', {}, 'Month'), el('th', { class: 'r' }, 'Reading'), el('th', { class: 'r' }, 'Used'))),
-      el('tbody', {}, ...readings.map((r) =>
-        el('tr', {},
-          el('td', {}, periodLabel(r.period)),
-          el('td', { class: 'r' }, r.reading.toFixed(3)),
-          el('td', { class: 'r' }, r.consumption == null ? '—' : kg(r.consumption))))))
+    el('div', { class: 'scroll-x' },
+      el('table', { class: 'table' },
+        el('thead', {}, el('tr', {},
+          el('th', {}, 'Month'),
+          el('th', {}, 'Meter read'),
+          el('th', { class: 'r' }, 'Reading'),
+          el('th', { class: 'r' }, 'Used'))),
+        el('tbody', {}, ...readings.map((r) =>
+          el('tr', {},
+            el('td', {}, periodLabel(r.period)),
+            // The meter closing June's usage is read in early July. Showing both
+            // stops "why is my June bill from a July reading?"
+            el('td', { class: 'muted small' }, r.readOn ? dayLabel(r.readOn) : '—'),
+            el('td', { class: 'r' }, r.reading.toFixed(3)),
+            el('td', { class: 'r' }, r.consumption == null ? '—' : kg(r.consumption)))))))
   );
 }
 

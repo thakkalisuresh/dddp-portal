@@ -37,7 +37,9 @@ CREATE TABLE sessions (
 CREATE INDEX ix_sessions_actor ON sessions(actor_id);
 
 CREATE TABLE periods (
-  period         TEXT PRIMARY KEY,         -- '2026-07'
+  -- The month whose gas is being billed. Residents see this label, and the
+  -- meter that closes it is read early in the FOLLOWING month.
+  period         TEXT PRIMARY KEY,         -- '2026-06' = June's usage
   rate_per_kg    REAL NOT NULL,
   -- Meters count cubic metres; bills are priced per kilogram. Derived from the
   -- old portal's own history (a constant 2.60). Versioned per period because
@@ -55,8 +57,12 @@ CREATE TABLE periods (
 
 CREATE TABLE readings (
   flat       TEXT NOT NULL REFERENCES flats(flat),
+  -- The USAGE month this reading closes, not the month it was taken. A meter
+  -- read in July measures June's gas, so it is stored against 2026-06 and the
+  -- bill is labelled June — matching what residents have seen for months.
   period     TEXT NOT NULL REFERENCES periods(period),
   reading    REAL NOT NULL,                -- cumulative meter value
+  read_on    TEXT,                         -- when the meter was actually read
   entered_by INTEGER REFERENCES owners(id),
   entered_at TEXT NOT NULL,
   PRIMARY KEY (flat, period)

@@ -111,6 +111,33 @@ describe('consumption from cumulative readings', () => {
   });
 });
 
+describe('month labelling matches what residents already see', () => {
+  // The old portal labels the bill June and the reading row July for the same
+  // 4.38 kg. That is not a bug: the meter closing June's gas is read in early
+  // July. Residents have read it that way for months, so we keep it.
+  const rows = [
+    { period: '2026-06', reading: 5.817, read_on: '2026-07-02' },
+    { period: '2026-05', reading: 4.134, read_on: '2026-06-02' },
+  ];
+
+  it('keys a reading by the usage month it closes, not the month it was taken', () => {
+    const out = withConsumption(rows);
+    expect(out[0].period).toBe('2026-06');   // the bill says June
+    expect(out[0].readOn).toBe('2026-07-02'); // the meter was read in July
+  });
+
+  it('the read date always falls after the usage month it closes', () => {
+    for (const r of withConsumption(rows)) {
+      if (!r.readOn) continue;
+      expect(r.readOn.slice(0, 7) > r.period).toBe(true);
+    }
+  });
+
+  it('the bill period is the usage month, so it reads June to the resident', () => {
+    expect(shapeBill(bill({ period: '2026-06' }), period).period).toBe('2026-06');
+  });
+});
+
 describe('missing data', () => {
   it('returns null rather than throwing when a flat has no bill', () => {
     expect(shapeBill(null, period)).toBe(null);

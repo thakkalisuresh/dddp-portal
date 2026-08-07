@@ -70,7 +70,7 @@ export async function dashboardPayload(env, subject, userAgent = '') {
     ).bind(flat).first(),
 
     env.DB.prepare(
-      `SELECT period, reading FROM readings WHERE flat = ? ORDER BY period DESC LIMIT ?`
+      `SELECT period, reading, read_on FROM readings WHERE flat = ? ORDER BY period DESC LIMIT ?`
     ).bind(flat, READING_HISTORY).all(),
 
     env.DB.prepare(
@@ -129,7 +129,8 @@ export function withConsumption(rows, conversionFactor = DEFAULT_CONVERSION) {
   return rows.map((row, i) => {
     const prev = rows[i + 1];
     return {
-      period: row.period,
+      period: row.period,          // usage month — what the bill is labelled
+      readOn: row.read_on ?? null, // when the meter was read, a month later
       reading: row.reading,
       meterDelta: prev ? Math.round((row.reading - prev.reading) * 1000) / 1000 : null,
       consumption: prev ? computeConsumption(row.reading, prev.reading, conversionFactor) : null,

@@ -22,21 +22,33 @@ const PEOPLE = [
   { flat: '4C',  name: 'Adv. Joy Vettiyadan',  mobile: '9847011226', email: null, role: 'admin' },
 ];
 
-// 4A's real readings, taken from the live portal before the rebuild.
+/**
+ * 4A's real readings from the live portal. Keys are the USAGE month each
+ * reading closes — the old portal displayed these one month later, under the
+ * month the meter was read (its "July 2026" row is June's usage). Bills are
+ * therefore labelled June, exactly as residents already see them.
+ */
 const READINGS = {
-  '4A': { '2026-03': 0.218, '2026-04': 0.991, '2026-05': 2.522, '2026-06': 4.134, '2026-07': 5.817 },
-  '4B': { '2026-05': 1.100, '2026-06': 2.020, '2026-07': 2.940 },
-  '5B': { '2026-05': 1.007, '2026-06': 2.600, '2026-07': 4.221 },
+  '4A': { '2026-02': 0.218, '2026-03': 0.991, '2026-04': 2.522, '2026-05': 4.134, '2026-06': 5.817 },
+  '4B': { '2026-04': 1.100, '2026-05': 2.020, '2026-06': 2.940 },
+  '5B': { '2026-04': 1.007, '2026-05': 2.600, '2026-06': 4.221 },
+};
+
+/** The meter closing period N is read early in month N+1. */
+const readOn = (period) => {
+  const [y, m] = period.split('-').map(Number);
+  const d = new Date(Date.UTC(m === 12 ? y + 1 : y, m % 12, 2));
+  return d.toISOString().slice(0, 10);
 };
 
 const PERIODS = [
-  // 2026-03 exists so the earliest reading has a period to hang off; it has no
+  // 2026-02 exists so the earliest reading has a period to hang off; it has no
   // predecessor, so it produces no bill.
+  { period: '2026-02', rate: 75, due: '2026-03-10', status: 'locked' },
   { period: '2026-03', rate: 72, due: '2026-04-10', status: 'locked' },
-  { period: '2026-04', rate: 72, due: '2026-05-10', status: 'locked' },
+  { period: '2026-04', rate: 75, due: '2026-05-10', status: 'locked' },
   { period: '2026-05', rate: 75, due: '2026-06-10', status: 'locked' },
-  { period: '2026-06', rate: 75, due: '2026-07-10', status: 'locked' },
-  { period: '2026-07', rate: 75, due: '2026-08-10', status: 'open' },
+  { period: '2026-06', rate: 75, due: '2026-07-10', status: 'open' },
 ];
 
 const PAISE = { '4A': 4, '4B': 5, '4C': 6, '5A': 7, '5B': 8, '13A': 21 };
@@ -69,8 +81,8 @@ for (const [flat, byPeriod] of Object.entries(READINGS)) {
   const periods = Object.keys(byPeriod).sort();
   for (const period of periods) {
     sql.push(
-      `INSERT INTO readings (flat, period, reading, entered_at)
-       VALUES (${q(flat)}, ${q(period)}, ${byPeriod[period]}, datetime('now'));`
+      `INSERT INTO readings (flat, period, reading, read_on, entered_at)
+       VALUES (${q(flat)}, ${q(period)}, ${byPeriod[period]}, ${q(readOn(period))}, datetime('now'));`
     );
   }
   // Bills need a previous reading to difference against, so skip the first.
