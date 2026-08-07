@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in — Diamond Park</title>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<header class="appbar">
+  <span class="appbar__who">Diamond Park</span>
+</header>
+
+<main class="page stack--lg stack" style="max-width:420px">
+  <h1 id="heading">Member login <span class="ml">അംഗ ലോഗിൻ</span></h1>
+
+  <form class="stack" id="form" novalidate>
+    <div id="alert" role="alert" aria-live="polite"></div>
+
+    <div class="field">
+      <label for="mobile">Mobile number <span class="ml">മൊബൈൽ നമ്പർ</span></label>
+      <input class="input num" id="mobile" name="mobile" type="tel" inputmode="numeric"
+             autocomplete="username" required autofocus>
+    </div>
+
+    <div class="field">
+      <label for="password">Password <span class="ml">പാസ്‌വേഡ്</span></label>
+      <input class="input" id="password" name="password" type="password"
+             autocomplete="current-password" required>
+    </div>
+
+    <button class="btn btn--block btn--lg" id="submit" type="submit">Log in</button>
+  </form>
+
+  <p class="small muted">
+    Forgotten your password?<br>
+    Contact <strong>Mukesh (Treasurer)</strong> — <span class="num">+91 98466 86885</span>
+  </p>
+</main>
+
+<script type="module">
+  import { api } from './js/api.js';
+  import { $, showError } from './js/ui.js';
+
+  const form = $('#form');
+  const submit = $('#submit');
+  const alertBox = $('#alert');
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    alertBox.replaceChildren();
+
+    const mobile = $('#mobile').value.trim();
+    const password = $('#password').value;
+    if (!mobile || !password) {
+      showError(alertBox, { message: 'Enter your mobile number and password.' });
+      return;
+    }
+
+    submit.disabled = true;
+    submit.textContent = 'Logging in…';
+    try {
+      const result = await api.login(mobile, password);
+      // A temporary password must be replaced before anything else is reachable.
+      location.href = result.mustChangePassword ? '/password.html' : '/dashboard.html';
+    } catch (err) {
+      showError(alertBox, err);
+      submit.disabled = false;
+      submit.textContent = 'Log in';
+      $('#password').value = '';
+      $('#password').focus();
+    }
+  });
+</script>
+</body>
+</html>

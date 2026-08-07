@@ -12,9 +12,9 @@ Full design and rationale: `dddp-portal-plan.md` (kept alongside this repo).
 | 1 | Scaffold, auth, sessions, roles, audit | **done** |
 | 1b | God mode — view-as, impersonation, error log | **done** |
 | — | Error-code registry + generated docs | **done** |
-| 2 | Design system and app shell | next |
-| 3 | Resident dashboard | |
-| 4 | Meter reading grid + bill generation | |
+| 2 | Design system, app shell, self-hosted fonts, bilingual labels | **done** |
+| 3 | Resident dashboard, login, dev seed | **done** |
+| 4 | Meter reading grid + bill generation | next |
 | 4b | Bulk reading import | |
 | 5 | UPI pay flow | |
 | 6 | Proof upload + review queue | |
@@ -34,16 +34,22 @@ npm run dev
 ```
 
 ```bash
-npm test          # 46 tests, no network or D1 needed
+npm run seed      # local dev data: 6 residents, real readings from the old portal
+npm test          # 69 tests, no network or D1 needed
 npm run errdoc    # regenerate docs/ERROR_CODES.md after editing the registry
 ```
 
 Secrets: `npx wrangler secret put TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
 Locally they go in `.dev.vars` (see `.dev.vars.example`).
 
-## The four invariants
+## The five invariants
 
 Everything else is ordinary CRUD. These are the things that will bite.
+
+**0 · The meter counts cubic metres; the bill charges kilograms.** The conversion
+factor is 2.60, derived from the old portal's own history (see test/billing.test.js).
+Treating a meter delta as kilograms under-bills every flat by 2.6x. The factor is
+stored per period and snapshotted onto each bill, like the rate.
 
 **1 · The paise identify the flat.** Every bill total ends in that flat's permanent
 `paise_tag` — 4A always `.04`. That is how the treasurer's bank statement tells who paid,
@@ -77,10 +83,11 @@ functions/
     errors.js         reportError, AppError, alert rate limiting
     http.js           json/problem responses, audit, rate limit, guard
     session.js        actor/subject sessions, roles, cookies
+    dashboard.js      the /api/me payload; one round trip, no client identity
     upi.js            deep links; iOS needs per-app schemes, Android doesn't
 migrations/           D1 schema
 scripts/              doc generation
-test/                 46 tests
+test/                 69 tests
 ```
 
 ## Notes for whoever picks this up

@@ -7,6 +7,7 @@
 import { json, problem, readJson, audit, rateLimit, clearRateLimit, guard } from './lib/http.js';
 import { reportError, assertAlerting } from './lib/errors.js';
 import { hashPassword, verifyPassword, generateOneTimePassword } from './lib/crypto.js';
+import { dashboardPayload } from './lib/dashboard.js';
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole,
@@ -34,7 +35,7 @@ export default {
       if (!session) return problem(401, 'DDP-AUTH-004', 'Please log in.');
 
       if (route === 'POST /api/logout') return logout(env, session);
-      if (route === 'GET /api/me') return me(env, session);
+      if (route === 'GET /api/me') return me(env, session, request);
       if (route === 'POST /api/password') return changePassword(request, env, session);
 
       // ── admin ─────────────────────────────────────────────────────────
@@ -117,20 +118,14 @@ async function logout(env, session) {
   return json({ ok: true }, { headers: { 'set-cookie': clearCookieHeader() } });
 }
 
-async function me(env, session) {
+async function me(env, session, request) {
   // Subject comes from the session, never from the client.
-  const { subject } = session;
+  const payload = await dashboardPayload(env, session.subject, request.headers.get('user-agent') ?? '');
   return json({
-    flat: subject.flat,
-    name: subject.name,
-    mobile: subject.mobile,
-    email: subject.email,
-    role: subject.role,
-    mustChangePassword: subject.mustChangePassword,
+    ...payload,
     impersonation: session.impersonating
       ? { active: true, by: session.actor.name, canWrite: session.canWrite }
       : { active: false },
-    // bills, readings and history arrive in phase 3
   });
 }
 

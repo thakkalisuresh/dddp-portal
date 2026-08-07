@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  round2, paiseOf, isWholeRupees, computeConsumption, computeBill,
+  round2, paiseOf, isWholeRupees, computeConsumption, meterDelta, computeBill,
   applyLateFee, lateFeeDecision,
 } from '../functions/lib/billing.js';
 
@@ -97,13 +97,53 @@ describe('late fee decision', () => {
   });
 });
 
-describe('consumption', () => {
-  it('differences cumulative readings', () => {
-    expect(computeConsumption(5.817, 4.134)).toBe(1.68);
+describe('consumption — the meter counts volume, the bill charges mass', () => {
+  // These four cases are flat 4A's real history from the old portal. They are
+  // the evidence for the 2.60 factor: treating the meter delta as kilograms
+  // under-bills every flat by 2.6x, which is exactly the bug these catch.
+  const LIVE = [
+    { current: 5.817, previous: 4.134, kg: 4.38, rate: 75, gas: 328.50 },
+    { current: 4.134, previous: 2.522, kg: 4.19, rate: 75, gas: 314.25 },
+    { current: 2.522, previous: 0.991, kg: 3.98, rate: 75, gas: 298.50 },
+    { current: 0.991, previous: 0.218, kg: 2.01, rate: 72, gas: 144.72 },
+  ];
+
+  it('reproduces the live portal to the paisa', () => {
+    for (const c of LIVE) {
+      expect(computeConsumption(c.current, c.previous)).toBeCloseTo(c.kg, 2);
+    }
+  });
+
+  it('produces the same rupee amounts the old site billed', () => {
+    for (const c of LIVE) {
+      const consumption = computeConsumption(c.current, c.previous);
+      const { gasAmount } = computeBill({ consumption, ratePerKg: c.rate, paiseTag: 4 });
+      expect(gasAmount).toBeCloseTo(c.gas, 1);
+    }
+  });
+
+  it('July 2026 comes out at the ₹329.04 the resident actually sees', () => {
+    const consumption = computeConsumption(5.817, 4.134);
+    expect(computeBill({ consumption, ratePerKg: 75, paiseTag: 4 }).total).toBe(329.04);
+  });
+
+  it('keeps the raw meter movement separate from billable mass', () => {
+    expect(meterDelta(5.817, 4.134)).toBe(1.683);
+    expect(computeConsumption(5.817, 4.134)).toBe(4.38);
+  });
+
+  it('honours a per-period factor, since calorific value gets revised', () => {
+    expect(computeConsumption(5.817, 4.134, 1)).toBe(1.68);
+    expect(computeConsumption(5.817, 4.134, 2.5)).toBe(4.21);
   });
 
   it('refuses a reading below the previous — meters do not run backwards', () => {
     expect(() => computeConsumption(6.1, 6.9)).toThrow(/DDP-BILL-002/);
+  });
+
+  it('refuses a nonsensical conversion factor', () => {
+    expect(() => computeConsumption(5.817, 4.134, 0)).toThrow(/DDP-BILL-005/);
+    expect(() => computeConsumption(5.817, 4.134, -1)).toThrow(/DDP-BILL-005/);
   });
 
   it('rounds without float drift', () => {

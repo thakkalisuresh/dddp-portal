@@ -39,6 +39,10 @@ CREATE INDEX ix_sessions_actor ON sessions(actor_id);
 CREATE TABLE periods (
   period         TEXT PRIMARY KEY,         -- '2026-07'
   rate_per_kg    REAL NOT NULL,
+  -- Meters count cubic metres; bills are priced per kilogram. Derived from the
+  -- old portal's own history (a constant 2.60). Versioned per period because
+  -- calorific value is revised occasionally and old bills must keep theirs.
+  conversion_factor REAL NOT NULL DEFAULT 2.60,
   due_date       TEXT NOT NULL,            -- '2026-08-10'
   late_fee       REAL NOT NULL DEFAULT 0,  -- WHOLE RUPEES ONLY, see §4e
   late_fee_after INTEGER NOT NULL DEFAULT 0,
@@ -62,7 +66,9 @@ CREATE TABLE bills (
   id                 INTEGER PRIMARY KEY,
   flat               TEXT NOT NULL REFERENCES flats(flat),
   period             TEXT NOT NULL,
-  consumption        REAL NOT NULL,
+  meter_delta        REAL NOT NULL,        -- raw meter movement, cubic metres
+  consumption        REAL NOT NULL,        -- billable kilograms
+  conversion_factor  REAL NOT NULL,        -- snapshot
   rate_per_kg        REAL NOT NULL,        -- snapshot, deliberately not a join
   gas_amount         REAL NOT NULL,
   other_charges      REAL NOT NULL DEFAULT 0,

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your gas bill — Diamond Park</title>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+<style>
+  /* Dashboard-only layout. The bill is the hero; everything else is
+     subordinate — one dominant element per screen (plan §5.4). */
+  .bill-hero { display: flex; flex-direction: column; gap: var(--s-2); }
+  .bill-hero__top { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); }
+  .pay-block { display: flex; flex-direction: column; gap: var(--s-2); margin-top: var(--s-4); }
+  .pay-apps { display: flex; flex-direction: column; gap: var(--s-2); }
+  .pay-app {
+    display: flex; align-items: center; gap: var(--s-3); min-height: var(--touch);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: var(--s-2) var(--s-4); font-family: var(--font-ui); font-weight: 500;
+    background: var(--surface); color: var(--ink); text-decoration: none;
+  }
+  .pay-app:hover { border-color: var(--accent); }
+  .pay-app__mark { width: 30px; height: 30px; border-radius: 8px; flex: none; }
+  .helper { font-size: var(--text-sm); color: var(--ink-muted); text-align: center; }
+  .chart { display: flex; align-items: flex-end; gap: var(--s-2); height: 88px; }
+  .chart__bar { flex: 1; background: #DCE8E2; border-top: 2.5px solid var(--accent); position: relative; min-height: 2px; }
+  .chart__bar--now { background: #C4DDD1; }
+  .chart__bar span {
+    position: absolute; bottom: -22px; left: 0; right: 0; text-align: center;
+    font-family: var(--font-ui); font-size: 10px; color: var(--ink-muted);
+  }
+  .chart-wrap { padding-bottom: var(--s-5); }
+  #qr { display: block; margin: 0 auto; image-rendering: pixelated; }
+</style>
+</head>
+<body>
+
+<div class="godbar" id="godbar" hidden></div>
+
+<header class="appbar">
+  <span class="appbar__who" id="who">Loading…</span>
+  <button class="appbar__action" id="logout" type="button">Log out</button>
+</header>
+
+<main class="page stack--lg stack" id="main">
+  <p class="muted">Loading your bill…</p>
+</main>
+
+<script type="module" src="js/dashboard.js"></script>
+</body>
+</html>

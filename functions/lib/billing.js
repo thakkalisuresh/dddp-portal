@@ -22,14 +22,36 @@ export function isWholeRupees(n) {
   return Number.isFinite(n) && Math.round(n * 100) % 100 === 0;
 }
 
-export function computeConsumption(current, previous) {
+/**
+ * DEFAULT_CONVERSION is derived, not guessed. Flat 4A's own history on the old
+ * portal bills 4.38 kg against a meter delta of 1.683, 4.19 against 1.612,
+ * 3.98 against 1.531 and 2.01 against 0.773 — a constant 2.60 across every
+ * month. The meter measures volume (cubic metres of piped gas); the bill is
+ * priced per kilogram.
+ *
+ * Treating the meter delta AS kilograms under-bills every flat by 2.6x, so
+ * this factor is stored per period rather than hard-coded — gas calorific
+ * value is revised occasionally and old bills must keep their own factor.
+ */
+export const DEFAULT_CONVERSION = 2.60;
+
+/** Raw meter movement, in whatever unit the meter counts. */
+export function meterDelta(current, previous) {
   if (!Number.isFinite(current) || !Number.isFinite(previous)) {
     fail('DDP-BILL-001', { current, previous });
   }
   if (current < previous) {
     fail('DDP-BILL-002', { current, previous });
   }
-  return round2(current - previous);
+  return Math.round((current - previous) * 1000) / 1000;
+}
+
+/** Billable consumption in kilograms. */
+export function computeConsumption(current, previous, conversionFactor = DEFAULT_CONVERSION) {
+  if (!Number.isFinite(conversionFactor) || conversionFactor <= 0) {
+    fail('DDP-BILL-005', { conversionFactor });
+  }
+  return round2(meterDelta(current, previous) * conversionFactor);
 }
 
 /**
