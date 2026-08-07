@@ -1,0 +1,20 @@
+{
+  "name": "dddp-portal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DD Diamond Park RWA — gas billing portal",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 migrations apply dddp --local",
+    "db:remote": "wrangler d1 migrations apply dddp --remote",
+    "errdoc": "node scripts/gen-error-docs.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0",
+    "wrangler": "^4.0.0"
+  }
+}

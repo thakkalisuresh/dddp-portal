@@ -1,0 +1,27 @@
+name = "dddp-portal"
+main = "functions/index.js"
+compatibility_date = "2026-08-01"
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "dddp"
+database_id = "PLACEHOLDER_RUN_wrangler_d1_create_dddp"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "PROOFS"
+bucket_name = "dddp-proofs"
+
+[vars]
+UPI_VPA = "qr.ddwelfare@sib"
+UPI_PAYEE = "DD Diamond Park RWA"
+PBKDF2_ITERATIONS = "100000"
+
+# Secrets (wrangler secret put): TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+
+[triggers]
+crons = ["0 3 * * *"]
