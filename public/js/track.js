@@ -12,6 +12,8 @@
 import { api } from './api.js';
 
 let started = false;
+let clickQueue = [];
+let flushTimer = null;
 
 export function trackPage(name = location.pathname) {
   if (started) return;
@@ -28,6 +30,57 @@ export function trackPage(name = location.pathname) {
   window.addEventListener('unhandledrejection', (e) => {
     send('client-error', String(e.reason?.message ?? e.reason).slice(0, 120));
   });
+
+  maybeStartClickCapture();
+}
+
+/**
+ * Click capture, only while a superadmin has switched it on.
+ *
+ * The server re-checks the switch on every batch, so a page left open after
+ * the window closes stops being recorded — this check just avoids sending in
+ * the first place. Nothing typed is ever captured; see functions/lib/clicks.js.
+ */
+async function maybeStartClickCapture() {
+  let state;
+  try {
+    state = await api.captureState();
+  } catch {
+    return;
+  }
+  if (!state?.on) return;
+
+  document.addEventListener('click', (event) => {
+    const el = event.target?.closest?.('button, a, [role="button"], input, select, textarea, summary, label');
+    if (!el) return;
+
+    clickQueue.push({
+      tag: el.tagName,
+      id: el.id || null,
+      classes: el.className?.toString?.() ?? null,
+      name: el.name || null,
+      type: el.type || null,
+      // Never el.value — the server drops field labels too, but not sending
+      // them at all means a typed mobile number never leaves the device.
+      label: ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)
+        ? null
+        : (el.textContent ?? '').slice(0, 120),
+      page: location.pathname,
+    });
+
+    // Batched: one request per burst, not one per click.
+    clearTimeout(flushTimer);
+    flushTimer = setTimeout(flushClicks, 2500);
+    if (clickQueue.length >= 25) flushClicks();
+  }, { capture: true, passive: true });
+
+  addEventListener('pagehide', flushClicks);
+}
+
+function flushClicks() {
+  if (!clickQueue.length) return;
+  const batch = clickQueue.splice(0, 100);
+  api.sendClicks(batch).catch(() => {});
 }
 
 /** Explicit, named actions only — never a generic click handler. */

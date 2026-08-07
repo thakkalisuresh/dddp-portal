@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Click capture — Diamond Park</title>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+<style>
+  .c { display: grid; grid-template-columns: 180px 130px 1fr; gap: var(--s-3);
+       padding: var(--s-2) var(--s-4); border-bottom: 1px solid var(--border); font-size: var(--text-sm); }
+  .c__at { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--ink-muted);
+           font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .c__target { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--ink-muted); }
+  @media (max-width:640px){ .c { grid-template-columns: 1fr; gap: 2px; } }
+</style>
+</head>
+<body>
+<header class="appbar">
+  <span class="appbar__who">Click capture</span>
+  <a class="appbar__action" href="/god.html">Activity log</a>
+</header>
+<main class="page page--wide" id="main"><p class="muted">Loading…</p></main>
+<script type="module">
+  import { api } from './js/api.js';
+  import { $, el, showError } from './js/ui.js';
+
+  const main = $('#main');
+  try {
+    const state = await api.captureState();
+    const { clicks } = await api.god.clicks();
+    main.replaceChildren(
+      el('div', { class: 'panel', style: 'padding:var(--s-4)' },
+        el('h1', {}, 'Click capture'),
+        el('p', { class: 'small muted' },
+          state.on ? `Recording until ${state.expiresAt}.` : 'Not currently recording.'),
+        el('p', { class: 'small muted' },
+          `${clicks.length} events. Field values are never recorded — an input shows its `
+          + 'identity only, and a password field is dropped entirely.')),
+      ...(clicks.length
+        ? clicks.map((c) => el('div', { class: 'c' },
+            el('span', { class: 'c__at' }, c.atIST),
+            el('span', {}, `${c.flat ?? '—'} · ${c.name ?? ''}`),
+            el('div', {},
+              el('span', {}, c.label ?? '(no label)'),
+              el('div', { class: 'c__target' }, `${c.page} · ${c.target}`))))
+        : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nothing captured.')]));
+  } catch (err) { showError(main, err); }
+</script>
+</body>
+</html>

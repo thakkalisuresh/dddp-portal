@@ -18,7 +18,8 @@ import { readReceipt } from './lib/vision.js';
 import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden } from './lib/notices.js';
 import { publicNotices, submitMessage, fingerprintOf, AMENITIES } from './lib/public.js';
-import { transferFlat, canChangeRole, outstandingFor, mergeTimeline, toIST } from './lib/tenancy.js';
+import { transferFlat, canChangeRole, planHandover, outstandingFor, mergeTimeline, toIST } from './lib/tenancy.js';
+import { isCaptureOn, captureWindow, validateBatch } from './lib/clicks.js';
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole,
@@ -67,6 +68,8 @@ export default {
       if (route === 'POST /api/password') return changePassword(request, env, session);
       if (route === 'PATCH /api/me') return patchProfile(request, env, session);
       if (route === 'POST /api/activity') return recordActivity(request, env, session);
+      if (route === 'GET /api/capture')   return captureState(env);
+      if (route === 'POST /api/clicks')   return recordClicks(request, env, session);
       if (request.method === 'POST' && /^\/api\/bills\/\d+\/intent$/.test(path)) {
         return logIntent(env, session, path);
       }
@@ -185,6 +188,9 @@ export default {
         if (route === 'POST /api/god/exit') return exitImpersonation(env, session);
         if (route === 'GET /api/god/errors') return errorLog(env);
         if (route === 'GET /api/god/timeline') return timeline(env, url);
+        if (route === 'GET /api/god/clicks') return clickLog(env, url);
+        if (route === 'POST /api/god/capture') return setCapture(request, env, session);
+        if (route === 'POST /api/god/handover') return handover(request, env, session);
       }
 
       return problem(404, 'DDP-SYS-001', 'No such endpoint.');
@@ -714,6 +720,84 @@ async function putCommittee(request, env, session) {
   await env.DB.batch(statements);
   await audit(env, session, 'committee.update', { members: rows.length });
   return json({ committee: rows.length });
+}
+
+/** Any signed-in page asks this before wiring up a click listener. */
+async function captureState(env) {
+  const row = await env.DB.prepare('SELECT * FROM settings WHERE key = ?').bind('click_capture').first();
+  const on = isCaptureOn(row);
+  return json({ on, expiresAt: on ? row.expires_at : null });
+}
+
+async function recordClicks(request, env, session) {
+  const row = await env.DB.prepare('SELECT * FROM settings WHERE key = ?').bind('click_capture').first();
+  // Re-checked server-side: a stale page must not keep sending after the
+  // window closes, and a crafted request must not be able to start it.
+  if (!isCaptureOn(row)) return json({ recorded: 0, capture: 'off' });
+
+  const body = await readJson(request);
+  const events = validateBatch(body?.clicks ?? []);
+  if (!events.length) return json({ recorded: 0 });
+
+  const now = new Date().toISOString();
+  await env.DB.batch(events.map((e) =>
+    env.DB.prepare(
+      'INSERT INTO click_log (owner_id, actor_id, page, target, label, at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(session.subject.id, session.actor.id, e.page, e.target, e.label, now)
+  ));
+
+  return json({ recorded: events.length });
+}
+
+async function setCapture(request, env, session) {
+  const body = await readJson(request);
+  const turnOn = Boolean(body?.on);
+  const { hours, expiresAt } = captureWindow(body?.hours);
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(
+    `INSERT INTO settings (key, value, expires_at, set_by, set_at)
+     VALUES ('click_capture', ?, ?, ?, ?)
+     ON CONFLICT (key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at,
+                                     set_by = excluded.set_by, set_at = excluded.set_at`
+  ).bind(turnOn ? 'on' : 'off', turnOn ? expiresAt : null, session.actor.id, now).run();
+
+  await audit(env, session, turnOn ? 'capture.on' : 'capture.off', { hours: turnOn ? hours : null });
+  return json({ on: turnOn, expiresAt: turnOn ? expiresAt : null, hours: turnOn ? hours : null });
+}
+
+async function clickLog(env, url) {
+  const flat = url.searchParams.get('flat');
+  const rows = await env.DB.prepare(
+    `SELECT c.at, c.page, c.target, c.label, o.flat, o.name
+       FROM click_log c LEFT JOIN owners o ON o.id = c.owner_id
+      WHERE (? IS NULL OR o.flat = ?)
+      ORDER BY c.at DESC LIMIT 500`
+  ).bind(flat, flat).all();
+
+  return json({
+    clicks: (rows.results ?? []).map((r) => ({ ...r, atIST: toIST(r.at) })),
+  });
+}
+
+/** Move superadmin from one person to another, atomically. */
+async function handover(request, env, session) {
+  const body = await readJson(request);
+  const to = await env.DB.prepare('SELECT id, name, flat, role, active FROM owners WHERE id = ?')
+    .bind(Number(body?.toOwnerId)).first();
+  const from = await env.DB.prepare('SELECT id, name, role FROM owners WHERE id = ?')
+    .bind(session.actor.id).first();
+
+  const plan = planHandover({ from, to });
+  if (!plan.ok) return problem(409, 'DDP-ADMIN-006', plan.message);
+
+  // One batch: a half-finished handover is how a building ends up locked out.
+  await env.DB.batch(plan.steps.map((step) =>
+    env.DB.prepare('UPDATE owners SET role = ? WHERE id = ?').bind(step.role, step.id)
+  ));
+
+  await audit(env, session, 'superadmin.handover', { from: from.id, to: to.id, toName: to.name });
+  return json({ from: from.name, to: to.name, note: 'You are now an admin.' });
 }
 
 // ── payment proofs ──────────────────────────────────────────────────────

@@ -60,6 +60,7 @@ function render(rows, generatedAt) {
   });
 
   main.replaceChildren(
+    controls(),
     filterBar(),
     el('div', { class: 'panel', style: 'padding:var(--s-3) var(--s-4)' },
       el('p', { class: 'small muted' },
@@ -68,6 +69,60 @@ function render(rows, generatedAt) {
       ? visible.map(eventRow)
       : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nothing matches those filters.')])
   );
+}
+
+/** Click capture and the superadmin handover — the two switches only you hold. */
+function controls() {
+  const status = el('div');
+  const box = el('details', { class: 'panel', style: 'padding:var(--s-3) var(--s-4)' },
+    el('summary', { style: 'font-family:var(--font-ui);cursor:pointer' }, 'Controls'),
+    el('div', { class: 'stack', style: 'margin-top:var(--s-3)' }, status));
+
+  const body = box.querySelector('.stack');
+
+  api.captureState().then((state) => {
+    body.replaceChildren(
+      status,
+      el('p', { class: 'small muted' },
+        state.on
+          ? `Click capture is ON until ${state.expiresAt}. It switches itself off then.`
+          : 'Click capture is off. Turn it on only to chase a specific problem — '
+            + 'it records which controls people press, never what they type.'),
+      el('div', { class: 'row' },
+        el('button', {
+          class: state.on ? 'btn btn--sm btn--quiet' : 'btn btn--sm', type: 'button',
+          onclick: async () => {
+            await api.god.setCapture(!state.on, 2);
+            location.reload();
+          },
+        }, state.on ? 'Turn capture off' : 'Turn on for 2 hours'),
+        state.on
+          ? el('a', { class: 'btn btn--sm btn--quiet', href: '/god-clicks.html' }, 'View clicks')
+          : null),
+      el('hr', { class: 'rule' }),
+      el('p', { class: 'small muted' },
+        'There is exactly one superadmin. The role can only be moved, never copied — '
+        + 'handing it over makes you an admin.'),
+      handoverControl(status));
+  }).catch(() => {});
+
+  return box;
+}
+
+function handoverControl(status) {
+  const id = el('input', { class: 'input num', placeholder: 'resident id', style: 'max-width:160px' });
+  return el('div', { class: 'row' }, id,
+    el('button', {
+      class: 'btn btn--sm btn--quiet', type: 'button',
+      onclick: async () => {
+        if (!confirm('Hand superadmin to this resident? You become an admin and lose this page.')) return;
+        try {
+          const r = await api.god.handover(Number(id.value));
+          status.replaceChildren(el('div', { class: 'note note--warn' },
+            `Superadmin moved from ${r.from} to ${r.to}. ${r.note}`));
+        } catch (err) { showError(status, err); }
+      },
+    }, 'Hand over superadmin'));
 }
 
 function filterBar() {

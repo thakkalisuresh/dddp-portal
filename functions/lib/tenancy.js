@@ -27,21 +27,64 @@ export function outstandingFor(bills) {
 }
 
 /**
- * A superadmin may not be the last one. Locking every administrator out of a
- * system whose only recovery path is another administrator would need database
- * access to undo — which is exactly what nobody has for the old site.
+ * There is exactly ONE superadmin, and it is the building's owner-operator.
+ *
+ * Two rules fall out of that, and they pull in opposite directions:
+ *   - nobody else can be promoted into the role, and
+ *   - the sole holder cannot be demoted, because that would leave the system
+ *     with no one able to administer it and no in-app way back.
+ *
+ * Which means the role can only ever MOVE, never be created or destroyed —
+ * see handoverSuperadmin. Admins are a separate, plural role and change freely
+ * at an AGM.
  */
+export const SUPERADMIN_LIMIT = 1;
+
 export function canChangeRole({ target, newRole, superadminCount }) {
   if (!ROLES.includes(newRole)) {
     return { ok: false, message: `Role must be one of ${ROLES.join(', ')}.` };
   }
+
+  // Promoting a second superadmin.
+  if (newRole === 'superadmin' && target.role !== 'superadmin'
+      && superadminCount >= SUPERADMIN_LIMIT) {
+    return {
+      ok: false,
+      message: 'There can only be one superadmin. Use "Hand over superadmin" to move the role.',
+    };
+  }
+
+  // Demoting the only one.
   if (target.role === 'superadmin' && newRole !== 'superadmin' && superadminCount <= 1) {
     return {
       ok: false,
-      message: 'This is the only superadmin. Promote someone else first, or you will lock everyone out.',
+      message: 'This is the only superadmin. Hand the role over instead — demoting it would leave nobody able to administer the portal.',
     };
   }
+
   return { ok: true };
+}
+
+/**
+ * Move the role in one step: the outgoing holder becomes an admin and the
+ * incoming one becomes superadmin. Doing it as two role edits is impossible by
+ * design — either order trips a guard — and that is deliberate, because a
+ * half-finished handover is how a building ends up locked out of its own
+ * portal.
+ */
+export function planHandover({ from, to }) {
+  if (!from || !to) return { ok: false, message: 'Both the current and the new superadmin are required.' };
+  if (from.id === to.id) return { ok: false, message: 'That is already the superadmin.' };
+  if (from.role !== 'superadmin') return { ok: false, message: 'Only the current superadmin can hand the role over.' };
+  if (!to.active) return { ok: false, message: 'That resident is no longer active.' };
+
+  return {
+    ok: true,
+    steps: [
+      { id: to.id, role: 'superadmin' },
+      { id: from.id, role: 'admin' },   // demoted, not removed — they keep operational access
+    ],
+  };
 }
 
 /**

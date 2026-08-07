@@ -28,15 +28,23 @@ what time, to the second.
 
 Not recorded:
 
-**Individual clicks, scrolls, keystrokes and mouse movement.** Logging those
-would mean recording residents' behaviour in fine detail, permanently,
-readable by whoever currently holds the superadmin role. The debugging value
-is low: "which pages did they open, which actions did they take, which errors
-did they hit" answers essentially every real question, and all three of those
-are recorded.
+**Scrolls, keystrokes, mouse movement, dwell time.** Never recorded.
 
-If click-level tracking is ever genuinely needed for a specific bug, add it
-temporarily and behind a flag — not as a standing default.
+**Clicks — only while deliberately switched on.** Click capture exists, because
+"the button doesn't work for me" is otherwise unanswerable, but it is built to
+be hard to leave running:
+
+- only the superadmin can switch it on
+- it expires by itself, at most 24 hours, 2 by default
+- a switch with no expiry is treated as OFF
+- the server re-checks on every batch, so a page left open stops being recorded
+- rows live in their own table and can be dropped without touching the audit trail
+
+**What a click records:** the element (`button#approve.btn`), its visible label
+(`"Approve"`), and the page. **Never a field value.** An input contributes its
+identity only, and a field that looks like a credential — password, PIN, OTP,
+token — is dropped entirely, not merely blanked. Typed values are not even sent
+from the browser.
 
 **Anything about non-residents.** The public site records contact-form
 submissions and nothing else. There is no analytics script, no third-party
@@ -63,6 +71,28 @@ old screenshot being resubmitted.
 
 `activity` rows are the highest-volume and lowest-value data here. Prune them
 on a schedule; nothing depends on them beyond recent debugging.
+
+## Who administers, and getting back in
+
+There is exactly **one superadmin**. The role cannot be copied — a second one
+cannot be promoted and the sole holder cannot be demoted, so it can only be
+*moved*, in one atomic step, which makes the outgoing holder an admin.
+
+Admins are a separate, plural role: appoint and remove them freely at an AGM.
+They run the building — readings, bills, proofs, residents, notices — and
+**cannot** see the activity log, click capture, view-as or impersonation.
+
+**Break-glass.** With a single superadmin there is no in-app recovery if that
+account is lost. The recovery path is direct database access from the
+Cloudflare account that owns the deployment:
+
+```bash
+npx wrangler d1 execute dddp --remote \
+  --command "UPDATE owners SET role='superadmin' WHERE mobile='<number>'"
+```
+
+Whoever controls the Cloudflare account controls the portal. Keep that account
+recoverable — it is the real root credential, not any password in this system.
 
 ## Ownership changes
 

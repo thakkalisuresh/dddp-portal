@@ -51,6 +51,8 @@ export const api = {
 
   updateProfile: (name, email) => request('PATCH', '/api/me', { name, email }),
   trackActivity: (body)      => request('POST', '/api/activity', body),
+  captureState:  ()          => request('GET',  '/api/capture'),
+  sendClicks:    (clicks)    => request('POST', '/api/clicks', { clicks }),
   notices:     ()            => request('GET',  '/api/notices'),
   notice:      (id)          => request('GET',  `/api/notices/${id}`),
   postComment: (id, body)    => request('POST', `/api/notices/${id}/comments`, { body }),
@@ -124,6 +126,9 @@ export const api = {
     exit:        ()         => request('POST', '/api/god/exit'),
     errors:      ()         => request('GET',  '/api/god/errors'),
     timeline:    (params = '') => request('GET', `/api/god/timeline${params}`),
+    clicks:      (params = '') => request('GET', `/api/god/clicks${params}`),
+    setCapture:  (on, hours)   => request('POST', '/api/god/capture', { on, hours }),
+    handover:    (toOwnerId)   => request('POST', '/api/god/handover', { toOwnerId }),
   },
 };
 

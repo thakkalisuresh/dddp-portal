@@ -23,6 +23,7 @@ Full design and rationale: `dddp-portal-plan.md` (kept alongside this repo).
 | 7 | Public site — notices, committee, contact form | **done** |
 | 7b | Admin console, profile, forced password change | **done** |
 | — | Activity log, ownership transfer, editable committee | **done** |
+| — | Click capture (opt-in, self-expiring), single-superadmin rule | **done** |
 | 8 | Backups, hardening | next |
 
 Screen designs for all 19 screens were built before any app code.
@@ -38,7 +39,7 @@ npm run dev
 
 ```bash
 npm run seed      # local dev data: 6 residents, real readings from the old portal
-npm test          # 193 tests, no network or D1 needed
+npm test          # 218 tests, no network or D1 needed
 npm run errdoc    # regenerate docs/ERROR_CODES.md after editing the registry
 ```
 
@@ -65,6 +66,11 @@ a guard in `applyLateFee`, and a test.
 the incoming owner must not see the previous owner's bills or open their receipts.
 `bills.owner_id` and `payment_proofs.owner_id` enforce it; readings stay keyed to the
 flat alone, because a meter reading is a property fact. See `docs/PRIVACY.md`.
+
+**1c · There is exactly one superadmin, and admins cannot see behavioural data.**
+The role can only be *moved*, never copied. Admins run the building; the activity
+log, click capture, view-as and impersonation are superadmin-only. Recovery from a
+lost superadmin is direct D1 access — see `docs/PRIVACY.md`.
 
 **2 · The client never sends an identity.** No `?flat=4A`. The subject is always derived
 from the session token server-side. Endpoints that do take a flat id are admin-only and
@@ -98,13 +104,14 @@ functions/
     notices.js        comments — opt-in per notice, real names, soft hide
     proof.js          upload validation, claim assessment, queue shaping
     public.js         the unauthenticated surface; leaks nothing private
+    clicks.js         opt-in click capture; drops credential fields entirely
     tenancy.js        flat transfers, role guards, the merged timeline
     qr.js             QR matrix; tests decode it with an independent decoder
     vision.js         optional OCR; never a gate on paying a bill
     upi.js            deep links; iOS needs per-app schemes, Android doesn't
 migrations/           D1 schema
 scripts/              doc generation
-test/                193 tests
+test/                218 tests
 ```
 
 ## Notes for whoever picks this up
