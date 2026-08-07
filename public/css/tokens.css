@@ -1,0 +1,113 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Design tokens — plan §5.3.
+   Swiss Modernism 2.0 + Accessible & Ethical. One accent, hairline borders,
+   no shadows, tabular figures. The look is restraint; resist adding to it.
+
+   Fonts are SELF-HOSTED: no Google Fonts request, no third-party dependency,
+   and faster than a CDN round-trip on Kerala mobile data.
+   ───────────────────────────────────────────────────────────────────────── */
+
+@font-face {
+  font-family: 'Lexend';
+  src: url('../fonts/lexend-latin.woff2') format('woff2');
+  font-weight: 100 900;           /* variable */
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2000-206F, U+20B9, U+2122;
+}
+
+@font-face {
+  font-family: 'Source Sans 3';
+  src: url('../fonts/sourcesans3-latin.woff2') format('woff2');
+  font-weight: 200 900;           /* variable */
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2000-206F, U+20B9, U+2122;
+}
+
+@font-face {
+  font-family: 'Manjari';
+  src: url('../fonts/manjari-malayalam.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+0307, U+0323, U+0D00-0D7F, U+200C-200D, U+25CC;
+}
+
+:root {
+  /* ── colour ─────────────────────────────────────────────────────────────
+     Navy ink on warm paper, one green accent. Green is retained deliberately:
+     it is already the login button colour on the old site, so it carries
+     continuity for residents who have used it for months.                  */
+  --ink:        #0F172A;   /* body text, headings                           */
+  --ink-muted:  #52525B;   /* labels, secondary            4.6:1 on surface */
+  --paper:      #FAFAF8;   /* page ground — warm, not pure white            */
+  --surface:    #FFFFFF;   /* cards, tables                                 */
+  --border:     #DDDCD6;   /* 1px hairlines — used INSTEAD of shadows       */
+  --border-strong: #C9C6BD;
+
+  --accent:     #0A6B4A;   /* the single action colour     5.4:1 on white   */
+  --accent-ink: #FFFFFF;
+  --accent-wash:#F1F8F5;
+  --accent-line:#BEDCD0;
+
+  /* Semantic status. Never decoration — always paired with an icon or text. */
+  --paid:       #0A6B4A;
+  --awaiting:   #A16207;   /* amber                        4.9:1            */
+  --awaiting-wash: #FCF8EC;
+  --awaiting-line: #E8D9AE;
+  --overdue:    #B91C1C;   /* red                          5.9:1            */
+  --overdue-wash:  #FCF3F3;
+  --overdue-line:  #E7C3C3;
+
+  /* ── type ───────────────────────────────────────────────────────────────
+     Lexend for UI and figures (designed for reading proficiency, which is the
+     point given the resident age range). Source Sans 3 for prose. Manjari for
+     Malayalam — an open-source face designed in Kerala.                     */
+  --font-ui:   'Lexend', ui-sans-serif, system-ui, sans-serif;
+  --font-body: 'Source Sans 3', ui-sans-serif, system-ui, sans-serif;
+  --font-ml:   'Manjari', 'Noto Sans Malayalam', sans-serif;
+
+  /* 18px base, not 16 — older readers. */
+  --text-xs:   0.778rem;   /* 14 */
+  --text-sm:   0.889rem;   /* 16 */
+  --text-base: 1rem;       /* 18 */
+  --text-md:   1.111rem;   /* 20 */
+  --text-lg:   1.333rem;   /* 24 */
+  --text-xl:   1.667rem;   /* 30 */
+  --text-2xl:  2.222rem;   /* 40 */
+  --text-3xl:  3.111rem;   /* 56 — the bill amount, and nothing else        */
+
+  --leading-body: 1.5;
+  --leading-tight: 1.15;
+  --tracking-label: 0.13em;
+
+  /* ── space ── 8px base */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+  --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 64px;
+
+  /* ── shape ── 4px, and nothing rounder. This one value does most of the
+     work in not looking like generated UI.                                 */
+  --radius: 4px;
+  --radius-btn: 6px;
+
+  /* ── targets ── 48px exceeds the 44px minimum, deliberately */
+  --touch: 48px;
+
+  --measure: 65ch;
+  --page-max: 720px;
+  --wide-max: 1100px;
+
+  --focus-ring: 3px;
+  --transition: 160ms ease-out;
+}
+
+/* The portal is a light-only product in v1 — a utility bill does not need a
+   night mode, and shipping one badly is worse than not shipping one. This
+   block keeps a dark-preference viewer legible rather than inverted. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: light;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --transition: 0ms; }
+}

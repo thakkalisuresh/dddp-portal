@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diamond Park — design system</title>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+<style>
+  /* styleguide chrome only — not part of the design system */
+  .sg-head { border-bottom: 2px solid var(--ink); padding-bottom: var(--s-4); }
+  .sg-sec { border-top: 1px solid var(--border); padding-top: var(--s-5); }
+  .sg-sec > h2 { margin-bottom: var(--s-4); }
+  .sg-grid { display: flex; flex-wrap: wrap; gap: var(--s-3); align-items: center; }
+  .sw { display: flex; flex-direction: column; gap: var(--s-2); width: 104px; }
+  .sw__chip { height: 56px; border-radius: var(--radius); border: 1px solid var(--border); }
+  .sw__name { font-family: var(--font-ui); font-size: var(--text-xs); }
+  .sw__hex  { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--ink-muted); }
+  .scale-row { display: flex; align-items: baseline; gap: var(--s-4); border-bottom: 1px solid var(--border); padding: var(--s-2) 0; }
+  .scale-row code { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--ink-muted); width: 96px; flex: none; }
+</style>
+</head>
+<body>
+
+<div class="godbar" id="godbar" hidden></div>
+
+<header class="appbar">
+  <span class="appbar__who">Flat 4A <span>· Sabarish Nair</span></span>
+  <button class="appbar__action" type="button">Log out</button>
+</header>
+
+<main class="page stack--lg stack">
+
+  <div class="sg-head stack">
+    <p class="label">DD Diamond Park · Phase 2</p>
+    <h1>Design system</h1>
+    <p class="muted">Swiss Modernism 2.0 + Accessible &amp; Ethical. One accent, hairline
+      borders, no shadows, tabular figures. Fonts self-hosted — no third-party request.</p>
+  </div>
+
+  <section class="sg-sec stack">
+    <h2>Colour</h2>
+    <div class="sg-grid">
+      <div class="sw"><div class="sw__chip" style="background:var(--ink)"></div><span class="sw__name">ink</span><span class="sw__hex">#0F172A</span></div>
+      <div class="sw"><div class="sw__chip" style="background:var(--ink-muted)"></div><span class="sw__name">ink-muted</span><span class="sw__hex">#52525B</span></div>
+      <div class="sw"><div class="sw__chip" style="background:var(--paper)"></div><span class="sw__name">paper</span><span class="sw__hex">#FAFAF8</span></div>
+      <div class="sw"><div class="sw__chip" style="background:var(--surface)"></div><span class="sw__name">surface</span><span class="sw__hex">#FFFFFF</span></div>
+      <div class="sw"><div class="sw__chip" style="background:var(--accent)"></div><span class="sw__name">accent</span><span class="sw__hex">#0A6B4A</span></div>
+      <div class="sw"><div class="sw__chip" style="background:var(--awaiting)"></div><span class="sw__name">awaiting</span><span class="sw__hex">#A16207</span></div>
+      <div class="sw"><div class="sw__chip" style="background:var(--overdue)"></div><span class="sw__name">overdue</span><span class="sw__hex">#B91C1C</span></div>
+    </div>
+    <p class="small muted">Amber and red are semantic status only — never decoration, and never
+      the sole signal.</p>
+  </section>
+
+  <section class="sg-sec stack">
+    <h2>Type</h2>
+    <div class="scale-row"><code>3xl / 56</code><span class="amount">₹329.04</span></div>
+    <div class="scale-row"><code>2xl / 40</code><h1>Diamond Park</h1></div>
+    <div class="scale-row"><code>xl / 30</code><h2>Meter readings</h2></div>
+    <div class="scale-row"><code>lg / 24</code><h3>Bill history</h3></div>
+    <div class="scale-row"><code>base / 18</code><span>Body text sets at 18px, not 16 — older readers.</span></div>
+    <div class="scale-row"><code>xs / 14</code><span class="label">Uppercase label</span></div>
+    <div class="scale-row"><code>malayalam</code><span class="ml" style="font-size:var(--text-md)">അറിയിപ്പുകൾ · ആകെ · ഉപയോഗം · അടയ്ക്കുക</span></div>
+    <p class="small muted">Lexend for UI and figures, Source Sans 3 for prose, Manjari for Malayalam.
+      Figures are tabular everywhere: <span class="num">1111.11</span> / <span class="num">8888.88</span>
+      align in a column.</p>
+  </section>
+
+  <section class="sg-sec stack">
+    <h2>Buttons</h2>
+    <div class="sg-grid">
+      <button class="btn">Pay ₹329.04</button>
+      <button class="btn btn--ghost">Upload screenshot</button>
+      <button class="btn btn--quiet">Reject</button>
+      <button class="btn btn--danger">Delete</button>
+      <button class="btn" disabled>Generate bills</button>
+      <button class="btn btn--sm">Approve</button>
+    </div>
+    <button class="btn btn--block btn--lg">Pay ₹329.04</button>
+    <p class="small muted">48px minimum height (44 is the floor; we exceed it). The disabled
+      state is used sparingly — a dead control is usually worse than no control.</p>
+  </section>
+
+  <section class="sg-sec stack">
+    <h2>Status</h2>
+    <div class="sg-grid">
+      <span class="chip chip--paid">Paid</span>
+      <span class="chip chip--awaiting">Checking</span>
+      <span class="chip chip--overdue">Overdue</span>
+      <span class="chip chip--neutral">Waived</span>
+    </div>
+  </section>
+
+  <section class="sg-sec stack">
+    <h2>Bill breakdown</h2>
+    <div class="card">
+      <table class="table">
+        <tbody>
+          <tr><td>Consumption <span class="ml muted">ഉപയോഗം</span></td><td class="r">4.38 kg</td></tr>
+          <tr><td>Rate <span class="ml muted">നിരക്ക്</span></td><td class="r">₹75.00 / kg</td></tr>
+          <tr><td>Gas amount</td><td class="r">₹328.50</td></tr>
+          <tr><td class="muted">Other charges</td><td class="r muted">₹0.00</td></tr>
+          <tr style="color:var(--overdue)"><td>Late fee · applied 11 Aug</td><td class="r">₹50.00</td></tr>
+          <tr class="total"><td>Total <span class="ml">ആകെ</span></td><td class="r">₹379.04</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small muted">₹329.04 + ₹50 = ₹379.<strong>04</strong>. The paise are flat 4A's
+      permanent tag and survive the late fee — that is how the bank statement identifies who paid.</p>
+  </section>
+
+  <section class="sg-sec stack">
+    <h2>Forms</h2>
+    <div class="field">
+      <label for="f1">Mobile number <span class="ml">മൊബൈൽ നമ്പർ</span></label>
+      <input class="input num" id="f1" type="tel" inputmode="numeric" value="9567791515">
+    </div>
+    <div class="field">
+      <label for="f2">Reading</label>
+      <input class="input input--error num" id="f2" inputmode="decimal" value="6.100"
+             aria-describedby="f2e">
+      <span class="field__error" id="f2e">Lower than last month (6.900)</span>
+    </div>
+    <div class="field">
+      <label for="f3">Reading</label>
+      <input class="input input--warn num" id="f3" inputmode="decimal" value="19.220"
+             aria-describedby="f3h">
+      <span class="field__hint" id="f3h">Unusually high — check the meter?</span>
+    </div>
+    <div class="field">
+      <label for="f4">Mobile number</label>
+      <input class="input num" id="f4" value="9567791515" readonly aria-describedby="f4h">
+      <span class="field__hint" id="f4h">This is your login and links you to flat 4A.
+        To change it, contact the treasurer.</span>
+    </div>
+  </section>
+
+  <section class="sg-sec stack">
+    <h2>Messages</h2>
+    <div class="note note--good">Nothing due. Your next bill arrives in early September.</div>
+    <div class="note note--warn">The treasurer is verifying your payment. You don't need to do anything.</div>
+    <div class="note note--bad"><strong>This screenshot shows ₹150.00.</strong> Your July bill is
+      ₹379.04. Upload the right screenshot, or submit anyway and the treasurer will look at it.</div>
+  </section>
+
+  <section class="sg-sec stack">
+    <h2>God-mode banner</h2>
+    <p class="small muted">Rendered from <code>/api/me</code> on every page. Non-dismissible by design.</p>
+    <button class="btn btn--ghost" id="demo" type="button">Toggle the banner</button>
+  </section>
+
+</main>
+
+<script type="module">
+  import { renderGodBanner } from './js/ui.js';
+  import { money, periodLabel, dayLabel } from './js/i18n.js';
+
+  let on = false;
+  document.getElementById('demo').addEventListener('click', () => {
+    on = !on;
+    renderGodBanner(
+      on ? { name: 'Sabarish Nair', flat: '4A', impersonation: { active: true, canWrite: false } } : null,
+      { onExit: () => { on = false; renderGodBanner(null); }, onAllowWrites: () => {} }
+    );
+    if (on) window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  // smoke-check the formatters render as expected
+  console.log('money', money(329.04), 'period', periodLabel('2026-07'), 'day', dayLabel('2026-08-10'));
+</script>
+</body>
+</html>
