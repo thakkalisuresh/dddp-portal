@@ -20,8 +20,9 @@ Full design and rationale: `dddp-portal-plan.md` (kept alongside this repo).
 | 6 | Proof upload, vision parse, review queue | **done** |
 | 6b | Late fees — idempotent cron, waiver | **done** |
 | 6c | Notice comments — per-notice opt-in, moderation | **done** |
-| 7 | Public site · 7b remaining admin | next |
-| 8 | Backups, hardening | |
+| 7 | Public site — notices, committee, contact form | **done** |
+| 7b | Admin console, profile, forced password change | **done** |
+| 8 | Backups, hardening | next |
 
 Screen designs for all 19 screens were built before any app code.
 
@@ -36,7 +37,7 @@ npm run dev
 
 ```bash
 npm run seed      # local dev data: 6 residents, real readings from the old portal
-npm test          # 167 tests, no network or D1 needed
+npm test          # 176 tests, no network or D1 needed
 npm run errdoc    # regenerate docs/ERROR_CODES.md after editing the registry
 ```
 
@@ -90,12 +91,13 @@ functions/
     cron.js           late fees; idempotence is the property that matters
     notices.js        comments — opt-in per notice, real names, soft hide
     proof.js          upload validation, claim assessment, queue shaping
+    public.js         the unauthenticated surface; leaks nothing private
     qr.js             QR matrix; tests decode it with an independent decoder
     vision.js         optional OCR; never a gate on paying a bill
     upi.js            deep links; iOS needs per-app schemes, Android doesn't
 migrations/           D1 schema
 scripts/              doc generation
-test/                167 tests
+test/                176 tests
 ```
 
 ## Notes for whoever picks this up

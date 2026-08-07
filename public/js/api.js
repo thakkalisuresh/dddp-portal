@@ -49,6 +49,7 @@ export const api = {
   /** Records that the resident opened their UPI app. NOT proof of payment. */
   payIntent: (billId) => request('POST', `/api/bills/${billId}/intent`),
 
+  updateProfile: (name, email) => request('PATCH', '/api/me', { name, email }),
   notices:     ()            => request('GET',  '/api/notices'),
   notice:      (id)          => request('GET',  `/api/notices/${id}`),
   postComment: (id, body)    => request('POST', `/api/notices/${id}/comments`, { body }),
@@ -90,6 +91,17 @@ export const api = {
     setCommentHidden: (id, hidden) =>
                                request('POST', `/api/admin/comments/${id}/${hidden ? 'hide' : 'unhide'}`),
     runScheduled:  ()        => request('POST', '/api/admin/run-scheduled'),
+
+    periods:       ()        => request('GET',  '/api/admin/periods'),
+    addResident:   (body)    => request('POST', '/api/admin/residents', body),
+    updateResident:(id, b)   => request('PATCH', `/api/admin/residents/${id}`, b),
+    addNotice:     (body)    => request('POST', '/api/admin/notices', body),
+    updateNotice:  (id, b)   => request('PATCH', `/api/admin/notices/${id}`, b),
+    messages:      ()        => request('GET',  '/api/admin/messages'),
+    markMessageHandled: (id) => request('POST', `/api/admin/messages/${id}/handled`),
+    proofArchive:  (params = '') => request('GET', `/api/admin/proofs/archive${params}`),
+    deleteProof:   (id)      => request('DELETE', `/api/admin/proofs/${id}`),
+    updateBill:    (id, b)   => request('PATCH', `/api/admin/bills/${id}`, b),
 
     /** Hand out the template first so column order is guaranteed on the way back. */
     downloadTemplate(period, grid) {

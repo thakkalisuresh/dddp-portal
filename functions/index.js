@@ -12,11 +12,12 @@ import {
   readingGrid, saveReadings, generateBills, openPeriod, parseReadings,
   previousPeriod, jumpWarning,
 } from './lib/admin.js';
-import { previewGeneration } from './lib/billing.js';
+import { previewGeneration, computeBill } from './lib/billing.js';
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { readReceipt } from './lib/vision.js';
 import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden } from './lib/notices.js';
+import { publicNotices, submitMessage, fingerprintOf, COMMITTEE, AMENITIES } from './lib/public.js';
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole,
@@ -40,12 +41,23 @@ export default {
       if (route === 'POST /api/login') return login(request, env, ctx);
       if (route === 'GET /api/health') return json({ ok: true });
 
+      // ── public: no session required ───────────────────────────────────
+      if (route === 'GET /api/public/notices') {
+        return json({ notices: await publicNotices(env), committee: COMMITTEE, amenities: AMENITIES });
+      }
+      if (route === 'POST /api/public/contact') {
+        const body = await readJson(request);
+        const result = await submitMessage(env, body ?? {}, fingerprintOf(request));
+        return json(result, { status: 201 });
+      }
+
       // ── authenticated ─────────────────────────────────────────────────
       if (!session) return problem(401, 'DDP-AUTH-004', 'Please log in.');
 
       if (route === 'POST /api/logout') return logout(env, session);
       if (route === 'GET /api/me') return me(env, session, request);
       if (route === 'POST /api/password') return changePassword(request, env, session);
+      if (route === 'PATCH /api/me') return patchProfile(request, env, session);
       if (request.method === 'POST' && /^\/api\/bills\/\d+\/intent$/.test(path)) {
         return logIntent(env, session, path);
       }
@@ -107,6 +119,38 @@ export default {
         if (route === 'GET /api/admin/late-fees') {
           return json({ preview: await applyLateFees(env, { today: '1970-01-01' }),
                         stale: await staleIntents(env) });
+        }
+        if (route === 'GET /api/admin/messages') {
+          const rows = await env.DB.prepare(
+            'SELECT * FROM messages ORDER BY handled_at IS NOT NULL, created_at DESC LIMIT 100'
+          ).all();
+          return json({ messages: rows.results ?? [] });
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/messages\/\d+\/handled$/.test(path)) {
+          const id = Number(path.split('/')[4]);
+          await env.DB.prepare('UPDATE messages SET handled_by = ?, handled_at = ? WHERE id = ?')
+            .bind(session.actor.id, new Date().toISOString(), id).run();
+          await audit(env, session, 'message.handled', { id });
+          return json({ id, handled: true });
+        }
+        if (route === 'GET /api/admin/periods') {
+          const rows = await env.DB.prepare('SELECT * FROM periods ORDER BY period DESC').all();
+          return json({ periods: rows.results ?? [] });
+        }
+        if (route === 'POST /api/admin/notices')  return postNotice(request, env, session);
+        if (request.method === 'PATCH' && /^\/api\/admin\/notices\/\d+$/.test(path)) {
+          return patchNotice(request, env, session, path);
+        }
+        if (route === 'POST /api/admin/residents') return postResident(request, env, session);
+        if (request.method === 'PATCH' && /^\/api\/admin\/residents\/\d+$/.test(path)) {
+          return patchResident(request, env, session, path);
+        }
+        if (request.method === 'PATCH' && /^\/api\/admin\/bills\/\d+$/.test(path)) {
+          return patchBill(request, env, session, path);
+        }
+        if (route === 'GET /api/admin/proofs/archive') return proofArchive(env, url);
+        if (request.method === 'DELETE' && /^\/api\/admin\/proofs\/\d+$/.test(path)) {
+          return deleteProof(env, session, path);
         }
         if (route === 'POST /api/admin/run-scheduled') {
           const result = await runScheduled(env, ctx);
@@ -338,6 +382,178 @@ async function waiveLateFee(env, session, path) {
 
   await audit(env, session, 'late-fee.waive', { billId, amount: bill.late_fee });
   return json({ billId, waived: bill.late_fee });
+}
+
+/** Residents may edit their own name and email. Mobile is admin-only: it is
+ *  the login id and the tie to the flat (plan §4b). */
+async function patchProfile(request, env, session) {
+  if (session.impersonating) {
+    return problem(403, 'DDP-AUTH-007', 'Cannot edit details while viewing as another resident.');
+  }
+  const body = await readJson(request);
+  const name = String(body?.name ?? '').trim();
+  const email = String(body?.email ?? '').trim() || null;
+  if (!name) return problem(400, 'DDP-NOTICE-003', 'Your name cannot be blank.');
+
+  await env.DB.prepare('UPDATE owners SET name = ?, email = ? WHERE id = ?')
+    .bind(name, email, session.actor.id).run();
+  await audit(env, session, 'profile.update', { name, email });
+  return json({ name, email });
+}
+
+async function postNotice(request, env, session) {
+  const b = await readJson(request);
+  const title = String(b?.title ?? '').trim();
+  const body = String(b?.body ?? '').trim();
+  if (!title || !body) return problem(400, 'DDP-NOTICE-003', 'A notice needs a title and a body.');
+
+  const row = await env.DB.prepare(
+    `INSERT INTO notices (title, body, kind, event_date, allow_comments, active, posted_at)
+     VALUES (?, ?, ?, ?, ?, 1, ?) RETURNING id`
+  ).bind(title, body, b?.kind === 'event' ? 'event' : 'notice',
+         b?.eventDate ?? null, b?.allowComments ? 1 : 0, new Date().toISOString()).first();
+
+  await audit(env, session, 'notice.create', { id: row.id, title });
+  return json({ id: row.id }, { status: 201 });
+}
+
+async function patchNotice(request, env, session, path) {
+  const id = Number(path.split('/')[4]);
+  const b = await readJson(request);
+  const fields = [];
+  const values = [];
+  for (const [key, column] of [['title', 'title'], ['body', 'body'], ['eventDate', 'event_date']]) {
+    if (b?.[key] !== undefined) { fields.push(`${column} = ?`); values.push(b[key]); }
+  }
+  for (const [key, column] of [['allowComments', 'allow_comments'], ['active', 'active']]) {
+    if (b?.[key] !== undefined) { fields.push(`${column} = ?`); values.push(b[key] ? 1 : 0); }
+  }
+  if (!fields.length) return problem(400, 'DDP-NOTICE-003', 'Nothing to change.');
+
+  await env.DB.prepare(`UPDATE notices SET ${fields.join(', ')} WHERE id = ?`)
+    .bind(...values, id).run();
+  await audit(env, session, 'notice.update', { id, changed: Object.keys(b ?? {}) });
+  return json({ id });
+}
+
+async function postResident(request, env, session) {
+  const b = await readJson(request);
+  const flat = String(b?.flat ?? '').trim().toUpperCase();
+  const name = String(b?.name ?? '').trim();
+  const mobile = String(b?.mobile ?? '').replace(/\D/g, '');
+  if (!flat || !name || mobile.length < 10) {
+    return problem(400, 'DDP-ADMIN-003', 'A resident needs a flat, a name and a 10-digit mobile number.');
+  }
+
+  const known = await env.DB.prepare('SELECT flat FROM flats WHERE flat = ?').bind(flat).first();
+  if (!known) {
+    await reportError(env, 'DDP-ADMIN-001', { flat });
+    return problem(400, 'DDP-ADMIN-001', `Flat ${flat} is not on the register.`);
+  }
+
+  // Issued, not chosen: the resident replaces it on first login.
+  const otp = generateOneTimePassword();
+  const { hash, salt } = await hashPassword(otp, ITER(env));
+  const row = await env.DB.prepare(
+    `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, must_change_pw, role, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 1, 'owner', ?) RETURNING id`
+  ).bind(flat, name, mobile, b?.email ?? null, hash, salt, new Date().toISOString()).first();
+
+  await audit(env, session, 'resident.create', { id: row.id, flat });
+  const text = encodeURIComponent(
+    `Diamond Park portal — your temporary password is ${otp}\nLog in at https://dddp.pages.dev and choose your own.`);
+  return json({ id: row.id, oneTimePassword: otp, whatsapp: `https://wa.me/91${mobile}?text=${text}` },
+    { status: 201 });
+}
+
+async function patchResident(request, env, session, path) {
+  const id = Number(path.split('/')[4]);
+  const b = await readJson(request);
+  const fields = [];
+  const values = [];
+  if (b?.name !== undefined)   { fields.push('name = ?');   values.push(String(b.name).trim()); }
+  if (b?.email !== undefined)  { fields.push('email = ?');  values.push(b.email || null); }
+  if (b?.mobile !== undefined) { fields.push('mobile = ?'); values.push(String(b.mobile).replace(/\D/g, '')); }
+  // Only a superadmin may change roles — an admin must not promote themselves.
+  if (b?.role !== undefined && hasRole(session, 'superadmin')) {
+    fields.push('role = ?'); values.push(b.role);
+  }
+  if (!fields.length) return problem(400, 'DDP-ADMIN-003', 'Nothing to change.');
+
+  await env.DB.prepare(`UPDATE owners SET ${fields.join(', ')} WHERE id = ?`).bind(...values, id).run();
+  await audit(env, session, 'resident.update', { id, changed: Object.keys(b ?? {}) });
+  return json({ id });
+}
+
+/** Per-flat charges, before the period locks. */
+async function patchBill(request, env, session, path) {
+  const id = Number(path.split('/')[4]);
+  const b = await readJson(request);
+  const bill = await env.DB.prepare(
+    `SELECT b.*, p.status AS period_status FROM bills b
+       JOIN periods p ON p.period = b.period WHERE b.id = ?`
+  ).bind(id).first();
+  if (!bill) return problem(404, 'DDP-PAY-001', 'That bill could not be found.');
+  if (bill.period_status === 'locked') {
+    return problem(409, 'DDP-BILL-007', 'This month is locked. Charges can no longer be changed.');
+  }
+
+  const other = Number(b?.otherCharges ?? bill.other_charges);
+  const additional = Number(b?.additionalCharges ?? bill.additional_charges);
+  const flat = await env.DB.prepare('SELECT paise_tag FROM flats WHERE flat = ?').bind(bill.flat).first();
+
+  const { gasAmount, total } = computeBill({
+    consumption: bill.consumption,
+    ratePerKg: bill.rate_per_kg,
+    otherCharges: other,
+    additionalCharges: additional,
+    lateFee: bill.late_fee,
+    paiseTag: flat.paise_tag,
+  });
+
+  await env.DB.prepare(
+    'UPDATE bills SET other_charges = ?, additional_charges = ?, gas_amount = ?, total = ? WHERE id = ?'
+  ).bind(other, additional, gasAmount, total, id).run();
+
+  await audit(env, session, 'bill.charges', { id, other, additional, total });
+  return json({ id, total, gasAmount });
+}
+
+async function proofArchive(env, url) {
+  const period = url.searchParams.get('period');
+  const flat = url.searchParams.get('flat');
+  const rows = await env.DB.prepare(
+    `SELECT p.id, p.parsed_amount, p.utr, p.status, p.created_at, p.deleted_at,
+            b.flat, b.period, b.total
+       FROM payment_proofs p JOIN bills b ON b.id = p.bill_id
+      WHERE (? IS NULL OR b.period = ?) AND (? IS NULL OR b.flat = ?)
+      ORDER BY p.created_at DESC LIMIT 200`
+  ).bind(period, period, flat, flat).all();
+
+  const size = await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM payment_proofs WHERE deleted_at IS NULL'
+  ).first();
+
+  return json({ proofs: rows.results ?? [], stored: size?.n ?? 0 });
+}
+
+/**
+ * Delete the image, keep the row. `image_sha256` and `utr` must survive, or
+ * the duplicate detection that stops an old screenshot being resubmitted next
+ * year dies with them (plan §4d).
+ */
+async function deleteProof(env, session, path) {
+  const id = Number(path.split('/')[4]);
+  const proof = await env.DB.prepare('SELECT r2_key FROM payment_proofs WHERE id = ?').bind(id).first();
+  if (!proof) return problem(404, 'DDP-PROOF-005', 'That submission could not be found.');
+
+  if (proof.r2_key) await env.PROOFS.delete(proof.r2_key).catch(() => {});
+  await env.DB.prepare(
+    'UPDATE payment_proofs SET r2_key = NULL, deleted_at = ? WHERE id = ?'
+  ).bind(new Date().toISOString(), id).run();
+
+  await audit(env, session, 'proof.delete', { id });
+  return json({ id, deleted: true, hashRetained: true });
 }
 
 // ── payment proofs ──────────────────────────────────────────────────────

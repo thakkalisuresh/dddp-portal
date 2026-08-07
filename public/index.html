@@ -1,5 +1,61 @@
 <!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Diamond Park</title>
-<p>Phase 2 builds the app shell here. API is live at <code>/api/health</code>.</p>
+<title>DD Diamond Park — Residents' Welfare Association</title>
+<meta name="description" content="DD Diamond Park RWA, Kuriachira, Thrissur — notices, events and the resident gas billing portal.">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+<style>
+  /* Notices lead. The old site opened with a gradient wordmark and a slogan;
+     what residents come for is what was announced this week. */
+  .hero { background: var(--ink); color: var(--surface); padding: var(--s-7) var(--s-4) var(--s-6); }
+  .hero__inner { max-width: var(--page-max); margin: 0 auto; }
+  .hero h1 { font-size: clamp(2rem, 7vw, 3rem); letter-spacing: -0.03em; }
+  .hero p { opacity: .72; margin-top: var(--s-2); }
+  .hero__actions { display: flex; gap: var(--s-3); margin-top: var(--s-5); flex-wrap: wrap; }
+  .hero .btn--ondark { background: transparent; border-color: rgb(255 255 255 / .4); color: #fff; }
+
+  .notice { border-left: 3px solid var(--accent); padding-left: var(--s-4); }
+  .notice--event { border-left-color: var(--awaiting); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--s-2); }
+  .tile {
+    aspect-ratio: 1; border: 1px solid var(--border); display: flex; align-items: flex-end;
+    padding: var(--s-2); font-family: var(--font-ui); font-size: var(--text-xs); color: var(--ink-muted);
+    background: repeating-linear-gradient(45deg,#E4E7E2,#E4E7E2 6px,#EDEFEB 6px,#EDEFEB 12px);
+  }
+  .amenities { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+  .amenity { border: 1px solid var(--border); border-radius: var(--radius);
+             padding: var(--s-2) var(--s-3); font-family: var(--font-ui); font-size: var(--text-sm); }
+  .committee { width: 100%; border-collapse: collapse; }
+  .committee td { padding: var(--s-3) 0; border-bottom: 1px solid var(--border); }
+  .committee .role { font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: .1em;
+                     text-transform: uppercase; color: var(--ink-muted); }
+  footer { border-top: 1px solid var(--border); margin-top: var(--s-8); padding: var(--s-5) var(--s-4); }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero__inner">
+    <h1>Diamond Park</h1>
+    <p>Kuriachira, Thrissur · Residents' Welfare Association</p>
+    <div class="hero__actions">
+      <a class="btn" href="/login.html">Member login</a>
+      <a class="btn btn--ondark" href="#notices">Notices <span class="ml">അറിയിപ്പുകൾ</span></a>
+    </div>
+  </div>
+</header>
+
+<main class="page stack--lg stack" id="main">
+  <p class="muted">Loading…</p>
+</main>
+
+<footer>
+  <p class="small muted">DD Diamond Park RWA · Kuriachira, Thrissur 680006</p>
+</footer>
+
+<script type="module" src="js/home.js"></script>
+</body>
+</html>
