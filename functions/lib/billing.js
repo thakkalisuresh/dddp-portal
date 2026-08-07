@@ -174,6 +174,57 @@ export function meterReconciliation(bulkKg, sumOfFlatsKg) {
 }
 
 /**
+ * What a month's import will actually bill, computed BEFORE anything is
+ * written. The rate and the readings arrive together each month, so the
+ * treasurer confirms one number they can check against the supplier invoice:
+ * if that invoice is ~₹15,000 and this says ₹150,000, the rate has an extra
+ * zero and 52 wrong bills are avoided.
+ *
+ * Pure. `rows` are { flat, reading, previous, paiseTag }.
+ */
+export function previewGeneration({ rows, ratePerKg, conversionFactor = DEFAULT_CONVERSION,
+                                    previousRate = null, expectedFlats = null }) {
+  const sanity = rateSanity(ratePerKg, previousRate);
+  const bills = [];
+  const blocked = [];
+
+  for (const row of rows) {
+    try {
+      const consumption = computeConsumption(row.reading, row.previous, conversionFactor);
+      const { gasAmount, total } = computeBill({
+        consumption, ratePerKg, paiseTag: row.paiseTag,
+      });
+      bills.push({ flat: row.flat, consumption, gasAmount, total });
+    } catch (err) {
+      blocked.push({ flat: row.flat, reason: err.code ?? 'DDP-BILL-001' });
+    }
+  }
+
+  const totalKg = round2(bills.reduce((sum, b) => sum + b.consumption, 0));
+  const totalAmount = round2(bills.reduce((sum, b) => sum + b.total, 0));
+  const amounts = bills.map((b) => b.total);
+
+  return {
+    ratePerKg,
+    conversionFactor,
+    rateSanity: sanity,
+    willBill: bills.length,
+    blocked,
+    missing: expectedFlats == null ? null : expectedFlats - bills.length - blocked.length,
+    totalKg,
+    totalAmount,
+    // Outliers are how a transposed digit shows itself.
+    smallest: amounts.length ? Math.min(...amounts) : 0,
+    largest: amounts.length ? Math.max(...amounts) : 0,
+    // Generation is refused while anything is unresolved — a partial month
+    // means some flats silently never get billed.
+    canGenerate: blocked.length === 0 &&
+                 sanity.ok &&
+                 (expectedFlats == null || bills.length === expectedFlats),
+  };
+}
+
+/**
  * Which bills the nightly cron should charge.
  *
  * `initiated` is deliberately HELD, not charged: someone who tapped Pay on the
