@@ -49,6 +49,21 @@ export const api = {
   /** Records that the resident opened their UPI app. NOT proof of payment. */
   payIntent: (billId) => request('POST', `/api/bills/${billId}/intent`),
 
+  /** Multipart, so it bypasses the JSON request helper. */
+  async uploadProof(billId, blob) {
+    const form = new FormData();
+    form.append('image', blob, 'proof.jpg');
+    const res = await fetch(`/api/bills/${billId}/proof`, {
+      method: 'POST', credentials: 'same-origin', body: form,
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const err = data?.error ?? {};
+      throw new ApiError(res.status, err.code ?? 'UNKNOWN', err.message);
+    }
+    return data;
+  },
+
   admin: {
     residents: ()           => request('GET',  '/api/admin/residents'),
     resetPassword: (id)     => request('POST', `/api/admin/residents/${id}/reset`),
@@ -61,6 +76,12 @@ export const api = {
     preview:       (period) => request('GET',  `/api/admin/preview?period=${period}`),
     openPeriod:    (body)   => request('POST', '/api/admin/periods', body),
     generate:      (period) => request('POST', `/api/admin/periods/${period}/generate`),
+
+    proofs:        ()       => request('GET',  '/api/admin/proofs'),
+    approveProof:  (id)     => request('POST', `/api/admin/proofs/${id}/approve`),
+    rejectProof:   (id)     => request('POST', `/api/admin/proofs/${id}/reject`),
+    markPaid:      (billId, note) =>
+                               request('POST', `/api/admin/bills/${billId}/mark-paid`, { note }),
 
     /** Hand out the template first so column order is guaranteed on the way back. */
     downloadTemplate(period, grid) {

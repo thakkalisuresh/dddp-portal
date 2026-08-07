@@ -50,12 +50,13 @@ Ask the bot a code and it will explain it.
 
 | Code | Severity | Status | Meaning |
 |---|---|---|---|
-| `DDP-PROOF-001` | warn | planned | Duplicate screenshot rejected — image hash already seen |
-| `DDP-PROOF-002` | warn | planned | Duplicate UTR rejected — already used on another bill |
-| `DDP-PROOF-003` | error | planned | Vision parse returned nothing usable |
-| `DDP-PROOF-004` | **fatal** | planned | R2 upload succeeded but D1 insert failed — orphaned object |
-| `DDP-PROOF-005` | error | planned | Proof image missing from R2 but row says stored |
-| `DDP-PROOF-006` | warn | planned | Uploaded amount does not match the bill |
+| `DDP-PROOF-001` | warn | live | Duplicate screenshot rejected — image hash already seen |
+| `DDP-PROOF-002` | warn | live | Duplicate UTR rejected — already used on another bill |
+| `DDP-PROOF-003` | error | live | Vision parse returned nothing usable |
+| `DDP-PROOF-004` | **fatal** | live | R2 upload succeeded but D1 insert failed — orphaned object |
+| `DDP-PROOF-005` | error | live | Proof image missing from R2 but row says stored |
+| `DDP-PROOF-006` | warn | live | Uploaded amount does not match the bill |
+| `DDP-PROOF-007` | warn | live | Vision provider returned an error status |
 
 ## ADMIN
 
@@ -79,7 +80,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-39 codes across 6 domains — 8 fatal, 12 awaiting their call site.
+40 codes across 6 domains — 8 fatal, 6 awaiting their call site.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

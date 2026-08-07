@@ -41,12 +41,13 @@ export const ERROR_CODES = {
   'DDP-PAY-005': { severity: 'error', message: 'QR requested with no URI to encode' },
 
   // ── PROOF ──────────────────────────────────────────────────────────────
-  'DDP-PROOF-001': { severity: 'warn',  message: 'Duplicate screenshot rejected — image hash already seen', planned: true },
-  'DDP-PROOF-002': { severity: 'warn',  message: 'Duplicate UTR rejected — already used on another bill', planned: true },
-  'DDP-PROOF-003': { severity: 'error', message: 'Vision parse returned nothing usable', planned: true },
-  'DDP-PROOF-004': { severity: 'fatal', message: 'R2 upload succeeded but D1 insert failed — orphaned object', planned: true },
-  'DDP-PROOF-005': { severity: 'error', message: 'Proof image missing from R2 but row says stored', planned: true },
-  'DDP-PROOF-006': { severity: 'warn',  message: 'Uploaded amount does not match the bill', planned: true },
+  'DDP-PROOF-001': { severity: 'warn',  message: 'Duplicate screenshot rejected — image hash already seen' },
+  'DDP-PROOF-002': { severity: 'warn',  message: 'Duplicate UTR rejected — already used on another bill' },
+  'DDP-PROOF-003': { severity: 'error', message: 'Vision parse returned nothing usable' },
+  'DDP-PROOF-004': { severity: 'fatal', message: 'R2 upload succeeded but D1 insert failed — orphaned object' },
+  'DDP-PROOF-005': { severity: 'error', message: 'Proof image missing from R2 but row says stored' },
+  'DDP-PROOF-006': { severity: 'warn',  message: 'Uploaded amount does not match the bill' },
+  'DDP-PROOF-007': { severity: 'warn',  message: 'Vision provider returned an error status' },
 
   // ── ADMIN ──────────────────────────────────────────────────────────────
   'DDP-ADMIN-001': { severity: 'error', message: 'Bulk import parsed a flat that does not exist' },

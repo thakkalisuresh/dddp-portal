@@ -17,8 +17,8 @@ Full design and rationale: `dddp-portal-plan.md` (kept alongside this repo).
 | 4 | Meter reading grid + bill generation | **done** |
 | 4b | Bulk reading import (paste + template) | **done** |
 | 5 | UPI pay flow — real QR, intent logging | **done** |
-| 6 | Proof upload + review queue | next |
-| 6b | Late fees · 6c Notice comments | |
+| 6 | Proof upload, vision parse, review queue | **done** |
+| 6b | Late fees · 6c Notice comments | next |
 | 7 | Public site · 7b remaining admin | |
 | 8 | Backups, hardening | |
 
@@ -35,11 +35,12 @@ npm run dev
 
 ```bash
 npm run seed      # local dev data: 6 residents, real readings from the old portal
-npm test          # 123 tests, no network or D1 needed
+npm test          # 150 tests, no network or D1 needed
 npm run errdoc    # regenerate docs/ERROR_CODES.md after editing the registry
 ```
 
-Secrets: `npx wrangler secret put TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+Secrets: `npx wrangler secret put TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and
+optionally `GROQ_API_KEY` or `GEMINI_API_KEY` for screenshot OCR.
 Locally they go in `.dev.vars` (see `.dev.vars.example`).
 
 ## The five invariants
@@ -85,11 +86,13 @@ functions/
     session.js        actor/subject sessions, roles, cookies
     admin.js          reading grid, parsing, generation; period arithmetic
     dashboard.js      the /api/me payload; one round trip, no client identity
+    proof.js          upload validation, claim assessment, queue shaping
     qr.js             QR matrix; tests decode it with an independent decoder
+    vision.js         optional OCR; never a gate on paying a bill
     upi.js            deep links; iOS needs per-app schemes, Android doesn't
 migrations/           D1 schema
 scripts/              doc generation
-test/                123 tests
+test/                150 tests
 ```
 
 ## Notes for whoever picks this up

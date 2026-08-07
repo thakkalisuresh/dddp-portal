@@ -6,13 +6,15 @@
 
 import { json, problem, readJson, audit, rateLimit, clearRateLimit, guard } from './lib/http.js';
 import { reportError, assertAlerting } from './lib/errors.js';
-import { hashPassword, verifyPassword, generateOneTimePassword } from './lib/crypto.js';
+import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex } from './lib/crypto.js';
 import { dashboardPayload } from './lib/dashboard.js';
 import {
   readingGrid, saveReadings, generateBills, openPeriod, parseReadings,
   previousPeriod, jumpWarning,
 } from './lib/admin.js';
 import { previewGeneration } from './lib/billing.js';
+import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
+import { readReceipt } from './lib/vision.js';
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole,
@@ -45,6 +47,12 @@ export default {
       if (request.method === 'POST' && /^\/api\/bills\/\d+\/intent$/.test(path)) {
         return logIntent(env, session, path);
       }
+      if (request.method === 'POST' && /^\/api\/bills\/\d+\/proof$/.test(path)) {
+        return uploadProof(request, env, session, ctx, path);
+      }
+      if (request.method === 'GET' && /^\/api\/proof\/\d+\/image$/.test(path)) {
+        return proofImage(env, session, path);
+      }
 
       // ── admin ─────────────────────────────────────────────────────────
       if (path.startsWith('/api/admin/')) {
@@ -63,6 +71,16 @@ export default {
         if (route === 'POST /api/admin/periods')  return postPeriod(request, env, session);
         if (route.startsWith('POST /api/admin/periods/') && path.endsWith('/generate')) {
           return postGenerate(env, session, path);
+        }
+        if (route === 'GET /api/admin/proofs') return proofQueue(env);
+        if (request.method === 'POST' && /^\/api\/admin\/proofs\/\d+\/approve$/.test(path)) {
+          return reviewProof(env, session, path, true);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/proofs\/\d+\/reject$/.test(path)) {
+          return reviewProof(env, session, path, false);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/bills\/\d+\/mark-paid$/.test(path)) {
+          return markPaid(request, env, session, path);
         }
       }
 
@@ -252,6 +270,209 @@ async function logIntent(env, session, path) {
 
   await audit(env, session, 'payment.intent', { billId: bill.id, total: bill.total });
   return json({ recorded: true, status: bill.status === 'unpaid' ? 'initiated' : bill.status });
+}
+
+// ── payment proofs ──────────────────────────────────────────────────────
+
+/**
+ * A resident uploads a screenshot.
+ *
+ * Order matters: the D1 row is written FIRST, then the object is put to R2.
+ * The reverse order is DDP-PROOF-004 — an object in the bucket with no row
+ * pointing at it, invisible to everyone and never cleaned up. A row whose
+ * object is missing is at least visible and recoverable.
+ */
+async function uploadProof(request, env, session, ctx, path) {
+  const billId = Number(path.split('/')[3]);
+
+  if (session.impersonating && !session.canWrite) {
+    return problem(403, 'DDP-AUTH-007', 'Cannot upload while viewing as another resident.');
+  }
+
+  // Resolved through the session's flat — not from the URL.
+  const bill = await env.DB.prepare(
+    'SELECT id, flat, period, total, status FROM bills WHERE id = ? AND flat = ?'
+  ).bind(billId, session.subject.flat).first();
+  if (!bill) return problem(404, 'DDP-PAY-001', 'That bill could not be found.');
+  if (bill.status === 'paid' || bill.status === 'waived') {
+    return problem(409, 'DDP-PAY-003', 'This bill is already settled.');
+  }
+
+  const form = await request.formData().catch(() => null);
+  const file = form?.get('image');
+  if (!file || typeof file === 'string') {
+    return problem(400, 'DDP-PROOF-003', 'Attach a screenshot of your payment.');
+  }
+
+  const check = validateUpload({ type: file.type, size: file.size });
+  if (!check.ok) return problem(400, 'DDP-PROOF-003', check.message);
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const hash = await sha256Hex(bytes);
+
+  // Same image twice — usually an honest double-tap, sometimes last month's
+  // screenshot sent again. Either way it is not new evidence.
+  const dupe = await env.DB.prepare(
+    'SELECT id, bill_id FROM payment_proofs WHERE image_sha256 = ?'
+  ).bind(hash).first();
+  if (dupe) {
+    await reportError(env, 'DDP-PROOF-001', { hash, billId, existing: dupe.id });
+    return problem(409, 'DDP-PROOF-001',
+      dupe.bill_id === bill.id
+        ? 'You have already uploaded this screenshot.'
+        : 'This screenshot has already been used for another bill.');
+  }
+
+  const vision = await readReceipt(env, bytes, file.type);
+  const parsed = vision.parsed;
+
+  if (parsed.utr) {
+    const utrTaken = await env.DB.prepare(
+      'SELECT bill_id FROM payment_proofs WHERE utr = ?'
+    ).bind(parsed.utr).first();
+    if (utrTaken) {
+      await reportError(env, 'DDP-PROOF-002', { utr: parsed.utr, billId });
+      return problem(409, 'DDP-PROOF-002',
+        'That payment reference has already been used for another bill.');
+    }
+  }
+
+  const assessment = assessProof(parsed, bill);
+  if (!assessment.matches && assessment.verdict !== 'unreadable') {
+    await reportError(env, 'DDP-PROOF-006', { billId, claimed: parsed.amount, billed: bill.total });
+  }
+
+  const key = r2Key(bill.flat, bill.period, hash);
+  const now = new Date().toISOString();
+
+  const inserted = await env.DB.prepare(
+    `INSERT INTO payment_proofs (bill_id, r2_key, image_sha256, utr, parsed_amount, status, created_at)
+     VALUES (?, ?, ?, ?, ?, 'pending', ?) RETURNING id`
+  ).bind(bill.id, key, hash, parsed.utr, parsed.amount, now).first();
+
+  try {
+    await env.PROOFS.put(key, bytes, { httpMetadata: { contentType: file.type } });
+  } catch (err) {
+    // Row exists, object doesn't: visible and recoverable, unlike the reverse.
+    await reportError(env, 'DDP-PROOF-004', err, ctx);
+    return problem(500, 'DDP-PROOF-004', 'We saved your submission but the image failed to store. The treasurer has been alerted.');
+  }
+
+  await env.DB.prepare(
+    "UPDATE bills SET status = 'awaiting' WHERE id = ? AND status IN ('unpaid','initiated')"
+  ).bind(bill.id).run();
+
+  await audit(env, session, 'proof.upload', { billId: bill.id, proofId: inserted.id, verdict: assessment.verdict });
+
+  return json({
+    proofId: inserted.id,
+    parsed,
+    provider: vision.provider,
+    assessment,
+    status: 'awaiting',
+  }, { status: 201 });
+}
+
+/**
+ * Private image proxy. These are residents' financial documents — the bucket
+ * has no public URLs, and every admin view is audited.
+ */
+async function proofImage(env, session, path) {
+  const proofId = Number(path.split('/')[3]);
+  const row = await env.DB.prepare(
+    `SELECT p.r2_key, p.deleted_at, b.flat
+       FROM payment_proofs p JOIN bills b ON b.id = p.bill_id
+      WHERE p.id = ?`
+  ).bind(proofId).first();
+
+  if (!row) return problem(404, 'DDP-PROOF-005', 'That image could not be found.');
+
+  const isOwner = row.flat === session.subject.flat;
+  if (!isOwner && !hasRole(session, 'admin')) {
+    await reportError(env, 'DDP-ADMIN-004', { proofId, actor: session.actor.id });
+    return problem(403, 'DDP-ADMIN-004', 'Not yours to view.');
+  }
+  if (row.deleted_at || !row.r2_key) {
+    return problem(410, 'DDP-PROOF-005', 'That image has been deleted.');
+  }
+
+  const object = await env.PROOFS.get(row.r2_key);
+  if (!object) {
+    await reportError(env, 'DDP-PROOF-005', { proofId, key: row.r2_key });
+    return problem(404, 'DDP-PROOF-005', 'That image is missing from storage.');
+  }
+
+  if (!isOwner) await audit(env, session, 'proof.view', { proofId, flat: row.flat });
+
+  return new Response(object.body, {
+    headers: {
+      'content-type': object.httpMetadata?.contentType ?? 'image/jpeg',
+      'cache-control': 'private, no-store',
+    },
+  });
+}
+
+async function proofQueue(env) {
+  const [proofs, claimed] = await Promise.all([
+    env.DB.prepare(
+      `SELECT p.*, b.flat, b.period, b.total, o.name
+         FROM payment_proofs p
+         JOIN bills b ON b.id = p.bill_id
+         LEFT JOIN owners o ON o.flat = b.flat
+        WHERE p.status = 'pending' AND p.deleted_at IS NULL
+        ORDER BY p.created_at`
+    ).all(),
+    env.DB.prepare(
+      `SELECT b.id, b.flat, b.period, b.total, o.name, MAX(i.created_at) AS last_intent
+         FROM bills b
+         JOIN payment_intents i ON i.bill_id = b.id
+         LEFT JOIN owners o ON o.flat = b.flat
+        WHERE b.status = 'initiated'
+        GROUP BY b.id ORDER BY last_intent`
+    ).all(),
+  ]);
+
+  return json(shapeQueue({ proofs: proofs.results ?? [], claimed: claimed.results ?? [] }));
+}
+
+async function reviewProof(env, session, path, approve) {
+  const proofId = Number(path.split('/')[4]);
+  const proof = await env.DB.prepare(
+    'SELECT id, bill_id, status FROM payment_proofs WHERE id = ?'
+  ).bind(proofId).first();
+  if (!proof) return problem(404, 'DDP-PROOF-005', 'That submission could not be found.');
+  if (proof.status !== 'pending') {
+    return problem(409, 'DDP-PROOF-005', 'That submission has already been reviewed.');
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(
+      'UPDATE payment_proofs SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?'
+    ).bind(approve ? 'approved' : 'rejected', session.actor.id, now, proofId),
+    approve
+      ? env.DB.prepare("UPDATE bills SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, proof.bill_id)
+      // Rejection returns the bill to 'initiated', not 'unpaid': the resident
+      // did claim to have paid, and the late-fee cron must keep holding.
+      : env.DB.prepare("UPDATE bills SET status = 'initiated' WHERE id = ?").bind(proof.bill_id),
+  ]);
+
+  await audit(env, session, approve ? 'proof.approve' : 'proof.reject', { proofId, billId: proof.bill_id });
+  return json({ proofId, status: approve ? 'approved' : 'rejected' });
+}
+
+/** Mark paid with no proof at all — the bank statement is the real evidence. */
+async function markPaid(request, env, session, path) {
+  const billId = Number(path.split('/')[4]);
+  const body = await readJson(request);
+  const bill = await env.DB.prepare('SELECT id, status FROM bills WHERE id = ?').bind(billId).first();
+  if (!bill) return problem(404, 'DDP-PAY-001', 'That bill could not be found.');
+
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE bills SET status = 'paid', paid_at = ? WHERE id = ?")
+    .bind(now, billId).run();
+  await audit(env, session, 'bill.mark-paid', { billId, note: body?.note ?? null });
+  return json({ billId, status: 'paid' });
 }
 
 // ── admin billing ───────────────────────────────────────────────────────

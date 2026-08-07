@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payment proofs — Diamond Park</title>
+<link rel="stylesheet" href="../css/tokens.css">
+<link rel="stylesheet" href="../css/app.css">
+<style>
+  .qrow {
+    display: flex; gap: var(--s-4); align-items: center;
+    padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--border);
+  }
+  .qrow--bad { background: var(--overdue-wash); }
+  .qthumb {
+    width: 46px; height: 62px; object-fit: cover; flex: none;
+    border: 1px solid var(--border); border-radius: var(--radius); background: #EDEDE8;
+  }
+  .qmeta { flex: 1; min-width: 0; }
+  .qmeta b { font-family: var(--font-ui); }
+  .qmeta div { font-size: var(--text-sm); color: var(--ink-muted);
+               font-family: var(--font-ui); font-variant-numeric: tabular-nums; }
+  .qmeta .bad { color: var(--overdue); }
+  .qact { display: flex; gap: var(--s-2); flex: none; }
+  .sect { padding: var(--s-4); border-bottom: 1px solid var(--border); background: var(--surface);
+          display: flex; align-items: center; gap: var(--s-4); flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<div class="godbar" id="godbar" hidden></div>
+<header class="appbar">
+  <span class="appbar__who" id="who">Loading…</span>
+  <a class="appbar__action" href="/admin/readings.html">Readings</a>
+</header>
+<main class="page page--wide" id="main"><p class="muted">Loading the queue…</p></main>
+<script type="module" src="../js/admin-proofs.js"></script>
+</body>
+</html>

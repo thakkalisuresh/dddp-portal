@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upload payment screenshot — Diamond Park</title>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+<style>
+  .drop {
+    border: 1.5px dashed var(--border-strong); border-radius: var(--radius);
+    padding: var(--s-6) var(--s-4); text-align: center; background: var(--surface);
+  }
+  .preview { display: flex; gap: var(--s-4); align-items: flex-start; }
+  .preview img {
+    width: 96px; height: auto; max-height: 170px; object-fit: cover;
+    border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  .kv { display: flex; justify-content: space-between; gap: var(--s-4); padding: var(--s-1) 0; }
+</style>
+</head>
+<body>
+<div class="godbar" id="godbar" hidden></div>
+<header class="appbar">
+  <span class="appbar__who" id="who">Loading…</span>
+  <a class="appbar__action" href="/dashboard.html">Cancel</a>
+</header>
+<main class="page stack--lg stack" id="main"><p class="muted">Loading…</p></main>
+<script type="module" src="js/proof.js"></script>
+</body>
+</html>
