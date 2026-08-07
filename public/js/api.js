@@ -46,6 +46,9 @@ export const api = {
   changePassword: (currentPassword, newPassword) =>
     request('POST', '/api/password', { currentPassword, newPassword }),
 
+  /** Records that the resident opened their UPI app. NOT proof of payment. */
+  payIntent: (billId) => request('POST', `/api/bills/${billId}/intent`),
+
   admin: {
     residents: ()           => request('GET',  '/api/admin/residents'),
     resetPassword: (id)     => request('POST', `/api/admin/residents/${id}/reset`),

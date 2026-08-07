@@ -40,10 +40,11 @@ Ask the bot a code and it will explain it.
 
 | Code | Severity | Status | Meaning |
 |---|---|---|---|
-| `DDP-PAY-001` | error | planned | UPI URI requested for a bill that does not exist |
+| `DDP-PAY-001` | error | live | UPI URI requested for a bill that does not exist |
 | `DDP-PAY-002` | error | live | UPI URI built with a null or non-finite amount |
-| `DDP-PAY-003` | error | planned | Payment intent logged against a paid bill |
+| `DDP-PAY-003` | error | live | Payment intent logged against a paid bill |
 | `DDP-PAY-004` | warn | live | UPI payee VPA missing from environment |
+| `DDP-PAY-005` | error | live | QR requested with no URI to encode |
 
 ## PROOF
 
@@ -78,7 +79,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-38 codes across 6 domains — 8 fatal, 14 awaiting their call site.
+39 codes across 6 domains — 8 fatal, 12 awaiting their call site.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

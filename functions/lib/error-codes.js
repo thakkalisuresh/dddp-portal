@@ -34,10 +34,11 @@ export const ERROR_CODES = {
   'DDP-BILL-011': { severity: 'warn',  message: 'Rate differs sharply from the previous period' },
 
   // ── PAY ────────────────────────────────────────────────────────────────
-  'DDP-PAY-001': { severity: 'error', message: 'UPI URI requested for a bill that does not exist', planned: true },
+  'DDP-PAY-001': { severity: 'error', message: 'UPI URI requested for a bill that does not exist' },
   'DDP-PAY-002': { severity: 'error', message: 'UPI URI built with a null or non-finite amount' },
-  'DDP-PAY-003': { severity: 'error', message: 'Payment intent logged against a paid bill', planned: true },
+  'DDP-PAY-003': { severity: 'error', message: 'Payment intent logged against a paid bill' },
   'DDP-PAY-004': { severity: 'warn',  message: 'UPI payee VPA missing from environment' },
+  'DDP-PAY-005': { severity: 'error', message: 'QR requested with no URI to encode' },
 
   // ── PROOF ──────────────────────────────────────────────────────────────
   'DDP-PROOF-001': { severity: 'warn',  message: 'Duplicate screenshot rejected — image hash already seen', planned: true },

@@ -9,6 +9,7 @@
 import { api, ApiError } from './api.js';
 import { $, el, esc, statusChip, billBreakdown, renderGodBanner, showError } from './ui.js';
 import { money, kg, periodLabel, dayLabel, bilingual } from './i18n.js';
+import { drawQr } from './qr.js';
 
 const main = $('#main');
 
@@ -100,29 +101,36 @@ function paySection(me) {
   const { target, links } = me.pay;
   const block = el('section', { class: 'pay-block' });
 
+  // Record the intent before handing off to the UPI app. Fire-and-forget: a
+  // failed log must never stop someone paying their bill.
+  const record = () => { api.payIntent(b.id).catch(() => {}); };
+
   if (target === 'ios') {
     // iOS has no UPI app chooser, so the apps must be listed explicitly.
     block.append(
       el('p', { class: 'label' }, 'Choose your UPI app'),
       el('div', { class: 'pay-apps' },
         ...UPI_APPS.map((app) =>
-          el('a', { class: 'pay-app', href: links[app.key] },
+          el('a', { class: 'pay-app', href: links[app.key], onclick: record },
             el('span', { class: 'pay-app__mark', style: `background:${app.colour}` }),
             app.label)))
     );
   } else {
     block.append(
-      el('a', { class: 'btn btn--block btn--lg', href: links.generic }, `Pay ${money(b.total)}`),
+      el('a', { class: 'btn btn--block btn--lg', href: links.generic, onclick: record },
+        `Pay ${money(b.total)}`),
       el('p', { class: 'helper' },
         target === 'android' ? 'Your phone will ask which UPI app to use' : 'Scan with any UPI app')
     );
   }
 
   if (target === 'desktop') {
-    const canvas = el('canvas', { id: 'qr', width: 220, height: 220,
-      role: 'img', 'aria-label': `UPI payment QR code for ${money(b.total)}` });
-    block.append(el('div', { style: 'margin-top:var(--s-4)' }, canvas));
-    drawQr(canvas, links.qr);
+    const canvas = el('canvas', {
+      id: 'qr', role: 'img',
+      'aria-label': `UPI payment QR code for ${money(b.total)} to DD Diamond Park RWA`,
+    });
+    block.append(el('div', { style: 'margin-top:var(--s-4);text-align:center' }, canvas));
+    drawQr(canvas, links.qr, { target: 240 });
   }
 
   block.append(
@@ -137,26 +145,6 @@ function paySection(me) {
   return block;
 }
 
-/**
- * Placeholder QR. Phase 5 swaps in a real encoder; drawing a recognisable
- * block here keeps the layout honest without pretending to be scannable.
- */
-function drawQr(canvas, text) {
-  const ctx = canvas.getContext('2d');
-  const n = 25, cell = canvas.width / n;
-  let h = 0;
-  for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) >>> 0;
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#0F172A';
-  for (let y = 0; y < n; y++) {
-    for (let x = 0; x < n; x++) {
-      h = (h * 1103515245 + 12345) >>> 0;
-      if ((h >>> 16) & 1) ctx.fillRect(x * cell, y * cell, cell, cell);
-    }
-  }
-  canvas.dataset.placeholder = 'true';
-}
 
 /* ── breakdown, history ───────────────────────────────────────────────── */
 

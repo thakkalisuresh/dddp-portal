@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "DD Diamond Park RWA \u2014 gas billing portal",
+  "description": "DD Diamond Park RWA — gas billing portal",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
@@ -15,7 +15,11 @@
     "seed": "node scripts/seed-dev.mjs"
   },
   "devDependencies": {
+    "jsqr": "^1.4.0",
     "vitest": "^3.0.0",
     "wrangler": "^4.0.0"
+  },
+  "dependencies": {
+    "qrcode-generator": "^2.0.4"
   }
 }

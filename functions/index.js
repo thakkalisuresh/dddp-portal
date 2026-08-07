@@ -42,6 +42,9 @@ export default {
       if (route === 'POST /api/logout') return logout(env, session);
       if (route === 'GET /api/me') return me(env, session, request);
       if (route === 'POST /api/password') return changePassword(request, env, session);
+      if (request.method === 'POST' && /^\/api\/bills\/\d+\/intent$/.test(path)) {
+        return logIntent(env, session, path);
+      }
 
       // ── admin ─────────────────────────────────────────────────────────
       if (path.startsWith('/api/admin/')) {
@@ -205,6 +208,50 @@ async function resetPassword(request, env, session, path) {
     expiresInHours: 24,
     whatsapp: `https://wa.me/91${target.mobile}?text=${text}`,
   });
+}
+
+/**
+ * The resident tapped Pay.
+ *
+ * This records an INTENT, not a payment. Nothing downstream may treat it as
+ * proof: there is no callback from UPI, so all this says is "they opened their
+ * app". Its value is that the treasurer gets a shortlist to check the bank
+ * statement against, and that the late-fee cron holds rather than charges
+ * (plan §4e).
+ *
+ * The bill is resolved through the SESSION's flat — a resident cannot log an
+ * intent against someone else's bill by changing the id in the URL.
+ */
+async function logIntent(env, session, path) {
+  const billId = Number(path.split('/')[3]);
+
+  const bill = await env.DB.prepare(
+    'SELECT id, flat, status, total FROM bills WHERE id = ? AND flat = ?'
+  ).bind(billId, session.subject.flat).first();
+
+  if (!bill) return problem(404, 'DDP-PAY-001', 'That bill could not be found.');
+
+  if (bill.status === 'paid' || bill.status === 'waived') {
+    await reportError(env, 'DDP-PAY-003', { billId, status: bill.status });
+    return problem(409, 'DDP-PAY-003', 'This bill is already settled.');
+  }
+
+  // Read-only impersonation must not leave footprints in a resident's record.
+  if (session.impersonating && !session.canWrite) {
+    return json({ recorded: false, reason: 'read-only session', status: bill.status });
+  }
+
+  await env.DB.batch([
+    env.DB.prepare('INSERT INTO payment_intents (bill_id, created_at) VALUES (?, ?)')
+      .bind(bill.id, new Date().toISOString()),
+    // Only 'unpaid' advances. A bill already awaiting review must not regress
+    // to 'initiated' because the resident tapped Pay a second time.
+    env.DB.prepare("UPDATE bills SET status = 'initiated' WHERE id = ? AND status = 'unpaid'")
+      .bind(bill.id),
+  ]);
+
+  await audit(env, session, 'payment.intent', { billId: bill.id, total: bill.total });
+  return json({ recorded: true, status: bill.status === 'unpaid' ? 'initiated' : bill.status });
 }
 
 // ── admin billing ───────────────────────────────────────────────────────
