@@ -26,12 +26,12 @@ export const ERROR_CODES = {
   'DDP-BILL-003': { severity: 'fatal', message: 'Bill total does not match its own components' },
   'DDP-BILL-004': { severity: 'fatal', message: 'Bill total paise do not match the flat paise_tag' },
   'DDP-BILL-005': { severity: 'error', message: 'Period has no rate set' },
-  'DDP-BILL-006': { severity: 'error', message: 'Duplicate bill for (flat, period)', planned: true },
-  'DDP-BILL-007': { severity: 'error', message: 'Generation attempted on a locked period', planned: true },
+  'DDP-BILL-006': { severity: 'error', message: 'Duplicate bill for (flat, period)' },
+  'DDP-BILL-007': { severity: 'error', message: 'Generation attempted on a locked period' },
   'DDP-BILL-008': { severity: 'fatal', message: 'Late fee carries paise — reconciliation would break' },
   'DDP-BILL-009': { severity: 'error', message: 'Late fee cron re-applied to an already-charged bill', planned: true },
   'DDP-BILL-010': { severity: 'fatal', message: 'Rate was inherited from a previous period instead of set for this one' },
-  'DDP-BILL-011': { severity: 'warn',  message: 'Rate differs sharply from the previous period', planned: true },
+  'DDP-BILL-011': { severity: 'warn',  message: 'Rate differs sharply from the previous period' },
 
   // ── PAY ────────────────────────────────────────────────────────────────
   'DDP-PAY-001': { severity: 'error', message: 'UPI URI requested for a bill that does not exist', planned: true },
@@ -50,7 +50,7 @@ export const ERROR_CODES = {
   // ── ADMIN ──────────────────────────────────────────────────────────────
   'DDP-ADMIN-001': { severity: 'error', message: 'Bulk import parsed a flat that does not exist' },
   'DDP-ADMIN-002': { severity: 'error', message: 'Bulk import attempted a direct write, bypassing draft review', planned: true },
-  'DDP-ADMIN-003': { severity: 'warn',  message: 'Roster CSV row skipped — malformed', planned: true },
+  'DDP-ADMIN-003': { severity: 'warn',  message: 'Roster CSV row skipped — malformed' },
   'DDP-ADMIN-004': { severity: 'error', message: 'Non-admin reached an admin route' },
 
   // ── SYS ────────────────────────────────────────────────────────────────

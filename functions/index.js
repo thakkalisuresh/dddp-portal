@@ -9,6 +9,11 @@ import { reportError, assertAlerting } from './lib/errors.js';
 import { hashPassword, verifyPassword, generateOneTimePassword } from './lib/crypto.js';
 import { dashboardPayload } from './lib/dashboard.js';
 import {
+  readingGrid, saveReadings, generateBills, openPeriod, parseReadings,
+  previousPeriod, jumpWarning,
+} from './lib/admin.js';
+import { previewGeneration } from './lib/billing.js';
+import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole,
   RESIDENT_TTL_DAYS, IMPERSONATE_TTL_MIN,
@@ -47,6 +52,14 @@ export default {
         if (route === 'GET /api/admin/residents') return listResidents(env);
         if (route.startsWith('POST /api/admin/residents/') && path.endsWith('/reset')) {
           return resetPassword(request, env, session, path);
+        }
+        if (route === 'GET /api/admin/readings')  return getReadings(env, url);
+        if (route === 'PUT /api/admin/readings')  return putReadings(request, env, session, url);
+        if (route === 'POST /api/admin/readings/parse') return parseImport(request, env, url);
+        if (route === 'GET /api/admin/preview')   return getPreview(env, url);
+        if (route === 'POST /api/admin/periods')  return postPeriod(request, env, session);
+        if (route.startsWith('POST /api/admin/periods/') && path.endsWith('/generate')) {
+          return postGenerate(env, session, path);
         }
       }
 
@@ -192,6 +205,130 @@ async function resetPassword(request, env, session, path) {
     expiresInHours: 24,
     whatsapp: `https://wa.me/91${target.mobile}?text=${text}`,
   });
+}
+
+// ── admin billing ───────────────────────────────────────────────────────
+
+/**
+ * The period parameter is the USAGE month. The treasurer walks the building in
+ * July and enters June's readings (plan §3a), so the grid reports readMonth
+ * alongside it and the UI says so explicitly.
+ */
+function periodFrom(url) {
+  const p = url.searchParams.get('period');
+  return /^\d{4}-\d{2}$/.test(p ?? '') ? p : null;
+}
+
+async function getReadings(env, url) {
+  const period = periodFrom(url);
+  if (!period) return problem(400, 'DDP-BILL-005', 'Specify a period, e.g. ?period=2026-06.');
+
+  const grid = await readingGrid(env, period);
+  const history = await env.DB.prepare(
+    `SELECT flat, consumption FROM bills WHERE period < ? ORDER BY period DESC LIMIT 400`
+  ).bind(period).all();
+
+  const byFlat = new Map();
+  for (const row of history.results ?? []) {
+    if (!byFlat.has(row.flat)) byFlat.set(row.flat, []);
+    byFlat.get(row.flat).push(row.consumption);
+  }
+
+  // Send each flat's historical average unconditionally, NOT a verdict about
+  // the stored reading. The grid must be able to warn about a value as it is
+  // typed; deriving the warning server-side from an already-saved reading means
+  // it can only ever fire after the fact, which is the wrong way round.
+  grid.flats = grid.flats.map((f) => {
+    const past = (byFlat.get(f.flat) ?? []).filter((n) => Number.isFinite(n) && n > 0);
+    const average = past.length >= 2
+      ? Math.round((past.reduce((a, b) => a + b, 0) / past.length) * 100) / 100
+      : null;
+    return {
+      ...f,
+      average,
+      jump: f.consumption == null ? null : jumpWarning(f.consumption, past),
+    };
+  });
+
+  return json(grid);
+}
+
+async function putReadings(request, env, session, url) {
+  const period = periodFrom(url);
+  if (!period) return problem(400, 'DDP-BILL-005', 'Specify a period.');
+  const body = await readJson(request);
+  const entries = Array.isArray(body?.readings) ? body.readings : [];
+
+  const result = await saveReadings(env, period, entries, session.actor.id);
+  await audit(env, session, 'readings.save', { period, ...result });
+  return json(result);
+}
+
+/** Parse only — the draft goes back for review, nothing is written. */
+async function parseImport(request, env, url) {
+  const body = await readJson(request);
+  const flats = await env.DB.prepare('SELECT flat FROM flats WHERE active = 1').all();
+  const known = (flats.results ?? []).map((r) => r.flat);
+  const parsed = parseReadings(body?.text ?? '', known);
+
+  for (const e of parsed.errors) {
+    if (e.reason === 'unknown-flat') await reportError(env, 'DDP-ADMIN-001', e);
+    else await reportError(env, 'DDP-ADMIN-003', e);
+  }
+  return json({ ...parsed, known: known.length });
+}
+
+async function getPreview(env, url) {
+  const period = periodFrom(url);
+  if (!period) return problem(400, 'DDP-BILL-005', 'Specify a period.');
+
+  const grid = await readingGrid(env, period);
+  if (grid.rate == null) {
+    return problem(409, 'DDP-BILL-005', 'Set this month\'s rate before generating.');
+  }
+
+  const prev = await env.DB.prepare('SELECT rate_per_kg FROM periods WHERE period = ?')
+    .bind(previousPeriod(period)).first();
+
+  const rows = grid.flats
+    .filter((f) => f.reading != null && f.previous != null)
+    .map((f) => ({ flat: f.flat, reading: f.reading, previous: f.previous, paiseTag: f.paise_tag }));
+
+  return json({
+    ...previewGeneration({
+      rows,
+      ratePerKg: grid.rate,
+      conversionFactor: grid.conversionFactor,
+      previousRate: prev?.rate_per_kg ?? null,
+      expectedFlats: grid.total,
+    }),
+    period,
+    readMonth: grid.readMonth,
+    entered: grid.entered,
+    expected: grid.total,
+  });
+}
+
+async function postPeriod(request, env, session) {
+  const body = await readJson(request);
+  const result = await openPeriod(env, {
+    period: body?.period,
+    ratePerKg: Number(body?.ratePerKg),
+    dueDate: body?.dueDate,
+    lateFee: Number(body?.lateFee ?? 0),
+  });
+  if (result.sanity.level === 'warn') {
+    await reportError(env, 'DDP-BILL-011', { period: result.period, ...result.sanity });
+  }
+  await audit(env, session, 'period.open', result);
+  return json(result, { status: 201 });
+}
+
+async function postGenerate(env, session, path) {
+  const period = path.split('/')[4];
+  const result = await generateBills(env, period, session.actor.id);
+  await audit(env, session, 'bills.generate', result);
+  return json(result, { status: 201 });
 }
 
 // ── god mode ────────────────────────────────────────────────────────────

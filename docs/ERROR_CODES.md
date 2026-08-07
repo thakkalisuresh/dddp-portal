@@ -29,12 +29,12 @@ Ask the bot a code and it will explain it.
 | `DDP-BILL-003` | **fatal** | live | Bill total does not match its own components |
 | `DDP-BILL-004` | **fatal** | live | Bill total paise do not match the flat paise_tag |
 | `DDP-BILL-005` | error | live | Period has no rate set |
-| `DDP-BILL-006` | error | planned | Duplicate bill for (flat, period) |
-| `DDP-BILL-007` | error | planned | Generation attempted on a locked period |
+| `DDP-BILL-006` | error | live | Duplicate bill for (flat, period) |
+| `DDP-BILL-007` | error | live | Generation attempted on a locked period |
 | `DDP-BILL-008` | **fatal** | live | Late fee carries paise — reconciliation would break |
 | `DDP-BILL-009` | error | planned | Late fee cron re-applied to an already-charged bill |
 | `DDP-BILL-010` | **fatal** | live | Rate was inherited from a previous period instead of set for this one |
-| `DDP-BILL-011` | warn | planned | Rate differs sharply from the previous period |
+| `DDP-BILL-011` | warn | live | Rate differs sharply from the previous period |
 
 ## PAY
 
@@ -62,7 +62,7 @@ Ask the bot a code and it will explain it.
 |---|---|---|---|
 | `DDP-ADMIN-001` | error | live | Bulk import parsed a flat that does not exist |
 | `DDP-ADMIN-002` | error | planned | Bulk import attempted a direct write, bypassing draft review |
-| `DDP-ADMIN-003` | warn | planned | Roster CSV row skipped — malformed |
+| `DDP-ADMIN-003` | warn | live | Roster CSV row skipped — malformed |
 | `DDP-ADMIN-004` | error | live | Non-admin reached an admin route |
 
 ## SYS
@@ -78,7 +78,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-38 codes across 6 domains — 8 fatal, 18 awaiting their call site.
+38 codes across 6 domains — 8 fatal, 14 awaiting their call site.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

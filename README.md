@@ -14,9 +14,9 @@ Full design and rationale: `dddp-portal-plan.md` (kept alongside this repo).
 | — | Error-code registry + generated docs | **done** |
 | 2 | Design system, app shell, self-hosted fonts, bilingual labels | **done** |
 | 3 | Resident dashboard, login, dev seed | **done** |
-| 4 | Meter reading grid + bill generation | next |
-| 4b | Bulk reading import | |
-| 5 | UPI pay flow | |
+| 4 | Meter reading grid + bill generation | **done** |
+| 4b | Bulk reading import (paste + template) | **done** |
+| 5 | UPI pay flow | next |
 | 6 | Proof upload + review queue | |
 | 6b | Late fees · 6c Notice comments | |
 | 7 | Public site · 7b remaining admin | |
@@ -35,7 +35,7 @@ npm run dev
 
 ```bash
 npm run seed      # local dev data: 6 residents, real readings from the old portal
-npm test          # 69 tests, no network or D1 needed
+npm test          # 113 tests, no network or D1 needed
 npm run errdoc    # regenerate docs/ERROR_CODES.md after editing the registry
 ```
 
@@ -83,11 +83,12 @@ functions/
     errors.js         reportError, AppError, alert rate limiting
     http.js           json/problem responses, audit, rate limit, guard
     session.js        actor/subject sessions, roles, cookies
+    admin.js          reading grid, parsing, generation; period arithmetic
     dashboard.js      the /api/me payload; one round trip, no client identity
     upi.js            deep links; iOS needs per-app schemes, Android doesn't
 migrations/           D1 schema
 scripts/              doc generation
-test/                 69 tests
+test/                113 tests
 ```
 
 ## Notes for whoever picks this up

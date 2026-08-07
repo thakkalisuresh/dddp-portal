@@ -54,6 +54,22 @@ export async function clearRateLimit(env, mobile) {
   await env.DB.prepare('DELETE FROM login_attempts WHERE mobile = ?').bind(mobile).run();
 }
 
+/**
+ * Refusals a human can actually trigger deserve an explanation and a way
+ * forward — "Something went wrong" to a treasurer who double-clicked Generate
+ * is useless. Anything not listed here is a genuine bug and stays generic.
+ */
+const EXPECTED = {
+  'DDP-BILL-005': [409, "Set this month's rate before generating bills."],
+  'DDP-BILL-006': [409, 'Bills for this month have already been generated.'],
+  'DDP-BILL-007': [409, 'This month is locked. Bills have already been generated for it.'],
+  'DDP-BILL-010': [409, "This month has no rate of its own. Enter it — rates aren't carried forward."],
+  'DDP-BILL-001': [409, 'Some readings are missing or need fixing. Check the grid before generating.'],
+  'DDP-BILL-002': [409, 'A reading is lower than last month. Meters do not run backwards.'],
+  'DDP-BILL-008': [409, 'A late fee must be a whole number of rupees.'],
+  'DDP-AUTH-007': [403, 'Credentials cannot be changed while viewing as another resident.'],
+};
+
 /** Wrap a handler so nothing escapes unreported. */
 export async function guard(env, ctx, fn) {
   try {
@@ -61,6 +77,7 @@ export async function guard(env, ctx, fn) {
   } catch (err) {
     const code = err?.code && String(err.code).startsWith('DDP-') ? err.code : 'DDP-SYS-001';
     await reportError(env, code, err, ctx);
-    return problem(500, code, 'Something went wrong. It has been logged.');
+    const [status, message] = EXPECTED[code] ?? [500, 'Something went wrong. It has been logged.'];
+    return problem(status, code, message);
   }
 }
