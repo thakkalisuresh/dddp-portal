@@ -49,6 +49,10 @@ export const api = {
   /** Records that the resident opened their UPI app. NOT proof of payment. */
   payIntent: (billId) => request('POST', `/api/bills/${billId}/intent`),
 
+  notices:     ()            => request('GET',  '/api/notices'),
+  notice:      (id)          => request('GET',  `/api/notices/${id}`),
+  postComment: (id, body)    => request('POST', `/api/notices/${id}/comments`, { body }),
+
   /** Multipart, so it bypasses the JSON request helper. */
   async uploadProof(billId, blob) {
     const form = new FormData();
@@ -82,6 +86,10 @@ export const api = {
     rejectProof:   (id)     => request('POST', `/api/admin/proofs/${id}/reject`),
     markPaid:      (billId, note) =>
                                request('POST', `/api/admin/bills/${billId}/mark-paid`, { note }),
+    waiveLateFee:  (billId)  => request('POST', `/api/admin/bills/${billId}/waive-late-fee`),
+    setCommentHidden: (id, hidden) =>
+                               request('POST', `/api/admin/comments/${id}/${hidden ? 'hide' : 'unhide'}`),
+    runScheduled:  ()        => request('POST', '/api/admin/run-scheduled'),
 
     /** Hand out the template first so column order is guaranteed on the way back. */
     downloadTemplate(period, grid) {

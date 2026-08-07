@@ -68,6 +68,10 @@ const EXPECTED = {
   'DDP-BILL-002': [409, 'A reading is lower than last month. Meters do not run backwards.'],
   'DDP-BILL-008': [409, 'A late fee must be a whole number of rupees.'],
   'DDP-AUTH-007': [403, 'Credentials cannot be changed while viewing as another resident.'],
+  'DDP-NOTICE-001': [404, 'That notice could not be found.'],
+  'DDP-NOTICE-002': [403, 'Comments are switched off for this notice.'],
+  'DDP-NOTICE-003': [400, 'Write something, and keep it under 1200 characters.'],
+  'DDP-NOTICE-004': [429, "You've posted a few times just now. Try again in a little while."],
 };
 
 /** Wrap a handler so nothing escapes unreported. */

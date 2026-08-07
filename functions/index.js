@@ -15,6 +15,8 @@ import {
 import { previewGeneration } from './lib/billing.js';
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { readReceipt } from './lib/vision.js';
+import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
+import { listNotices, getNotice, addComment, setCommentHidden } from './lib/notices.js';
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole,
@@ -54,6 +56,17 @@ export default {
         return proofImage(env, session, path);
       }
 
+      // ── notices ───────────────────────────────────────────────────────
+      if (route === 'GET /api/notices') return json({ notices: await listNotices(env) });
+      if (request.method === 'GET' && /^\/api\/notices\/\d+$/.test(path)) {
+        const notice = await getNotice(env, Number(path.split('/')[3]),
+          { isAdmin: hasRole(session, 'admin') });
+        return notice ? json(notice) : problem(404, 'DDP-NOTICE-001', 'That notice could not be found.');
+      }
+      if (request.method === 'POST' && /^\/api\/notices\/\d+\/comments$/.test(path)) {
+        return postComment(request, env, session, path);
+      }
+
       // ── admin ─────────────────────────────────────────────────────────
       if (path.startsWith('/api/admin/')) {
         if (!hasRole(session, 'admin')) {
@@ -82,6 +95,24 @@ export default {
         if (request.method === 'POST' && /^\/api\/admin\/bills\/\d+\/mark-paid$/.test(path)) {
           return markPaid(request, env, session, path);
         }
+        if (request.method === 'POST' && /^\/api\/admin\/bills\/\d+\/waive-late-fee$/.test(path)) {
+          return waiveLateFee(env, session, path);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/comments\/\d+\/(hide|unhide)$/.test(path)) {
+          const hidden = path.endsWith('/hide');
+          const result = await setCommentHidden(env, Number(path.split('/')[4]), session.actor.id, hidden);
+          await audit(env, session, hidden ? 'comment.hide' : 'comment.unhide', result);
+          return json(result);
+        }
+        if (route === 'GET /api/admin/late-fees') {
+          return json({ preview: await applyLateFees(env, { today: '1970-01-01' }),
+                        stale: await staleIntents(env) });
+        }
+        if (route === 'POST /api/admin/run-scheduled') {
+          const result = await runScheduled(env, ctx);
+          await audit(env, session, 'cron.manual', result);
+          return json(result ?? { error: 'see error log' });
+        }
       }
 
       // ── superadmin / god mode ─────────────────────────────────────────
@@ -102,7 +133,8 @@ export default {
 
   async scheduled(event, env, ctx) {
     await assertAlerting(env);
-    // Phase 6b: late-fee application. Phase 8: nightly Drive backup.
+    await runScheduled(env, ctx);
+    // Phase 8: nightly Drive backup.
   },
 };
 
@@ -270,6 +302,42 @@ async function logIntent(env, session, path) {
 
   await audit(env, session, 'payment.intent', { billId: bill.id, total: bill.total });
   return json({ recorded: true, status: bill.status === 'unpaid' ? 'initiated' : bill.status });
+}
+
+async function postComment(request, env, session, path) {
+  // Impersonation must never post in a resident's name — a comment carries
+  // their name and flat to everyone in the building.
+  if (session.impersonating) {
+    return problem(403, 'DDP-AUTH-007', 'Cannot post while viewing as another resident.');
+  }
+  const body = await readJson(request);
+  const result = await addComment(env, {
+    noticeId: Number(path.split('/')[3]),
+    ownerId: session.actor.id,
+    body: body?.body,
+  });
+  await audit(env, session, 'comment.post', { noticeId: Number(path.split('/')[3]) });
+  return json(result, { status: 201 });
+}
+
+/**
+ * Waiving is one click and records who did it. These are neighbours, not
+ * customers — somebody will be in hospital (plan §4e).
+ */
+async function waiveLateFee(env, session, path) {
+  const billId = Number(path.split('/')[4]);
+  const bill = await env.DB.prepare(
+    'SELECT id, total, late_fee FROM bills WHERE id = ?'
+  ).bind(billId).first();
+  if (!bill) return problem(404, 'DDP-PAY-001', 'That bill could not be found.');
+  if (!bill.late_fee) return problem(409, 'DDP-BILL-009', 'No late fee to waive on this bill.');
+
+  await env.DB.prepare(
+    `UPDATE bills SET total = ?, late_fee = 0, late_fee_waived_by = ? WHERE id = ?`
+  ).bind(Math.round((bill.total - bill.late_fee) * 100) / 100, session.actor.id, billId).run();
+
+  await audit(env, session, 'late-fee.waive', { billId, amount: bill.late_fee });
+  return json({ billId, waived: bill.late_fee });
 }
 
 // ── payment proofs ──────────────────────────────────────────────────────

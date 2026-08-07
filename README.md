@@ -18,8 +18,9 @@ Full design and rationale: `dddp-portal-plan.md` (kept alongside this repo).
 | 4b | Bulk reading import (paste + template) | **done** |
 | 5 | UPI pay flow — real QR, intent logging | **done** |
 | 6 | Proof upload, vision parse, review queue | **done** |
-| 6b | Late fees · 6c Notice comments | next |
-| 7 | Public site · 7b remaining admin | |
+| 6b | Late fees — idempotent cron, waiver | **done** |
+| 6c | Notice comments — per-notice opt-in, moderation | **done** |
+| 7 | Public site · 7b remaining admin | next |
 | 8 | Backups, hardening | |
 
 Screen designs for all 19 screens were built before any app code.
@@ -35,7 +36,7 @@ npm run dev
 
 ```bash
 npm run seed      # local dev data: 6 residents, real readings from the old portal
-npm test          # 150 tests, no network or D1 needed
+npm test          # 167 tests, no network or D1 needed
 npm run errdoc    # regenerate docs/ERROR_CODES.md after editing the registry
 ```
 
@@ -86,13 +87,15 @@ functions/
     session.js        actor/subject sessions, roles, cookies
     admin.js          reading grid, parsing, generation; period arithmetic
     dashboard.js      the /api/me payload; one round trip, no client identity
+    cron.js           late fees; idempotence is the property that matters
+    notices.js        comments — opt-in per notice, real names, soft hide
     proof.js          upload validation, claim assessment, queue shaping
     qr.js             QR matrix; tests decode it with an independent decoder
     vision.js         optional OCR; never a gate on paying a bill
     upi.js            deep links; iOS needs per-app schemes, Android doesn't
 migrations/           D1 schema
 scripts/              doc generation
-test/                150 tests
+test/                167 tests
 ```
 
 ## Notes for whoever picks this up

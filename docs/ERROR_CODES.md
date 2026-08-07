@@ -32,7 +32,7 @@ Ask the bot a code and it will explain it.
 | `DDP-BILL-006` | error | live | Duplicate bill for (flat, period) |
 | `DDP-BILL-007` | error | live | Generation attempted on a locked period |
 | `DDP-BILL-008` | **fatal** | live | Late fee carries paise — reconciliation would break |
-| `DDP-BILL-009` | error | planned | Late fee cron re-applied to an already-charged bill |
+| `DDP-BILL-009` | error | live | Late fee cron re-applied to an already-charged bill |
 | `DDP-BILL-010` | **fatal** | live | Rate was inherited from a previous period instead of set for this one |
 | `DDP-BILL-011` | warn | live | Rate differs sharply from the previous period |
 
@@ -58,6 +58,15 @@ Ask the bot a code and it will explain it.
 | `DDP-PROOF-006` | warn | live | Uploaded amount does not match the bill |
 | `DDP-PROOF-007` | warn | live | Vision provider returned an error status |
 
+## NOTICE
+
+| Code | Severity | Status | Meaning |
+|---|---|---|---|
+| `DDP-NOTICE-001` | warn | live | Comment or notice not found |
+| `DDP-NOTICE-002` | warn | live | Comment posted to a notice that has comments switched off |
+| `DDP-NOTICE-003` | warn | live | Comment rejected — empty or too long |
+| `DDP-NOTICE-004` | warn | live | Comment rate limit reached |
+
 ## ADMIN
 
 | Code | Severity | Status | Meaning |
@@ -73,14 +82,15 @@ Ask the bot a code and it will explain it.
 |---|---|---|---|
 | `DDP-SYS-001` | **fatal** | live | Unhandled exception in a Worker route |
 | `DDP-SYS-002` | **fatal** | planned | D1 query failed |
-| `DDP-SYS-003` | error | planned | Nightly Drive backup failed |
+| `DDP-SYS-003` | error | live | Nightly Drive backup failed |
 | `DDP-SYS-004` | error | planned | Telegram alert delivery failed |
 | `DDP-SYS-005` | **fatal** | live | Telegram binding missing at startup — alerts are inert |
+| `DDP-SYS-007` | warn | live | Nightly run summary — late fees applied or payments left unconfirmed |
 | `DDP-SYS-006` | warn | live | Alert rate limit reached; further alerts suppressed this window |
 
 ---
 
-40 codes across 6 domains — 8 fatal, 6 awaiting their call site.
+45 codes across 7 domains — 8 fatal, 4 awaiting their call site.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

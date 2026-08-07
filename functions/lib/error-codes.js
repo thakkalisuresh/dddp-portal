@@ -29,7 +29,7 @@ export const ERROR_CODES = {
   'DDP-BILL-006': { severity: 'error', message: 'Duplicate bill for (flat, period)' },
   'DDP-BILL-007': { severity: 'error', message: 'Generation attempted on a locked period' },
   'DDP-BILL-008': { severity: 'fatal', message: 'Late fee carries paise — reconciliation would break' },
-  'DDP-BILL-009': { severity: 'error', message: 'Late fee cron re-applied to an already-charged bill', planned: true },
+  'DDP-BILL-009': { severity: 'error', message: 'Late fee cron re-applied to an already-charged bill' },
   'DDP-BILL-010': { severity: 'fatal', message: 'Rate was inherited from a previous period instead of set for this one' },
   'DDP-BILL-011': { severity: 'warn',  message: 'Rate differs sharply from the previous period' },
 
@@ -58,14 +58,21 @@ export const ERROR_CODES = {
   // ── SYS ────────────────────────────────────────────────────────────────
   'DDP-SYS-001': { severity: 'fatal', message: 'Unhandled exception in a Worker route' },
   'DDP-SYS-002': { severity: 'fatal', message: 'D1 query failed', planned: true },
-  'DDP-SYS-003': { severity: 'error', message: 'Nightly Drive backup failed', planned: true },
+  'DDP-SYS-003': { severity: 'error', message: 'Nightly Drive backup failed' },
   'DDP-SYS-004': { severity: 'error', message: 'Telegram alert delivery failed', planned: true },
   'DDP-SYS-005': { severity: 'fatal', message: 'Telegram binding missing at startup — alerts are inert' },
+  'DDP-SYS-007': { severity: 'warn',  message: 'Nightly run summary — late fees applied or payments left unconfirmed' },
   'DDP-SYS-006': { severity: 'warn',  message: 'Alert rate limit reached; further alerts suppressed this window' },
+
+  // ── NOTICE ─────────────────────────────────────────────────────────────
+  'DDP-NOTICE-001': { severity: 'warn',  message: 'Comment or notice not found' },
+  'DDP-NOTICE-002': { severity: 'warn',  message: 'Comment posted to a notice that has comments switched off' },
+  'DDP-NOTICE-003': { severity: 'warn',  message: 'Comment rejected — empty or too long' },
+  'DDP-NOTICE-004': { severity: 'warn',  message: 'Comment rate limit reached' },
 };
 
 /** Domains in registry order, for the generated docs. */
-export const DOMAINS = ['AUTH', 'BILL', 'PAY', 'PROOF', 'ADMIN', 'SYS'];
+export const DOMAINS = ['AUTH', 'BILL', 'PAY', 'PROOF', 'NOTICE', 'ADMIN', 'SYS'];
 
 export function domainOf(code) {
   return code.split('-')[1];

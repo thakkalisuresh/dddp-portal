@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notices — Diamond Park</title>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+<style>
+  .notice { border-left: 3px solid var(--accent); padding-left: var(--s-4); }
+  .notice--event { border-left-color: var(--awaiting); }
+  .comment { padding: var(--s-3) 0; border-bottom: 1px solid var(--border); }
+  .comment__head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s-3); }
+  .comment__who { font-family: var(--font-ui); font-size: var(--text-sm); font-weight: 600; }
+  .comment__when { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--ink-muted); }
+  .comment--hidden { opacity: .55; font-style: italic; }
+  textarea.input { min-height: 84px; font-family: var(--font-body); resize: vertical; }
+</style>
+</head>
+<body>
+<div class="godbar" id="godbar" hidden></div>
+<header class="appbar">
+  <span class="appbar__who" id="who">Loading…</span>
+  <a class="appbar__action" href="/dashboard.html">My bill</a>
+</header>
+<main class="page stack--lg stack" id="main"><p class="muted">Loading notices…</p></main>
+<script type="module" src="js/notices.js"></script>
+</body>
+</html>
