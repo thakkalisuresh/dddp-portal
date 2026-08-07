@@ -17,6 +17,17 @@ reading them are in Kerala.
 
 ## What is deliberately not recorded
 
+### Navigation is recorded; clicking is not
+
+The distinction is between *where someone went* and *how they moved a mouse*.
+
+Recorded: every page opened, every tab switched to inside the admin console,
+every notice opened, every time the activity log itself is read. A superadmin
+can reconstruct the shape of any session — which screens, in what order, at
+what time, to the second.
+
+Not recorded:
+
 **Individual clicks, scrolls, keystrokes and mouse movement.** Logging those
 would mean recording residents' behaviour in fine detail, permanently,
 readable by whoever currently holds the superadmin role. The debugging value
@@ -32,6 +43,10 @@ submissions and nothing else. There is no analytics script, no third-party
 tag, and no font CDN request.
 
 ## Who can read it
+
+Reading the activity log is itself logged (`god:timeline`), including which
+resident was being filtered for. Someone browsing residents' activity leaves
+the same trail as anyone else.
 
 The full timeline is **superadmin only**. Admins see the operational screens
 they need — readings, proofs, residents, notices — but not a per-resident

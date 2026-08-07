@@ -11,7 +11,7 @@
  */
 
 import { api, ApiError } from './api.js';
-import { trackPage } from './track.js';
+import { trackPage, trackAction } from './track.js';
 import { $, el, esc, renderGodBanner, showError } from './ui.js';
 
 const main = $('#main');
@@ -42,6 +42,9 @@ async function load() {
   if (filters.since) params.set('since', filters.since);
   params.set('limit', '400');
 
+  // Reading the log is itself an act worth recording — a superadmin browsing
+  // residents' activity should leave the same trail as anyone else.
+  trackAction('god:timeline', { flat: filters.flat || 'all', kind: filters.kind || 'all' });
   const { timeline, generatedAt } = await api.god.timeline(`?${params}`);
   render(timeline, generatedAt);
 }

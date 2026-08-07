@@ -10,7 +10,7 @@
  */
 
 import { api, ApiError } from './api.js';
-import { trackPage } from './track.js';
+import { trackPage, trackAction } from './track.js';
 import { $, el, esc, renderGodBanner, showError } from './ui.js';
 import { money, kg, periodLabel, dayLabel } from './i18n.js';
 
@@ -57,6 +57,9 @@ function renderTabs() {
 async function show(id) {
   const tab = TABS.find((t) => t.id === id && t.render) ?? TABS.find((t) => t.render);
   location.hash = tab.id;
+  // Tabs change the view without a page load, so trackPage never fires for
+  // them. Without this, an admin's whole session reads as one visit to /admin.
+  trackAction(`admin:${tab.id}`);
   for (const button of document.querySelectorAll('[data-tab]')) {
     button.setAttribute('aria-current', String(button.dataset.tab === tab.id));
   }

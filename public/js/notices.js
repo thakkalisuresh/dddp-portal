@@ -7,7 +7,7 @@
  */
 
 import { api, ApiError } from './api.js';
-import { trackPage } from './track.js';
+import { trackPage, trackAction } from './track.js';
 import { $, el, esc, renderGodBanner, showError } from './ui.js';
 import { dayLabel } from './i18n.js';
 
@@ -54,6 +54,7 @@ async function renderList() {
 }
 
 async function renderOne(id) {
+  trackAction('notice:open', { id });
   const n = await api.notice(id);
   const list = el('div', { class: 'stack', style: 'gap:0' });
   const draw = () => list.replaceChildren(...n.comments.map(commentRow));
