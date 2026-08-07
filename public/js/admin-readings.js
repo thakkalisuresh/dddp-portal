@@ -8,6 +8,7 @@
  */
 
 import { api, ApiError } from './api.js';
+import { trackPage } from './track.js';
 import { $, el, esc, renderGodBanner, showError } from './ui.js';
 import { money, kg, periodLabel } from './i18n.js';
 
@@ -20,6 +21,7 @@ let period = params.get('period');
 let grid = null;
 const pending = new Map();   // flat -> reading, queued while offline
 
+trackPage('/admin/readings');
 init();
 
 async function init() {

@@ -54,6 +54,8 @@ export const ERROR_CODES = {
   'DDP-ADMIN-002': { severity: 'error', message: 'Bulk import attempted a direct write, bypassing draft review', planned: true },
   'DDP-ADMIN-003': { severity: 'warn',  message: 'Roster CSV row skipped — malformed' },
   'DDP-ADMIN-004': { severity: 'error', message: 'Non-admin reached an admin route' },
+  'DDP-ADMIN-005': { severity: 'warn',  message: 'Flat transfer blocked — the outgoing owner has unpaid bills' },
+  'DDP-ADMIN-006': { severity: 'fatal', message: 'Role change refused — it would leave no superadmin' },
 
   // ── SYS ────────────────────────────────────────────────────────────────
   'DDP-SYS-001': { severity: 'fatal', message: 'Unhandled exception in a Worker route' },

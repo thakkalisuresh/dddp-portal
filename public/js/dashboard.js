@@ -7,6 +7,7 @@
  */
 
 import { api, ApiError } from './api.js';
+import { trackPage } from './track.js';
 import { $, el, esc, statusChip, billBreakdown, renderGodBanner, showError } from './ui.js';
 import { money, kg, periodLabel, dayLabel, bilingual } from './i18n.js';
 import { drawQr } from './qr.js';
@@ -19,6 +20,7 @@ const UPI_APPS = [
   { key: 'paytm',   label: 'Paytm',      colour: '#00BAF2' },
 ];
 
+trackPage('/dashboard');
 init();
 
 async function init() {

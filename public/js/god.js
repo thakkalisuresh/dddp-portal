@@ -1,0 +1,113 @@
+/**
+ * The activity log — everything that has happened, newest first.
+ *
+ * Superadmin only. Actions, page views and errors are merged into one
+ * timeline, because "what happened to this resident on Tuesday" is a question
+ * that spans all three and is unanswerable if they live in separate screens.
+ *
+ * What is NOT here, by design: individual clicks and keystrokes. See
+ * docs/PRIVACY.md — the people this records live in the same building as the
+ * people who can read it.
+ */
+
+import { api, ApiError } from './api.js';
+import { trackPage } from './track.js';
+import { $, el, esc, renderGodBanner, showError } from './ui.js';
+
+const main = $('#main');
+let filters = { flat: '', kind: '', q: '', since: '' };
+
+trackPage('/god');
+init();
+
+async function init() {
+  try {
+    const me = await api.me();
+    if (me.role !== 'superadmin') {
+      main.replaceChildren(el('div', { class: 'note note--bad' }, 'Superadmin only.'));
+      return;
+    }
+    $('#who').innerHTML = `God mode <span>· ${esc(me.name)}</span>`;
+    renderGodBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
+    await load();
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) { location.href = '/login.html'; return; }
+    showError(main, err);
+  }
+}
+
+async function load() {
+  const params = new URLSearchParams();
+  if (filters.flat) params.set('flat', filters.flat.toUpperCase());
+  if (filters.since) params.set('since', filters.since);
+  params.set('limit', '400');
+
+  const { timeline, generatedAt } = await api.god.timeline(`?${params}`);
+  render(timeline, generatedAt);
+}
+
+function render(rows, generatedAt) {
+  const visible = rows.filter((r) => {
+    if (filters.kind && r.kind !== filters.kind) return false;
+    if (filters.q) {
+      const hay = `${r.name} ${r.actor ?? ''} ${r.subject ?? ''} ${r.detail ?? ''}`.toLowerCase();
+      if (!hay.includes(filters.q.toLowerCase())) return false;
+    }
+    return true;
+  });
+
+  main.replaceChildren(
+    filterBar(),
+    el('div', { class: 'panel', style: 'padding:var(--s-3) var(--s-4)' },
+      el('p', { class: 'small muted' },
+        `${visible.length} of ${rows.length} events · all times IST · generated ${generatedAt}`)),
+    ...(visible.length
+      ? visible.map(eventRow)
+      : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nothing matches those filters.')])
+  );
+}
+
+function filterBar() {
+  const flat = el('input', { class: 'input', value: filters.flat, placeholder: 'e.g. 4A', id: 'f-flat' });
+  const since = el('input', { class: 'input num', value: filters.since, placeholder: 'YYYY-MM-DD', id: 'f-since' });
+  const q = el('input', { class: 'input', value: filters.q, placeholder: 'login, proof, DDP-…', id: 'f-q' });
+
+  const kind = el('select', { class: 'input', id: 'f-kind' },
+    ...[['', 'Everything'], ['action', 'Actions'], ['page', 'Page views'],
+        ['error', 'Server errors'], ['client-error', 'Browser errors']]
+      .map(([value, label]) =>
+        el('option', { value, selected: filters.kind === value || null }, label)));
+
+  const apply = async () => {
+    filters = { flat: flat.value.trim(), kind: kind.value, q: q.value.trim(), since: since.value.trim() };
+    await load();
+  };
+
+  // Text and type filter locally; flat and date re-query, because they change
+  // which rows the database returns at all.
+  q.addEventListener('input', () => { filters.q = q.value; load(); });
+  kind.addEventListener('change', apply);
+
+  return el('div', { class: 'filters' },
+    el('div', { class: 'field' }, el('label', { for: 'f-flat' }, 'Flat'), flat),
+    el('div', { class: 'field' }, el('label', { for: 'f-kind' }, 'Type'), kind),
+    el('div', { class: 'field' }, el('label', { for: 'f-since' }, 'Since'), since),
+    el('div', { class: 'field', style: 'flex:1 1 200px' }, el('label', { for: 'f-q' }, 'Search'), q),
+    el('button', { class: 'btn btn--sm', type: 'button', onclick: apply }, 'Apply'));
+}
+
+function eventRow(r) {
+  const who = r.actor && r.subject && r.actor !== r.subject
+    // Under god mode these differ, and that difference is the whole point of
+    // keeping actor and subject apart in the session.
+    ? `${r.actor} → ${r.subject}`
+    : (r.subject ?? r.actor ?? 'system');
+
+  return el('div', { class: 'ev' },
+    el('span', { class: 'ev__at' }, r.atIST ?? r.at),
+    el('span', { class: `ev__kind ev__kind--${r.kind}` }, r.kind === 'client-error' ? 'browser' : r.kind),
+    el('div', {},
+      el('span', { class: 'ev__name' }, r.name),
+      el('span', { class: 'muted' }, ` · ${who}`),
+      r.detail ? el('div', { class: 'ev__detail' }, String(r.detail).slice(0, 300)) : null));
+}

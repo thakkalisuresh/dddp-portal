@@ -22,6 +22,7 @@ Full design and rationale: `dddp-portal-plan.md` (kept alongside this repo).
 | 6c | Notice comments — per-notice opt-in, moderation | **done** |
 | 7 | Public site — notices, committee, contact form | **done** |
 | 7b | Admin console, profile, forced password change | **done** |
+| — | Activity log, ownership transfer, editable committee | **done** |
 | 8 | Backups, hardening | next |
 
 Screen designs for all 19 screens were built before any app code.
@@ -37,7 +38,7 @@ npm run dev
 
 ```bash
 npm run seed      # local dev data: 6 residents, real readings from the old portal
-npm test          # 176 tests, no network or D1 needed
+npm test          # 193 tests, no network or D1 needed
 npm run errdoc    # regenerate docs/ERROR_CODES.md after editing the registry
 ```
 
@@ -59,6 +60,11 @@ stored per period and snapshotted onto each bill, like the rate.
 because a personal VPA gives no usable reference field. **Late fees are therefore whole
 rupees only**: ₹329.04 + ₹50 = ₹379.**04**, never ₹379.54. Enforced by a `CHECK` constraint,
 a guard in `applyLateFee`, and a test.
+
+**1b · Bills and proofs belong to the PERSON, not the flat.** When a flat is sold
+the incoming owner must not see the previous owner's bills or open their receipts.
+`bills.owner_id` and `payment_proofs.owner_id` enforce it; readings stay keyed to the
+flat alone, because a meter reading is a property fact. See `docs/PRIVACY.md`.
 
 **2 · The client never sends an identity.** No `?flat=4A`. The subject is always derived
 from the session token server-side. Endpoints that do take a flat id are admin-only and
@@ -92,12 +98,13 @@ functions/
     notices.js        comments — opt-in per notice, real names, soft hide
     proof.js          upload validation, claim assessment, queue shaping
     public.js         the unauthenticated surface; leaks nothing private
+    tenancy.js        flat transfers, role guards, the merged timeline
     qr.js             QR matrix; tests decode it with an independent decoder
     vision.js         optional OCR; never a gate on paying a bill
     upi.js            deep links; iOS needs per-app schemes, Android doesn't
 migrations/           D1 schema
 scripts/              doc generation
-test/                176 tests
+test/                193 tests
 ```
 
 ## Notes for whoever picks this up

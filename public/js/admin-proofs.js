@@ -7,11 +7,13 @@
  */
 
 import { api, ApiError } from './api.js';
+import { trackPage } from './track.js';
 import { $, el, esc, renderGodBanner, showError } from './ui.js';
 import { money, periodLabel } from './i18n.js';
 
 const main = $('#main');
 
+trackPage('/admin/proofs');
 init();
 
 async function init() {
@@ -76,13 +78,13 @@ function proofRow(p) {
       loading: 'lazy',
     }),
     el('div', { class: 'qmeta' },
-      el('b', {}, `Flat ${esc(p.flat)} · ${esc(p.name ?? '')}`),
+      el('b', {}, `Flat ${p.flat} · ${p.name ?? ''}`),
       el('div', { class: mismatch ? 'bad' : '' },
         p.unreadable
           ? `Billed ${money(p.billed)} · amount not readable`
           : `Claimed ${money(p.claimedAmount)} · Billed ${money(p.billed)}` +
             (mismatch ? ` · short by ${money(Math.max(0, p.billed - p.claimedAmount))}` : '')),
-      p.utr ? el('div', {}, `UTR ${esc(p.utr)}`) : null),
+      p.utr ? el('div', {}, `UTR ${p.utr}`) : null),
     el('div', { class: 'qact' },
       el('a', { class: 'btn btn--sm btn--quiet', href: `/api/proof/${p.proofId}/image`, target: '_blank' }, 'Open'),
       el('button', {
@@ -98,7 +100,7 @@ function proofRow(p) {
 function claimedRow(b) {
   return el('div', { class: 'qrow' },
     el('div', { class: 'qmeta' },
-      el('b', {}, `Flat ${esc(b.flat)} · ${esc(b.name ?? '')}`),
+      el('b', {}, `Flat ${b.flat} · ${b.name ?? ''}`),
       el('div', {}, `${periodLabel(b.period)} · ${money(b.billed)}`)),
     el('div', { class: 'qact' },
       el('button', {

@@ -7,11 +7,13 @@
  */
 
 import { api, ApiError } from './api.js';
+import { trackPage } from './track.js';
 import { $, el, esc, renderGodBanner, showError } from './ui.js';
 import { bilingual } from './i18n.js';
 
 const main = $('#main');
 
+trackPage('/profile');
 init();
 
 async function init() {
@@ -44,7 +46,7 @@ function render(me) {
       el('label', {}, 'Mobile number'),
       el('input', { class: 'input num', value: me.mobile ?? '', readonly: true }),
       el('span', { class: 'field__hint' },
-        `This is your login and links you to flat ${esc(me.flat)}. To change it, contact the treasurer.`)),
+        `This is your login and links you to flat ${me.flat}. To change it, contact the treasurer.`)),
     el('button', {
       class: 'btn', type: 'button',
       onclick: async () => {

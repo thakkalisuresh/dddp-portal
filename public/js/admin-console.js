@@ -10,6 +10,7 @@
  */
 
 import { api, ApiError } from './api.js';
+import { trackPage } from './track.js';
 import { $, el, esc, renderGodBanner, showError } from './ui.js';
 import { money, kg, periodLabel, dayLabel } from './i18n.js';
 
@@ -27,6 +28,7 @@ const TABS = [
   { id: 'errors',    label: 'Errors',    render: errorsPanel, superadmin: true },
 ];
 
+trackPage('/admin');
 init();
 
 async function init() {
@@ -153,8 +155,8 @@ async function residentsPanel() {
     ...residents.map((r) =>
       el('div', { class: 'rowitem' },
         el('div', { class: 'rowitem__main' },
-          el('b', {}, `${esc(r.flat)} · ${esc(r.name)}`),
-          el('div', {}, `${esc(r.mobile)}${r.email ? ' · ' + esc(r.email) : ''}`)),
+          el('b', {}, `${r.flat} · ${r.name}`),
+          el('div', {}, `${r.mobile}${r.email ? ' · ' + r.email : ''}`)),
         r.role !== 'owner' ? el('span', { class: 'chip chip--neutral' }, r.role) : null,
         r.must_change_pw ? el('span', { class: 'chip chip--awaiting' }, 'Temp password') : null,
         el('button', {
@@ -177,7 +179,7 @@ async function residentsPanel() {
  */
 function otpPanel(result, who) {
   return el('div', { class: 'note note--good' },
-    el('p', { class: 'label', style: 'color:var(--accent)' }, `Temporary password for ${esc(who)}`),
+    el('p', { class: 'label', style: 'color:var(--accent)' }, `Temporary password for ${who}`),
     el('p', { style: 'font-family:var(--font-ui);font-size:var(--text-xl);font-weight:600;margin:var(--s-2) 0' },
       result.oneTimePassword),
     el('a', { class: 'btn btn--block', href: result.whatsapp, target: '_blank', rel: 'noopener' },
@@ -224,7 +226,7 @@ async function noticesPanel() {
     ...notices.map((n) =>
       el('div', { class: 'rowitem' },
         el('div', { class: 'rowitem__main' },
-          el('b', {}, esc(n.title)),
+          el('b', {}, n.title),
           el('div', {}, `${dayLabel(n.postedAt)} · ${n.commentCount} replies`)),
         el('button', {
           class: 'btn btn--sm btn--quiet', type: 'button',
@@ -255,9 +257,9 @@ async function messagesPanel() {
       ? messages.map((m) =>
           el('div', { class: 'rowitem', style: m.handled_at ? 'opacity:.55' : '' },
             el('div', { class: 'rowitem__main' },
-              el('b', {}, esc(m.name)),
+              el('b', {}, m.name),
               el('div', {}, [m.email, m.phone].filter(Boolean).map(esc).join(' · ') || 'no contact given'),
-              el('p', { style: 'margin-top:var(--s-2)' }, esc(m.body))),
+              el('p', { style: 'margin-top:var(--s-2)' }, m.body)),
             m.handled_at
               ? el('span', { class: 'chip chip--paid' }, 'Done')
               : el('button', {
@@ -285,7 +287,7 @@ async function archivePanel() {
             ? el('div', { class: 'gone' }, 'Image deleted')
             : el('img', { src: `/api/proof/${p.id}/image`, alt: `Proof from ${p.flat}`, loading: 'lazy' }),
           el('div', { class: 'b' },
-            `${esc(p.flat)} · ${periodLabel(p.period)}`,
+            `${p.flat} · ${periodLabel(p.period)}`,
             el('div', { class: 'muted' },
               `${p.parsed_amount != null ? money(p.parsed_amount) : 'unread'} · ${p.status}`),
             p.deleted_at
@@ -317,7 +319,7 @@ async function errorsPanel() {
             el('span', { class: `sev sev--${e.severity}` }, e.severity.toUpperCase()),
             el('div', { class: 'rowitem__main' },
               el('b', {}, e.code),
-              el('div', {}, esc(e.message ?? '')),
+              el('div', {}, e.message ?? ''),
               el('div', { class: 'muted' }, `${e.count}× · last ${e.last_seen}`))))
       : [el('div', { class: 'note note--good' }, 'Nothing logged in the last week.')])
   );

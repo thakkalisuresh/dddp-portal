@@ -50,6 +50,7 @@ export const api = {
   payIntent: (billId) => request('POST', `/api/bills/${billId}/intent`),
 
   updateProfile: (name, email) => request('PATCH', '/api/me', { name, email }),
+  trackActivity: (body)      => request('POST', '/api/activity', body),
   notices:     ()            => request('GET',  '/api/notices'),
   notice:      (id)          => request('GET',  `/api/notices/${id}`),
   postComment: (id, body)    => request('POST', `/api/notices/${id}/comments`, { body }),
@@ -122,6 +123,7 @@ export const api = {
     impersonate: (id, write = false) => request('POST', `/api/god/impersonate/${id}`, { write }),
     exit:        ()         => request('POST', '/api/god/exit'),
     errors:      ()         => request('GET',  '/api/god/errors'),
+    timeline:    (params = '') => request('GET', `/api/god/timeline${params}`),
   },
 };
 

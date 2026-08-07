@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activity log — Diamond Park</title>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+<style>
+  .filters { display: flex; gap: var(--s-2); flex-wrap: wrap; align-items: flex-end;
+             padding: var(--s-4); background: var(--surface); border-bottom: 1px solid var(--border); }
+  .filters .field { flex: 0 1 160px; }
+  .ev { display: grid; grid-template-columns: 190px 96px 1fr; gap: var(--s-3);
+        padding: var(--s-2) var(--s-4); border-bottom: 1px solid var(--border);
+        font-size: var(--text-sm); align-items: baseline; }
+  .ev__at { font-family: var(--font-ui); font-variant-numeric: tabular-nums;
+            color: var(--ink-muted); font-size: var(--text-xs); white-space: nowrap; }
+  .ev__kind { font-family: var(--font-ui); font-size: 10px; font-weight: 700; letter-spacing: .08em;
+              text-transform: uppercase; padding: 2px 6px; border-radius: var(--radius);
+              border: 1px solid; text-align: center; }
+  .ev__kind--action { color: var(--accent); background: var(--accent-wash); border-color: var(--accent-line); }
+  .ev__kind--page   { color: var(--ink-muted); background: #F5F4EF; border-color: var(--border); }
+  .ev__kind--error  { color: var(--overdue); background: var(--overdue-wash); border-color: var(--overdue-line); }
+  .ev__kind--client-error { color: var(--awaiting); background: var(--awaiting-wash); border-color: var(--awaiting-line); }
+  .ev__name { font-family: var(--font-ui); font-weight: 600; }
+  .ev__detail { color: var(--ink-muted); font-size: var(--text-xs); word-break: break-word; }
+  @media (max-width: 640px) { .ev { grid-template-columns: 1fr; gap: var(--s-1); } }
+</style>
+</head>
+<body>
+<div class="godbar" id="godbar" hidden></div>
+<header class="appbar">
+  <span class="appbar__who" id="who">Loading…</span>
+  <a class="appbar__action" href="/admin/index.html">Admin</a>
+</header>
+<main class="page page--wide" id="main"><p class="muted">Loading the log…</p></main>
+<script type="module" src="js/god.js"></script>
+</body>
+</html>

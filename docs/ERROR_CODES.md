@@ -75,6 +75,8 @@ Ask the bot a code and it will explain it.
 | `DDP-ADMIN-002` | error | planned | Bulk import attempted a direct write, bypassing draft review |
 | `DDP-ADMIN-003` | warn | live | Roster CSV row skipped — malformed |
 | `DDP-ADMIN-004` | error | live | Non-admin reached an admin route |
+| `DDP-ADMIN-005` | warn | live | Flat transfer blocked — the outgoing owner has unpaid bills |
+| `DDP-ADMIN-006` | **fatal** | live | Role change refused — it would leave no superadmin |
 
 ## SYS
 
@@ -90,7 +92,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-45 codes across 7 domains — 8 fatal, 4 awaiting their call site.
+47 codes across 7 domains — 9 fatal, 4 awaiting their call site.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

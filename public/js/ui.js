@@ -8,7 +8,12 @@ import { money, en } from './i18n.js';
 export const $  = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
-/** Escape anything that came from a resident. Comments and names go through here. */
+/**
+ * Escape for use inside an HTML string — `innerHTML` or an `html:` attribute.
+ *
+ * NOT for text passed to el(): el() builds text nodes, which are already inert,
+ * so escaping first makes the entities render literally ("&quot;" on screen).
+ */
 export function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]

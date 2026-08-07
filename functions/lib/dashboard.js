@@ -58,6 +58,10 @@ export function shapeBill(bill, period, today = new Date().toISOString().slice(0
 
 export async function dashboardPayload(env, subject, userAgent = '') {
   const flat = subject.flat;
+  // Bills follow the PERSON, not the flat. After a sale the new owner must not
+  // see the previous owner's bills, and vice versa. Readings are different —
+  // a meter reading is a property fact and carries across.
+  const ownerId = subject.id;
 
   const [flatRow, billRow, readings, bills] = await Promise.all([
     env.DB.prepare('SELECT flat, floor, paise_tag FROM flats WHERE flat = ?').bind(flat).first(),
@@ -65,9 +69,9 @@ export async function dashboardPayload(env, subject, userAgent = '') {
     env.DB.prepare(
       `SELECT b.*, p.due_date, p.late_fee AS period_late_fee, p.status AS period_status
          FROM bills b JOIN periods p ON p.period = b.period
-        WHERE b.flat = ?
+        WHERE b.flat = ? AND (b.owner_id IS NULL OR b.owner_id = ?)
         ORDER BY b.period DESC LIMIT 1`
-    ).bind(flat).first(),
+    ).bind(flat, ownerId).first(),
 
     env.DB.prepare(
       `SELECT period, reading, read_on FROM readings WHERE flat = ? ORDER BY period DESC LIMIT ?`
@@ -75,8 +79,9 @@ export async function dashboardPayload(env, subject, userAgent = '') {
 
     env.DB.prepare(
       `SELECT period, consumption, rate_per_kg, total, status, late_fee
-         FROM bills WHERE flat = ? ORDER BY period DESC LIMIT ?`
-    ).bind(flat, BILL_HISTORY).all(),
+         FROM bills WHERE flat = ? AND (owner_id IS NULL OR owner_id = ?)
+        ORDER BY period DESC LIMIT ?`
+    ).bind(flat, ownerId, BILL_HISTORY).all(),
   ]);
 
   const period = billRow

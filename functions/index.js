@@ -17,7 +17,8 @@ import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { readReceipt } from './lib/vision.js';
 import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden } from './lib/notices.js';
-import { publicNotices, submitMessage, fingerprintOf, COMMITTEE, AMENITIES } from './lib/public.js';
+import { publicNotices, submitMessage, fingerprintOf, AMENITIES } from './lib/public.js';
+import { transferFlat, canChangeRole, outstandingFor, mergeTimeline, toIST } from './lib/tenancy.js';
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole,
@@ -43,7 +44,14 @@ export default {
 
       // ── public: no session required ───────────────────────────────────
       if (route === 'GET /api/public/notices') {
-        return json({ notices: await publicNotices(env), committee: COMMITTEE, amenities: AMENITIES });
+        const committee = await env.DB.prepare(
+          'SELECT role, name, flat, phone FROM committee WHERE active = 1 ORDER BY sort'
+        ).all();
+        return json({
+          notices: await publicNotices(env),
+          committee: committee.results ?? [],
+          amenities: AMENITIES,
+        });
       }
       if (route === 'POST /api/public/contact') {
         const body = await readJson(request);
@@ -58,6 +66,7 @@ export default {
       if (route === 'GET /api/me') return me(env, session, request);
       if (route === 'POST /api/password') return changePassword(request, env, session);
       if (route === 'PATCH /api/me') return patchProfile(request, env, session);
+      if (route === 'POST /api/activity') return recordActivity(request, env, session);
       if (request.method === 'POST' && /^\/api\/bills\/\d+\/intent$/.test(path)) {
         return logIntent(env, session, path);
       }
@@ -133,6 +142,12 @@ export default {
           await audit(env, session, 'message.handled', { id });
           return json({ id, handled: true });
         }
+        if (route === 'POST /api/admin/transfer') return postTransfer(request, env, session);
+        if (route === 'GET /api/admin/committee') {
+          const rows = await env.DB.prepare('SELECT * FROM committee ORDER BY sort').all();
+          return json({ committee: rows.results ?? [] });
+        }
+        if (route === 'PUT /api/admin/committee') return putCommittee(request, env, session);
         if (route === 'GET /api/admin/periods') {
           const rows = await env.DB.prepare('SELECT * FROM periods ORDER BY period DESC').all();
           return json({ periods: rows.results ?? [] });
@@ -169,6 +184,7 @@ export default {
         if (route.startsWith('POST /api/god/impersonate/')) return impersonate(request, env, session, path);
         if (route === 'POST /api/god/exit') return exitImpersonation(env, session);
         if (route === 'GET /api/god/errors') return errorLog(env);
+        if (route === 'GET /api/god/timeline') return timeline(env, url);
       }
 
       return problem(404, 'DDP-SYS-001', 'No such endpoint.');
@@ -196,7 +212,7 @@ async function login(request, env, ctx) {
   }
 
   const owner = await env.DB.prepare(
-    'SELECT id, name, flat, role, pw_hash, pw_salt, must_change_pw FROM owners WHERE mobile = ?'
+    'SELECT id, name, flat, role, pw_hash, pw_salt, must_change_pw FROM owners WHERE mobile = ? AND active = 1'
   ).bind(mobile).first();
 
   // Same response either way — don't leak which mobiles are registered.
@@ -320,8 +336,9 @@ async function logIntent(env, session, path) {
   const billId = Number(path.split('/')[3]);
 
   const bill = await env.DB.prepare(
-    'SELECT id, flat, status, total FROM bills WHERE id = ? AND flat = ?'
-  ).bind(billId, session.subject.flat).first();
+    `SELECT id, flat, status, total FROM bills
+      WHERE id = ? AND flat = ? AND (owner_id IS NULL OR owner_id = ?)`
+  ).bind(billId, session.subject.flat, session.subject.id).first();
 
   if (!bill) return problem(404, 'DDP-PAY-001', 'That bill could not be found.');
 
@@ -476,6 +493,15 @@ async function patchResident(request, env, session, path) {
   if (b?.mobile !== undefined) { fields.push('mobile = ?'); values.push(String(b.mobile).replace(/\D/g, '')); }
   // Only a superadmin may change roles — an admin must not promote themselves.
   if (b?.role !== undefined && hasRole(session, 'superadmin')) {
+    const target = await env.DB.prepare('SELECT id, role FROM owners WHERE id = ?').bind(id).first();
+    const count = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM owners WHERE role = 'superadmin' AND active = 1"
+    ).first();
+    const verdict = canChangeRole({ target, newRole: b.role, superadminCount: count?.n ?? 0 });
+    if (!verdict.ok) {
+      await reportError(env, 'DDP-ADMIN-006', { id, newRole: b.role, count: count?.n });
+      return problem(409, 'DDP-ADMIN-006', verdict.message);
+    }
     fields.push('role = ?'); values.push(b.role);
   }
   if (!fields.length) return problem(400, 'DDP-ADMIN-003', 'Nothing to change.');
@@ -556,6 +582,140 @@ async function deleteProof(env, session, path) {
   return json({ id, deleted: true, hashRetained: true });
 }
 
+/**
+ * Page views and client-side errors — the part of a resident's session the
+ * server never sees. Deliberately NOT every click: see docs/PRIVACY.md.
+ */
+async function recordActivity(request, env, session) {
+  const b = await readJson(request);
+  const kind = ['page', 'action', 'client-error'].includes(b?.kind) ? b.kind : 'action';
+  const name = String(b?.name ?? '').slice(0, 120);
+  if (!name) return json({ recorded: false });
+
+  await env.DB.prepare(
+    `INSERT INTO activity (owner_id, actor_id, kind, name, detail, user_agent, at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    session.subject.id, session.actor.id, kind, name,
+    b?.detail == null ? null : String(JSON.stringify(b.detail)).slice(0, 500),
+    (request.headers.get('user-agent') ?? '').slice(0, 200),
+    new Date().toISOString()
+  ).run();
+
+  return json({ recorded: true });
+}
+
+/** The whole story, newest first: actions, page views and errors in one list. */
+async function timeline(env, url) {
+  const limit = Math.min(Number(url.searchParams.get('limit') ?? 200), 500);
+  const flat = url.searchParams.get('flat');
+  const since = url.searchParams.get('since') ?? '1970-01-01';
+
+  const [audits, activities, errors] = await Promise.all([
+    env.DB.prepare(
+      `SELECT a.at, a.action, a.detail, a.actor_id, a.subject_id,
+              ao.name AS actor_name, so.name AS subject_name, so.flat AS subject_flat
+         FROM audit_log a
+         LEFT JOIN owners ao ON ao.id = a.actor_id
+         LEFT JOIN owners so ON so.id = a.subject_id
+        WHERE a.at > ? AND (? IS NULL OR so.flat = ?)
+        ORDER BY a.at DESC LIMIT ?`
+    ).bind(since, flat, flat, limit).all(),
+
+    env.DB.prepare(
+      `SELECT v.at, v.kind, v.name, v.detail, v.user_agent, v.owner_id, v.actor_id,
+              o.name AS owner_name, ao.name AS actor_name, o.flat AS owner_flat
+         FROM activity v
+         LEFT JOIN owners o ON o.id = v.owner_id
+         LEFT JOIN owners ao ON ao.id = v.actor_id
+        WHERE v.at > ? AND (? IS NULL OR o.flat = ?)
+        ORDER BY v.at DESC LIMIT ?`
+    ).bind(since, flat, flat, limit).all(),
+
+    // Errors are system-wide, so a flat filter excludes them rather than
+    // pretending they belong to somebody.
+    flat
+      ? { results: [] }
+      : env.DB.prepare(
+          'SELECT at, code, severity, message, detail FROM error_log WHERE at > ? ORDER BY at DESC LIMIT ?'
+        ).bind(since, limit).all(),
+  ]);
+
+  return json({
+    timeline: mergeTimeline({
+      audits: audits.results ?? [],
+      activities: activities.results ?? [],
+      errors: errors.results ?? [],
+    }).slice(0, limit),
+    generatedAt: toIST(new Date().toISOString()),
+  });
+}
+
+/** Hand a flat to a new owner. */
+async function postTransfer(request, env, session) {
+  const b = await readJson(request);
+  const flat = String(b?.flat ?? '').trim().toUpperCase();
+
+  const { outgoing, outstanding } = await transferFlat(env, {
+    flat, outgoingId: Number(b?.outgoingId), name: b?.name, mobile: b?.mobile,
+    email: b?.email, actorId: session.actor.id, settleOutstanding: Boolean(b?.settleOutstanding),
+  });
+
+  const now = new Date().toISOString();
+  const otp = generateOneTimePassword();
+  const { hash, salt } = await hashPassword(otp, ITER(env));
+  const mobile = String(b.mobile).replace(/\D/g, '');
+
+  const incoming = await env.DB.prepare(
+    `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, must_change_pw,
+                         role, active, moved_in_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 1, 'owner', 1, ?, ?) RETURNING id`
+  ).bind(flat, String(b.name).trim(), mobile, b?.email ?? null, hash, salt, now, now).first();
+
+  await env.DB.batch([
+    // Deactivated, never deleted: their bills, payments and comments must stay
+    // attributable for the audit trail to mean anything.
+    env.DB.prepare(
+      "UPDATE owners SET active = 0, moved_out_at = ?, role = 'owner' WHERE id = ?"
+    ).bind(now, outgoing.id),
+    // Ends their access immediately — the flat is not theirs any more.
+    env.DB.prepare('DELETE FROM sessions WHERE actor_id = ? OR subject_id = ?')
+      .bind(outgoing.id, outgoing.id),
+  ]);
+
+  await audit(env, session, 'flat.transfer', {
+    flat, from: outgoing.id, to: incoming.id, outstandingAtTransfer: outstanding.total,
+  });
+
+  const text = encodeURIComponent(
+    `Diamond Park portal — welcome. Your temporary password is ${otp}\nLog in at https://dddp.pages.dev and choose your own.`);
+
+  return json({
+    flat, outgoing: outgoing.name, incomingId: incoming.id,
+    oneTimePassword: otp, whatsapp: `https://wa.me/91${mobile}?text=${text}`,
+    outstandingAtTransfer: outstanding,
+  }, { status: 201 });
+}
+
+async function putCommittee(request, env, session) {
+  const b = await readJson(request);
+  const rows = Array.isArray(b?.committee) ? b.committee : [];
+  if (!rows.length) return problem(400, 'DDP-ADMIN-003', 'Send at least one committee member.');
+
+  // Replaced wholesale: after an AGM the whole slate changes, and reconciling
+  // row by row invites a half-updated committee on the public page.
+  const statements = [env.DB.prepare('DELETE FROM committee')];
+  rows.forEach((m, i) => statements.push(
+    env.DB.prepare('INSERT INTO committee (role, name, flat, phone, sort, active) VALUES (?, ?, ?, ?, ?, 1)')
+      .bind(String(m.role ?? '').trim(), String(m.name ?? '').trim(),
+            m.flat ?? null, m.phone ?? null, i)
+  ));
+
+  await env.DB.batch(statements);
+  await audit(env, session, 'committee.update', { members: rows.length });
+  return json({ committee: rows.length });
+}
+
 // ── payment proofs ──────────────────────────────────────────────────────
 
 /**
@@ -575,8 +735,9 @@ async function uploadProof(request, env, session, ctx, path) {
 
   // Resolved through the session's flat — not from the URL.
   const bill = await env.DB.prepare(
-    'SELECT id, flat, period, total, status FROM bills WHERE id = ? AND flat = ?'
-  ).bind(billId, session.subject.flat).first();
+    `SELECT id, flat, period, total, status FROM bills
+      WHERE id = ? AND flat = ? AND (owner_id IS NULL OR owner_id = ?)`
+  ).bind(billId, session.subject.flat, session.subject.id).first();
   if (!bill) return problem(404, 'DDP-PAY-001', 'That bill could not be found.');
   if (bill.status === 'paid' || bill.status === 'waived') {
     return problem(409, 'DDP-PAY-003', 'This bill is already settled.');
@@ -630,9 +791,9 @@ async function uploadProof(request, env, session, ctx, path) {
   const now = new Date().toISOString();
 
   const inserted = await env.DB.prepare(
-    `INSERT INTO payment_proofs (bill_id, r2_key, image_sha256, utr, parsed_amount, status, created_at)
-     VALUES (?, ?, ?, ?, ?, 'pending', ?) RETURNING id`
-  ).bind(bill.id, key, hash, parsed.utr, parsed.amount, now).first();
+    `INSERT INTO payment_proofs (bill_id, owner_id, r2_key, image_sha256, utr, parsed_amount, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?) RETURNING id`
+  ).bind(bill.id, session.subject.id, key, hash, parsed.utr, parsed.amount, now).first();
 
   try {
     await env.PROOFS.put(key, bytes, { httpMetadata: { contentType: file.type } });
@@ -664,14 +825,17 @@ async function uploadProof(request, env, session, ctx, path) {
 async function proofImage(env, session, path) {
   const proofId = Number(path.split('/')[3]);
   const row = await env.DB.prepare(
-    `SELECT p.r2_key, p.deleted_at, b.flat
+    `SELECT p.r2_key, p.deleted_at, p.owner_id, b.flat, b.owner_id AS bill_owner_id
        FROM payment_proofs p JOIN bills b ON b.id = p.bill_id
       WHERE p.id = ?`
   ).bind(proofId).first();
 
   if (!row) return problem(404, 'DDP-PROOF-005', 'That image could not be found.');
 
-  const isOwner = row.flat === session.subject.flat;
+  // Ownership is by PERSON. Matching on flat alone would hand the previous
+  // owner's payment screenshots to whoever buys the flat next.
+  const uploader = row.owner_id ?? row.bill_owner_id;
+  const isOwner = uploader != null && uploader === session.subject.id;
   if (!isOwner && !hasRole(session, 'admin')) {
     await reportError(env, 'DDP-ADMIN-004', { proofId, actor: session.actor.id });
     return problem(403, 'DDP-ADMIN-004', 'Not yours to view.');

@@ -62,7 +62,7 @@ function render({ notices, committee, amenities }) {
         el('tbody', {}, ...committee.map((c) =>
           el('tr', {},
             el('td', {}, el('div', { class: 'role' }, c.role),
-              el('div', {}, `${esc(c.name)} · ${esc(c.flat)}`)),
+              el('div', {}, `${c.name} · ${c.flat}`)),
             el('td', { class: 'r small muted', style: 'text-align:right' }, c.phone ?? ''))))),
     ]),
 

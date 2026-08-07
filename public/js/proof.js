@@ -7,6 +7,7 @@
  */
 
 import { api, ApiError } from './api.js';
+import { trackPage } from './track.js';
 import { $, el, esc, renderGodBanner, showError } from './ui.js';
 import { money, periodLabel } from './i18n.js';
 import { compressImage, humanSize } from './compress.js';
@@ -15,6 +16,7 @@ const main = $('#main');
 let bill = null;
 let chosen = null;
 
+trackPage('/proof');
 init();
 
 async function init() {
@@ -83,7 +85,7 @@ function preview(file, result) {
   return el('div', { class: 'preview' },
     el('img', { src: url, alt: 'Your screenshot', onload: () => URL.revokeObjectURL(url) }),
     el('div', { class: 'stack', style: 'gap:var(--s-1)' },
-      el('strong', { style: 'font-family:var(--font-ui);font-size:var(--text-sm)' }, esc(file.name)),
+      el('strong', { style: 'font-family:var(--font-ui);font-size:var(--text-sm)' }, file.name),
       el('p', { class: 'small muted' },
         result.compressed
           ? `${humanSize(result.originalSize)} → ${humanSize(result.blob.size)}`

@@ -7,12 +7,14 @@
  */
 
 import { api, ApiError } from './api.js';
+import { trackPage } from './track.js';
 import { $, el, esc, renderGodBanner, showError } from './ui.js';
 import { dayLabel } from './i18n.js';
 
 const main = $('#main');
 let isAdmin = false;
 
+trackPage('/notices');
 init();
 
 async function init() {
@@ -75,7 +77,7 @@ function commentRow(c) {
   return el('div', { class: `comment ${c.hidden ? 'comment--hidden' : ''}` },
     el('div', { class: 'comment__head' },
       el('span', { class: 'comment__who' },
-        esc(c.name ?? '—'), el('span', { class: 'muted' }, ` · ${esc(c.flat ?? '')}`)),
+        c.name ?? '—', el('span', { class: 'muted' }, ` · ${c.flat ?? ''}`)),
       el('span', { class: 'comment__when' }, dayLabel(c.createdAt))),
     el('p', { style: 'margin-top:var(--s-1)' }, c.body ?? ''),
     isAdmin
@@ -85,7 +87,7 @@ function commentRow(c) {
             await api.admin.setCommentHidden(c.id, !c.hidden);
             location.reload();
           },
-        }, c.hidden ? `Unhide (hidden by ${esc(c.hiddenBy ?? 'an admin')})` : 'Hide')
+        }, c.hidden ? `Unhide (hidden by ${c.hiddenBy ?? 'an admin'})` : 'Hide')
       : null);
 }
 
