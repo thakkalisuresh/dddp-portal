@@ -9,7 +9,7 @@
 
 import { api, ApiError } from './api.js';
 import { trackPage } from './track.js';
-import { $, el, esc, renderGodBanner, showError } from './ui.js';
+import { $, el, esc, renderGodBanner, showError, setChildren } from './ui.js';
 import { money, kg, periodLabel } from './i18n.js';
 
 /** Mirrors JUMP_MULTIPLE in functions/lib/admin.js. */
@@ -57,7 +57,7 @@ async function load() {
 const previewPanel = el('div', { class: 'previewpanel' });
 
 function render() {
-  main.replaceChildren(
+  setChildren(main,
     header(),
     importPanel(),
     el('div', { class: 'scroll-x' }, table()),

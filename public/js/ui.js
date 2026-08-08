@@ -36,6 +36,17 @@ export function el(tag, attrs = {}, ...children) {
   return node;
 }
 
+/**
+ * Like node.replaceChildren, but drops null and undefined.
+ *
+ * The native method stringifies them, so a conditional child written as
+ * `cond ? node : null` renders the literal word "null" on the page. That
+ * shipped to production on the public homepage.
+ */
+export function setChildren(node, ...children) {
+  node.replaceChildren(...children.flat().filter((c) => c != null));
+}
+
 const CHIP = {
   paid:      { cls: 'chip--paid',     key: 'paid' },
   unpaid:    { cls: 'chip--overdue',  key: 'unpaid' },

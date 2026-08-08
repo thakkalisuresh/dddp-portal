@@ -13,7 +13,7 @@ run_worker_first = true
 [[d1_databases]]
 binding = "DB"
 database_name = "dddp"
-database_id = "PLACEHOLDER_RUN_wrangler_d1_create_dddp"
+database_id = "56951152-d3c7-4476-a779-9ef9afe0b4d8"  # APAC — near Kerala
 migrations_dir = "migrations"
 
 [[r2_buckets]]

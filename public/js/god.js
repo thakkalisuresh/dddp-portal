@@ -13,7 +13,7 @@
 
 import { api, ApiError } from './api.js';
 import { trackPage, trackAction } from './track.js';
-import { $, el, esc, renderGodBanner, showError } from './ui.js';
+import { $, el, esc, renderGodBanner, showError, setChildren } from './ui.js';
 
 const main = $('#main');
 let filters = { flat: '', kind: '', q: '', since: '' };
@@ -60,7 +60,7 @@ function render(rows, generatedAt) {
     return true;
   });
 
-  main.replaceChildren(
+  setChildren(main,
     controls(),
     filterBar(),
     el('div', { class: 'panel', style: 'padding:var(--s-3) var(--s-4)' },
@@ -82,7 +82,7 @@ function controls() {
   const body = box.querySelector('.stack');
 
   api.captureState().then((state) => {
-    body.replaceChildren(
+    setChildren(body,
       status,
       el('p', { class: 'small muted' },
         state.on

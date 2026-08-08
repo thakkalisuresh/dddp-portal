@@ -4,13 +4,13 @@
  * four small blocks in place would defeat having a policy at all.
  */
 import { api } from './api.js';
-import { $, el, showError } from './ui.js';
+import { $, el, showError, setChildren } from './ui.js';
 
 const main = $('#main');
 try {
     const state = await api.captureState();
     const { clicks } = await api.god.clicks();
-    main.replaceChildren(
+    setChildren(main,
       el('div', { class: 'panel', style: 'padding:var(--s-4)' },
         el('h1', {}, 'Click capture'),
         el('p', { class: 'small muted' },

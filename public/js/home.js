@@ -7,7 +7,7 @@
  * the resident register.
  */
 
-import { el, esc, $, showError } from './ui.js';
+import { el, esc, $, showError, setChildren } from './ui.js';
 import { dayLabel, bilingual } from './i18n.js';
 
 const main = $('#main');
@@ -28,7 +28,7 @@ function render({ notices, committee, amenities }) {
   const events = notices.filter((n) => n.kind === 'event');
   const plain = notices.filter((n) => n.kind !== 'event');
 
-  main.replaceChildren(
+  setChildren(main,
     section('notices', bilingual('notices'),
       plain.length
         ? plain.map((n) => el('div', { class: 'notice' },

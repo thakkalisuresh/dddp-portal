@@ -8,7 +8,7 @@
 
 import { api, ApiError } from './api.js';
 import { trackPage } from './track.js';
-import { $, el, esc, renderGodBanner, showError } from './ui.js';
+import { $, el, esc, renderGodBanner, showError, setChildren } from './ui.js';
 import { money, periodLabel } from './i18n.js';
 
 const main = $('#main');
@@ -34,7 +34,7 @@ async function load() {
 }
 
 function render(q) {
-  main.replaceChildren(
+  setChildren(main,
     el('div', { class: 'sect' },
       el('div', { class: 'stack', style: 'gap:var(--s-1)' },
         el('h2', {}, 'Payment proofs'),
