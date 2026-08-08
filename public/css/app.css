@@ -350,3 +350,34 @@ a { color: var(--accent); }
   .has-bottomnav .page { padding-bottom: calc(var(--s-8) + 56px); }
   .has-bottomnav .footbar { bottom: calc(56px + env(safe-area-inset-bottom, 0)); }
 }
+
+/* ── gallery ──────────────────────────────────────────────────────────────
+   The association's own photographs of the building.
+
+   auto-fit rather than a fixed column count: the same rule gives one column on
+   a phone, two on a large phone and three on a laptop, with no breakpoints to
+   keep in sync with the nav's.                                              */
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--s-3);
+}
+
+.gallery__item {
+  margin: 0;
+  border-radius: var(--r-2);
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.gallery__img {
+  display: block;
+  width: 100%;
+  /* The source photographs are a mix of landscape and one portrait, so a fixed
+     ratio plus cover keeps the grid even instead of one tall cell dragging a
+     row out of line. */
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  /* Declared width/height reserve the space; this stops them overriding it. */
+  height: auto;
+}

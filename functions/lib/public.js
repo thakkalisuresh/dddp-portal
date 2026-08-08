@@ -20,8 +20,8 @@ export const CONTACT_RATE_PER_HOUR = 5;
 export const COMMITTEE = [
   { role: 'President', name: 'Sekharan', flat: '5A' },
   { role: 'Secretary', name: 'Adv. Joy Vettiyadan', flat: '10A' },
-  { role: 'Treasurer', name: 'Mukesh', flat: '13A', phone: '+91 98466 86885' },
-  { role: 'Gas In-charge', name: 'Owner of 13E', flat: '13E' },
+  { role: 'Treasurer', name: 'Mukesh', flat: '13A', phone: '+91 98464 66511' },
+  { role: 'Gas In-charge', name: 'Hari', flat: '13E' },
 ];
 
 export const AMENITIES = [

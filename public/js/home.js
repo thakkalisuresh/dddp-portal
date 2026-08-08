@@ -10,6 +10,44 @@
 import { el, esc, $, showError, setChildren } from './ui.js';
 import { dayLabel, bilingual } from './i18n.js';
 
+/**
+ * The association's own photographs, rescued from the old portal before that
+ * hosting lapses — nobody here has access to renew it. Resized from 6.5 MB to
+ * under 900 KB for the whole set, because this page loads on phone data.
+ *
+ * Intrinsic dimensions are declared so the grid does not reflow as they arrive;
+ * without them the committee list jumps down the page mid-load.
+ */
+const GALLERY = [
+  { src: 'clubhouse.jpg', w: 1200, h: 853 },
+  { src: 'pool.jpg',      w: 1200, h: 675 },
+  { src: 'garden.jpg',    w: 1200, h: 675 },
+  { src: 'play-area.jpg', w: 1200, h: 675 },
+  { src: 'sports.jpg',    w: 1200, h: 848 },
+  { src: 'jogging.jpg',   w:  994, h: 1200 },
+];
+
+/**
+ * No captions. The filenames are guesses made while rescuing these from the
+ * old site and several were plainly wrong once rendered — the one labelled
+ * 'Swimming pool' is an aerial of the towers, 'Jogging park' is the signage.
+ * A wrong caption is worse than none, and the amenities list right below
+ * already says what the place has.
+ */
+function tile({ src, w, h }) {
+  return el('div', { class: 'gallery__item' },
+    el('img', {
+      class: 'gallery__img',
+      src: `/img/${src}`,
+      width: w, height: h,
+      // Six photographs below the fold; none of them should block the notices.
+      loading: 'lazy', decoding: 'async',
+      // Deliberately generic: it is the one thing true of every photograph
+      // here, and guessing per image is how the captions went wrong.
+      alt: 'DD Diamond Park',
+    }));
+}
+
 const main = $('#main');
 
 init();
@@ -46,10 +84,7 @@ function render({ notices, committee, amenities }) {
       : null,
 
     section('gallery', bilingual('gallery'), [
-      el('div', { class: 'tiles' },
-        ...['Club house', 'Swimming pool', 'Jogging park', 'Children\'s play area',
-            'Sports ground', 'Green parks'].map((label) => el('div', { class: 'tile' }, label))),
-      el('p', { class: 'small muted' }, 'Photographs of the building go here.'),
+      el('div', { class: 'gallery' }, ...GALLERY.map(tile)),
     ]),
 
     section('amenities', bilingual('amenities'), [
