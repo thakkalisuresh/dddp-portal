@@ -282,56 +282,71 @@ a { color: var(--accent); }
 .field__hint { font-size: var(--text-xs); color: var(--ink-muted); }
 .field__error { font-size: var(--text-xs); color: var(--overdue); font-weight: 600; }
 
-/* ── bottom navigation ─────────────────────────────────────────────────── */
+/* ── navigation ────────────────────────────────────────────────────────── */
 
-/* Fixed, thumb-reachable, and role-driven (see js/nav.js). The portal shipped
-   without any navigation at all; this is the way between the screens. */
+/* Top by default. The bottom bar is the exception, not the rule.
+   
+   The first cut used width alone (bottom below 900px), which put the bar at
+   the bottom of a laptop in a half-width window — where there is no thumb
+   anywhere near it. Width does not tell you how someone is pointing.
+   `pointer: coarse` does: a finger gets the thumb-reachable bar, a mouse gets
+   a menu where menus live. Width still applies as a second condition so a
+   tablet in landscape keeps the top bar. */
 .bottomnav {
-  position: fixed;
-  inset: auto 0 0 0;
+  position: sticky;
+  inset: 0 0 auto 0;
   z-index: 90;
   display: flex;
   background: var(--surface);
-  border-top: 1px solid var(--border);
-  /* Clears the iPhone home indicator. */
-  padding-bottom: env(safe-area-inset-bottom, 0);
+  border-bottom: 1px solid var(--border);
 }
 
 .bottomnav__item {
-  flex: 1;
+  flex: 0 0 auto;
   min-height: var(--touch);
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  padding: var(--s-2) var(--s-1);
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
   font-family: var(--font-ui);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   color: var(--ink-muted);
   text-decoration: none;
   /* Reserve the indicator's space in both states so nothing shifts on nav. */
-  border-top: 2px solid transparent;
+  border-bottom: 2px solid transparent;
 }
 .bottomnav__item:hover { color: var(--ink); }
 
 /* Current location carries a label, a colour AND a rule — never colour alone. */
 .bottomnav__item.is-current {
   color: var(--accent);
-  border-top-color: var(--accent);
+  border-bottom-color: var(--accent);
   font-weight: 600;
 }
 
-/* Fixed bars hide content underneath unless the page reserves room. */
-.has-bottomnav .page { padding-bottom: calc(var(--s-8) + 56px); }
-.has-bottomnav .footbar { bottom: calc(56px + env(safe-area-inset-bottom, 0)); }
+/* A touch device small enough to be held: put the bar under the thumb. */
+@media (pointer: coarse) and (max-width: 820px) {
+  .bottomnav {
+    position: fixed;
+    inset: auto 0 0 0;
+    border-bottom: none;
+    border-top: 1px solid var(--border);
+    /* Clears the iPhone home indicator. */
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  .bottomnav__item {
+    flex: 1;
+    flex-direction: column;
+    gap: 3px;
+    padding: var(--s-2) var(--s-1);
+    font-size: var(--text-xs);
+    border-bottom: none;
+    border-top: 2px solid transparent;
+  }
+  .bottomnav__item.is-current { border-top-color: var(--accent); border-bottom-color: transparent; }
 
-@media (min-width: 900px) {
-  /* On a desktop the bar sits at the top, where a menu is expected. */
-  .bottomnav { position: sticky; inset: 0 0 auto 0; border-top: none; border-bottom: 1px solid var(--border); }
-  .bottomnav__item { flex: 0 0 auto; flex-direction: row; gap: var(--s-2); padding: var(--s-3) var(--s-4);
-                     border-top: none; border-bottom: 2px solid transparent; }
-  .bottomnav__item.is-current { border-bottom-color: var(--accent); }
-  .has-bottomnav .page { padding-bottom: var(--s-8); }
-  .has-bottomnav .footbar { bottom: 0; }
+  /* A fixed bar hides content unless the page reserves room for it. */
+  .has-bottomnav .page { padding-bottom: calc(var(--s-8) + 56px); }
+  .has-bottomnav .footbar { bottom: calc(56px + env(safe-area-inset-bottom, 0)); }
 }
