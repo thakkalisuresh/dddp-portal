@@ -156,3 +156,62 @@ export function mergeTimeline({ audits = [], activities = [], errors = [] }) {
   rows.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
   return rows.map((r) => ({ ...r, atIST: toIST(r.at) }));
 }
+
+/**
+ * Who may reset whose password.
+ *
+ * The admin console originally let any admin reset ANY account, with no check
+ * on the target's role. That was a privilege-escalation hole rather than a
+ * convenience: an admin could reset the superadmin, receive the temporary
+ * password, and log in with god mode. The single-superadmin rule stopped the
+ * role being GRANTED to a second person while leaving it perfectly takeable.
+ *
+ * The rule now: you can reset strictly below yourself.
+ *
+ *   resident  -> any admin or the superadmin
+ *   admin     -> the superadmin only
+ *   superadmin-> nobody, through any API
+ *
+ * The superadmin exclusion has no exception, including for the superadmin
+ * themselves — a session that is already authenticated does not need it, and
+ * an endpoint that can rewrite the top credential is exactly what an attacker
+ * with a stolen admin session would reach for. Recovery is the break-glass
+ * script, which requires the Cloudflare credentials rather than a login.
+ */
+export function canResetPassword({ actor, target }) {
+  if (!actor || !target) return { ok: false, message: 'Unknown account.' };
+
+  if (target.role === 'superadmin') {
+    return {
+      ok: false,
+      message: 'The superadmin password cannot be reset from the portal. '
+             + 'Use the break-glass script — it needs database access, not a login.',
+    };
+  }
+
+  if (target.role === 'admin' && actor.role !== 'superadmin') {
+    return { ok: false, message: 'Only the superadmin can reset another admin.' };
+  }
+
+  if (actor.role !== 'admin' && actor.role !== 'superadmin') {
+    return { ok: false, message: 'Admins only.' };
+  }
+
+  return { ok: true };
+}
+
+/**
+ * A wa.me link needs bare digits with the country code and no '+'.
+ *
+ * Mobiles are stored in E.164 since 0009, so the old `wa.me/91${mobile}`
+ * started producing 'wa.me/91+919846466511' — a dead link on every password
+ * reset and every new resident. Anything not yet in E.164 is assumed Indian,
+ * which is what the pre-0009 rows were.
+ */
+export function waLink(mobile, text) {
+  const digits = String(mobile ?? '').replace(/\D/g, '');
+  const withCc = String(mobile ?? '').startsWith('+') || digits.length > 10
+    ? digits
+    : `91${digits}`;
+  return `https://wa.me/${withCc}?text=${encodeURIComponent(text)}`;
+}

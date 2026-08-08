@@ -111,6 +111,7 @@ const EXPECTED = {
   'DDP-ADMIN-011': [400, 'Give a short reason for changing an amount — it is recorded with the change.'],
   'DDP-ADMIN-012': [409, 'That change would lock you out of your own account.'],
   'DDP-ADMIN-013': [409, 'That mobile or email already belongs to someone else.'],
+  'DDP-ADMIN-014': [403, 'You cannot reset the password of an account at or above your own level.'],
   'DDP-NOTICE-001': [404, 'That notice could not be found.'],
   'DDP-NOTICE-002': [403, 'Comments are switched off for this notice.'],
   'DDP-NOTICE-003': [400, 'Write something, and keep it under 1200 characters.'],

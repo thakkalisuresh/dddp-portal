@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { outstandingFor, canChangeRole, mergeTimeline, toIST } from '../functions/lib/tenancy.js';
+import { outstandingFor, canChangeRole, mergeTimeline, toIST, canResetPassword, waLink } from '../functions/lib/tenancy.js';
 
 describe('what the outgoing owner leaves behind', () => {
   const bills = [
@@ -107,5 +107,71 @@ describe('one timeline from three tables', () => {
   it('copes with any table being empty', () => {
     expect(mergeTimeline({})).toEqual([]);
     expect(mergeTimeline({ errors })).toHaveLength(1);
+  });
+});
+
+/* ── who may reset whose password ────────────────────────────────────────── */
+
+describe('canResetPassword', () => {
+  const superadmin = { id: 1, role: 'superadmin' };
+  const admin      = { id: 2, role: 'admin' };
+  const otherAdmin = { id: 3, role: 'admin' };
+  const resident   = { id: 4, role: 'owner' };
+
+  it('lets an admin reset a resident — the ordinary case', () => {
+    expect(canResetPassword({ actor: admin, target: resident }).ok).toBe(true);
+  });
+
+  it('lets the superadmin reset a resident', () => {
+    expect(canResetPassword({ actor: superadmin, target: resident }).ok).toBe(true);
+  });
+
+  it('REFUSES an admin resetting the superadmin', () => {
+    // The hole. Any admin could reset this account, be handed the temporary
+    // password, and log in with god mode — so the single-superadmin rule
+    // stopped the role being granted while leaving it takeable.
+    const v = canResetPassword({ actor: admin, target: superadmin });
+    expect(v.ok).toBe(false);
+    expect(v.message).toMatch(/break-glass/i);
+  });
+
+  it('refuses even the superadmin resetting themselves through the API', () => {
+    // An authenticated session does not need this, and it is the first thing
+    // a stolen admin session would reach for.
+    expect(canResetPassword({ actor: superadmin, target: superadmin }).ok).toBe(false);
+  });
+
+  it('refuses one admin resetting another', () => {
+    const v = canResetPassword({ actor: admin, target: otherAdmin });
+    expect(v.ok).toBe(false);
+    expect(v.message).toMatch(/only the superadmin/i);
+  });
+
+  it('lets the superadmin reset an admin', () => {
+    expect(canResetPassword({ actor: superadmin, target: admin }).ok).toBe(true);
+  });
+
+  it('refuses a resident resetting anyone', () => {
+    expect(canResetPassword({ actor: resident, target: resident }).ok).toBe(false);
+  });
+});
+
+describe('waLink', () => {
+  it('builds a live link from an E.164 number', () => {
+    // 0009 stored '+91…', and the old `wa.me/91${mobile}` then produced
+    // 'wa.me/91+919846466511' — a dead link on every password reset.
+    expect(waLink('+919846466511', 'hi')).toBe('https://wa.me/919846466511?text=hi');
+  });
+
+  it('still handles a bare 10-digit number as Indian', () => {
+    expect(waLink('9846466511', 'hi')).toBe('https://wa.me/919846466511?text=hi');
+  });
+
+  it('does not prepend 91 to a number that already has a country code', () => {
+    expect(waLink('+971501234567', 'hi')).toBe('https://wa.me/971501234567?text=hi');
+  });
+
+  it('encodes the message exactly once', () => {
+    expect(waLink('+919846466511', 'a b&c')).toBe('https://wa.me/919846466511?text=a%20b%26c');
   });
 });

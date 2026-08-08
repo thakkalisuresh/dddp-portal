@@ -71,6 +71,7 @@ export const ERROR_CODES = {
   'DDP-ADMIN-011': { severity: 'warn',  message: 'God edit to money rejected — no reason given' },
   'DDP-ADMIN-012': { severity: 'error', message: 'God edit would lock the superadmin out of their own account' },
   'DDP-ADMIN-013': { severity: 'warn',  message: 'God edit rejected — mobile or email already belongs to someone else' },
+  'DDP-ADMIN-014': { severity: 'error', message: 'Password reset attempted against an equal or higher role' },
 
   // ── SYS ────────────────────────────────────────────────────────────────
   'DDP-SYS-001': { severity: 'fatal', message: 'Unhandled exception in a Worker route' },

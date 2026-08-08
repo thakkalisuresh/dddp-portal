@@ -18,7 +18,7 @@ import { readReceipt } from './lib/vision.js';
 import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden } from './lib/notices.js';
 import { publicNotices, submitMessage, fingerprintOf, AMENITIES } from './lib/public.js';
-import { transferFlat, canChangeRole, planHandover, outstandingFor, mergeTimeline, toIST } from './lib/tenancy.js';
+import { transferFlat, canChangeRole, canResetPassword, waLink, planHandover, outstandingFor, mergeTimeline, toIST } from './lib/tenancy.js';
 import {
   OWNER_FIELDS, BILL_FIELDS, validateOwnerField, validateBillField,
   lockoutCheck, applyBillEdit, computedTotal, isUnexplainedMismatch,
@@ -341,6 +341,15 @@ async function resetPassword(request, env, session, path) {
     .bind(ownerId).first();
   if (!target) return problem(404, 'DDP-AUTH-006', 'No such resident.');
 
+  // An admin could previously reset ANY account, superadmin included, and then
+  // log in with the temporary password they were handed. See canResetPassword.
+  const allowed = canResetPassword({ actor: session.actor, target });
+  if (!allowed.ok) {
+    await reportError(env, 'DDP-ADMIN-014',
+                      { actor: session.actor.id, target: target.id, targetRole: target.role });
+    return problem(403, 'DDP-ADMIN-014', allowed.message);
+  }
+
   // Admins reset, they don't read — the old password is a hash and is gone.
   const otp = generateOneTimePassword();
   const { hash, salt } = await hashPassword(otp, ITER(env));
@@ -350,14 +359,13 @@ async function resetPassword(request, env, session, path) {
   await destroyAllSessionsFor(env, ownerId);
   await audit(env, session, 'password.reset', { ownerId, flat: target.flat });
 
-  const text = encodeURIComponent(
+  const text =
     `Diamond Park portal — your temporary password is ${otp}\n` +
-    `Log in at https://dddp.pages.dev and choose your own password. It expires in 24 hours.`
-  );
+    `Log in at https://diamondpark.pages.dev and choose your own password. It expires in 24 hours.`;
   return json({
     oneTimePassword: otp,
     expiresInHours: 24,
-    whatsapp: `https://wa.me/91${target.mobile}?text=${text}`,
+    whatsapp: waLink(target.mobile, text),
   });
 }
 
@@ -537,7 +545,15 @@ async function postResident(request, env, session) {
   const b = await readJson(request);
   const flat = String(b?.flat ?? '').trim().toUpperCase();
   const name = String(b?.name ?? '').trim();
-  const mobile = String(b?.mobile ?? '').replace(/\D/g, '');
+  // Normalised, not stripped. Storing bare digits here while login normalises
+  // to E.164 meant a newly created resident could never log in — the same
+  // mixed-format bug 0009 fixed, quietly reintroduced on the write path.
+  let mobile;
+  try {
+    mobile = normaliseMobile(b?.mobile);
+  } catch {
+    return problem(400, 'DDP-ADMIN-009', 'That does not look like a mobile number.');
+  }
   if (!flat || !name || mobile.length < 10) {
     return problem(400, 'DDP-ADMIN-003', 'A resident needs a flat, a name and a 10-digit mobile number.');
   }
@@ -557,9 +573,10 @@ async function postResident(request, env, session) {
   ).bind(flat, name, mobile, b?.email ?? null, hash, salt, new Date().toISOString()).first();
 
   await audit(env, session, 'resident.create', { id: row.id, flat });
-  const text = encodeURIComponent(
-    `Diamond Park portal — your temporary password is ${otp}\nLog in at https://dddp.pages.dev and choose your own.`);
-  return json({ id: row.id, oneTimePassword: otp, whatsapp: `https://wa.me/91${mobile}?text=${text}` },
+  const rawText =
+    `Diamond Park portal — your temporary password is ${otp}\n` +
+    `Log in at https://diamondpark.pages.dev and choose your own.`;
+  return json({ id: row.id, oneTimePassword: otp, whatsapp: waLink(mobile, rawText) },
     { status: 201 });
 }
 
@@ -741,7 +758,12 @@ async function postTransfer(request, env, session) {
   const now = new Date().toISOString();
   const otp = generateOneTimePassword();
   const { hash, salt } = await hashPassword(otp, ITER(env));
-  const mobile = String(b.mobile).replace(/\D/g, '');
+  let mobile;
+  try {
+    mobile = normaliseMobile(b.mobile);   // see the note on resident creation
+  } catch {
+    return problem(400, 'DDP-ADMIN-009', 'That does not look like a mobile number.');
+  }
 
   const incoming = await env.DB.prepare(
     `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, must_change_pw,
@@ -764,12 +786,13 @@ async function postTransfer(request, env, session) {
     flat, from: outgoing.id, to: incoming.id, outstandingAtTransfer: outstanding.total,
   });
 
-  const text = encodeURIComponent(
-    `Diamond Park portal — welcome. Your temporary password is ${otp}\nLog in at https://dddp.pages.dev and choose your own.`);
+  const rawText =
+    `Diamond Park portal — welcome. Your temporary password is ${otp}\n` +
+    `Log in at https://diamondpark.pages.dev and choose your own.`;
 
   return json({
     flat, outgoing: outgoing.name, incomingId: incoming.id,
-    oneTimePassword: otp, whatsapp: `https://wa.me/91${mobile}?text=${text}`,
+    oneTimePassword: otp, whatsapp: waLink(mobile, rawText),
     outstandingAtTransfer: outstanding,
   }, { status: 201 });
 }

@@ -84,6 +84,7 @@ Ask the bot a code and it will explain it.
 | `DDP-ADMIN-011` | warn | live | God edit to money rejected — no reason given |
 | `DDP-ADMIN-012` | error | live | God edit would lock the superadmin out of their own account |
 | `DDP-ADMIN-013` | warn | live | God edit rejected — mobile or email already belongs to someone else |
+| `DDP-ADMIN-014` | error | live | Password reset attempted against an equal or higher role |
 
 ## SYS
 
@@ -100,7 +101,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-55 codes across 7 domains — 10 fatal, 4 awaiting their call site, 1 retired.
+56 codes across 7 domains — 10 fatal, 4 awaiting their call site, 1 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

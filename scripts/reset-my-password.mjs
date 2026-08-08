@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 /**
- * Break-glass password reset for the superadmin.
+ * Break-glass password reset — for the superadmin, or for anyone.
  *
- * This exists because the superadmin has no one above them. Every other
- * account can be reset from the admin console; the top of the tree can only be
- * recovered by someone holding the database credentials, which is the point.
+ * The superadmin case is why this exists: they have no one above them, so the
+ * portal deliberately refuses to reset that account (see canResetPassword) and
+ * recovery requires database credentials rather than a login.
+ *
+ * It resets any other account too, because the alternative when a resident is
+ * locked out is talking someone through the admin console. This is the same
+ * operation that console performs, run by whoever holds the keys.
  *
  * THE PASSWORD NEVER LEAVES THIS MACHINE. It is typed with echo off, hashed
  * here, and only the PBKDF2 hash is sent to D1 — the same thing the Worker
@@ -14,6 +18,9 @@
  * Usage:
  *   node scripts/reset-my-password.mjs            # production
  *   node scripts/reset-my-password.mjs --local    # local dev database
+ *
+ * It asks whose account, shows you who that is, and waits for confirmation
+ * before writing — resetting the wrong resident is a silent, annoying mistake.
  *
  * Deliberately interactive. A --password flag would put the secret in shell
  * history, and someone would eventually use it.
@@ -47,6 +54,14 @@ async function hash(password) {
   const bits = await crypto.subtle.deriveBits(
     { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: ITERATIONS }, key, KEY_BITS);
   return { hash: toBase64(new Uint8Array(bits)), salt: toBase64(salt) };
+}
+
+/** An ordinary visible prompt, for things that are not secret. */
+function ask(prompt) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(prompt, (a) => { rl.close(); resolve(a); });
+  });
 }
 
 /** Read a line with the terminal's echo switched off. */
@@ -103,12 +118,32 @@ function d1Exec(statement) {
 }
 
 const main = async () => {
-  console.log(`\nReset the superadmin password on the ${local ? 'LOCAL' : 'PRODUCTION'} database.`);
-  console.log('Nothing you type is echoed, stored, or sent anywhere except as a hash.\n');
+  console.log(`\nPassword reset — ${local ? 'LOCAL' : 'PRODUCTION'} database.`);
+  console.log('The password is not echoed, and only its hash is stored.\n');
 
-  const mobile = (await askHidden('Your mobile number (10 digits): ')).trim().replace(/\D/g, '');
-  if (mobile.length < 10) { console.error('\nThat is not a 10-digit number.'); process.exit(1); }
-  const e164 = `+91${mobile.slice(-10)}`;
+  const typed = (await ask("Whose account? (mobile, or 'me'): ")).trim();
+  const raw = typed.toLowerCase() === 'me' ? await ask('Your mobile number: ') : typed;
+  const digits = raw.trim().replace(/[^\d+]/g, '');
+  const e164 = digits.startsWith('+') ? digits
+             : digits.length === 10 ? `+91${digits}`
+             : `+${digits}`;
+
+  // Looked up and confirmed BEFORE anything is typed as a password. Resetting
+  // the wrong resident is a quiet mistake that only surfaces when they call.
+  const [who] = d1Query(
+    `SELECT id, name, flat, role FROM owners WHERE mobile = ${sql(e164)}`);
+  if (!who) {
+    console.error(`\nNobody has the number ${e164}. Nothing was changed.`);
+    console.error('List the accounts with:');
+    console.error(`  npx wrangler d1 execute ${DB} ${local ? '--local' : '--remote'} \\`);
+    console.error(`    --command "SELECT flat, name, mobile, role FROM owners"`);
+    process.exit(1);
+  }
+
+  console.log(`\n  ${who.name} — flat ${who.flat}, ${who.role}`);
+  const yes = (await ask('Reset this account? (yes/no): ')).trim().toLowerCase();
+  if (yes !== 'yes' && yes !== 'y') { console.log('Nothing was changed.'); process.exit(0); }
+  console.log();
 
   const pw = await askHidden('New password: ');
   if (pw.length < MIN_LENGTH) {
@@ -118,36 +153,23 @@ const main = async () => {
   const again = await askHidden('Again: ');
   if (pw !== again) { console.error('\nThose do not match.'); process.exit(1); }
 
-  // Checked BEFORE writing. Without this the run reports success against a
-  // mobile that matches nobody, and the account is no more reachable than it
-  // was — the worst possible outcome for a recovery tool.
-  const [who] = d1Query(
-    `SELECT id, name FROM owners WHERE mobile = ${sql(e164)} AND role = 'superadmin'`);
-  if (!who) {
-    console.error(`\nNo superadmin has the number ${e164}. Nothing was changed.`);
-    console.error('Check the number, or list accounts with:');
-    console.error(`  npx wrangler d1 execute ${DB} ${local ? '--local' : '--remote'} \\`);
-    console.error(`    --command "SELECT flat, name, mobile, role FROM owners"`);
-    process.exit(1);
-  }
-  console.log(`\nResetting the password for ${who.name}.`);
-
   const { hash: h, salt: s } = await hash(pw);
 
-  // must_change_pw stays 0: you just chose this one, so being forced to change
-  // it again on first login would be theatre.
+  // must_change_pw stays 0. When you reset your own account you just chose the
+  // password, and for someone else you are about to tell them what it is —
+  // in both cases a forced change on first login is theatre.
   //
   // Sessions are destroyed because a forgotten password is indistinguishable
   // from a stolen one, and this is the moment to assume the worse of the two.
   d1Exec(`
     UPDATE owners SET pw_hash = ${sql(h)}, pw_salt = ${sql(s)}, must_change_pw = 0
-     WHERE mobile = ${sql(e164)} AND role = 'superadmin';
-    DELETE FROM sessions WHERE actor_id = (SELECT id FROM owners WHERE mobile = ${sql(e164)});
+     WHERE id = ${who.id};
+    DELETE FROM sessions WHERE actor_id = ${who.id};
     DELETE FROM login_attempts WHERE mobile = ${sql(e164)};
     INSERT INTO audit_log (actor_id, subject_id, action, detail, at)
-      SELECT id, id, 'password.breakglass',
-             json_object('via', 'scripts/reset-my-password.mjs'), datetime('now')
-        FROM owners WHERE mobile = ${sql(e164)};
+      VALUES (${who.id}, ${who.id}, 'password.breakglass',
+              json_object('via', 'scripts/reset-my-password.mjs', 'flat', ${sql(who.flat)}),
+              datetime('now'));
   `);
 
   // Read the hash back rather than trusting the write. wrangler prints no
@@ -161,8 +183,9 @@ const main = async () => {
     process.exit(1);
   }
 
-  console.log(`\nDone. Log in at ${local ? 'http://localhost:8787' : 'https://diamondpark.pages.dev'}`);
-  console.log('Every existing session was signed out, including any on your phone.\n');
+  console.log(`\nDone — ${who.name} can log in at ` +
+              `${local ? 'http://localhost:8787' : 'https://diamondpark.pages.dev'}`);
+  console.log('Every existing session for that account was signed out.\n');
 };
 
 main().catch((err) => { console.error('\nFailed:', err.message); process.exit(1); });
