@@ -12,6 +12,7 @@ import { trackPage } from './track.js';
 import { $, el, esc, statusChip, billBreakdown, renderGodBanner, showError } from './ui.js';
 import { money, kg, periodLabel, dayLabel, bilingual } from './i18n.js';
 import { drawQr } from './qr.js';
+import { treasurerLine } from './contact.js';
 
 const main = $('#main');
 
@@ -139,9 +140,9 @@ function paySection(me) {
 
   block.append(
     el('p', { class: 'helper' },
-      el('span', {}, 'The exact paise '),
-      el('strong', {}, String(b.total).slice(-3)),
-      el('span', {}, ` identify flat ${me.flat} — please don't change the amount.`)),
+      el('span', {}, 'Pay exactly '),
+      el('strong', {}, money(b.total)),
+      el('span', {}, ` and leave the reference as it is — that is how flat ${me.flat}'s payment is matched.`)),
     el('p', { style: 'text-align:center;margin-top:var(--s-3)' },
       el('a', { class: 'linkish', href: '/proof' }, 'Already paid? Upload screenshot'))
   );
@@ -236,6 +237,6 @@ function helpSection() {
   return el('section', { class: 'stack' },
     el('hr', { class: 'rule' }),
     el('p', { class: 'small muted' },
-      'Questions about your bill? Contact Mukesh (Treasurer) — +91 98466 86885.')
+      `Questions about your bill? Contact ${treasurerLine()}.`)
   );
 }

@@ -27,11 +27,11 @@ Ask the bot a code and it will explain it.
 | `DDP-BILL-001` | error | live | Bill generation found no reading for an active flat |
 | `DDP-BILL-002` | error | live | Reading lower than previous reached generation |
 | `DDP-BILL-003` | **fatal** | live | Bill total does not match its own components |
-| `DDP-BILL-004` | **fatal** | live | Bill total paise do not match the flat paise_tag |
+| `DDP-BILL-004` | **fatal** | retired | Bill total paise do not match the flat paise_tag (retired — paise tags removed) |
 | `DDP-BILL-005` | error | live | Period has no rate set |
 | `DDP-BILL-006` | error | live | Duplicate bill for (flat, period) |
 | `DDP-BILL-007` | error | live | Generation attempted on a locked period |
-| `DDP-BILL-008` | **fatal** | live | Late fee carries paise — reconciliation would break |
+| `DDP-BILL-008` | error | live | Late fee is negative or not a number |
 | `DDP-BILL-009` | error | live | Late fee cron re-applied to an already-charged bill |
 | `DDP-BILL-010` | **fatal** | live | Rate was inherited from a previous period instead of set for this one |
 | `DDP-BILL-011` | warn | live | Rate differs sharply from the previous period |
@@ -77,6 +77,8 @@ Ask the bot a code and it will explain it.
 | `DDP-ADMIN-004` | error | live | Non-admin reached an admin route |
 | `DDP-ADMIN-005` | warn | live | Flat transfer blocked — the outgoing owner has unpaid bills |
 | `DDP-ADMIN-006` | **fatal** | live | Role change refused — it would leave no superadmin |
+| `DDP-ADMIN-007` | error | live | Flat label has no leading floor number |
+| `DDP-ADMIN-008` | **fatal** | live | Flat limit reached — the retired paise column caps the table at 99 |
 
 ## SYS
 
@@ -93,7 +95,10 @@ Ask the bot a code and it will explain it.
 
 ---
 
-48 codes across 7 domains — 10 fatal, 4 awaiting their call site.
+50 codes across 7 domains — 10 fatal, 4 awaiting their call site, 1 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.
+
+`retired` codes no longer fire. They stay listed so an error logged months ago still
+resolves to a meaning instead of showing as a bare code nobody can look up.

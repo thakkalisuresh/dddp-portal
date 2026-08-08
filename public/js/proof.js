@@ -2,7 +2,7 @@
  * Upload a payment screenshot — screen 06.
  *
  * The mismatch case is the one worth designing carefully: telling the resident
- * at upload that their screenshot shows ₹150 against a ₹329.04 bill saves the
+ * at upload that their screenshot shows ₹150 against a ₹329 bill saves the
  * treasurer's evening, and saves the resident a week of thinking they've paid.
  */
 

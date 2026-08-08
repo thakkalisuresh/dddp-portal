@@ -33,8 +33,8 @@ export function render() {
     if (!codes.length) continue;
     lines.push(`## ${domain}`, '', '| Code | Severity | Status | Meaning |', '|---|---|---|---|');
     for (const code of codes) {
-      const { severity, message, planned } = ERROR_CODES[code];
-      const status = planned ? 'planned' : 'live';
+      const { severity, message, planned, retired } = ERROR_CODES[code];
+      const status = retired ? 'retired' : planned ? 'planned' : 'live';
       lines.push(`| \`${code}\` | ${SEV_LABEL[severity]} | ${status} | ${message} |`);
     }
     lines.push('');
@@ -42,14 +42,19 @@ export function render() {
 
   const all = Object.values(ERROR_CODES);
   const planned = all.filter((e) => e.planned).length;
+  const retired = all.filter((e) => e.retired).length;
   const fatal = all.filter((e) => e.severity === 'fatal').length;
   lines.push(
     '---',
     '',
-    `${all.length} codes across ${DOMAINS.length} domains — ${fatal} fatal, ${planned} awaiting their call site.`,
+    `${all.length} codes across ${DOMAINS.length} domains — ${fatal} fatal, ` +
+      `${planned} awaiting their call site, ${retired} retired.`,
     '',
     '`planned` codes are reserved for phases not yet built. A test asserts that a code',
     'gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.',
+    '',
+    '`retired` codes no longer fire. They stay listed so an error logged months ago still',
+    'resolves to a meaning instead of showing as a bare code nobody can look up.',
     ''
   );
 

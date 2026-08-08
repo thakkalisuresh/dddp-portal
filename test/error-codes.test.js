@@ -60,8 +60,17 @@ describe('no code is silently inert', () => {
 
   it('every implemented code is referenced somewhere in functions/', () => {
     const orphans = Object.keys(ERROR_CODES)
-      .filter((c) => !ERROR_CODES[c].planned && !referenced.has(c));
+      .filter((c) => !ERROR_CODES[c].planned && !ERROR_CODES[c].retired && !referenced.has(c));
     expect(orphans, `unreferenced codes: ${orphans.join(', ')}`).toEqual([]);
+  });
+
+  it('a retired code has no call sites left', () => {
+    // The other half of the guard: 'retired' must mean the code cannot fire,
+    // not merely that someone stopped believing in it. A leftover throw site
+    // would emit a code whose documented meaning is 'this no longer happens'.
+    const zombies = Object.keys(ERROR_CODES)
+      .filter((c) => ERROR_CODES[c].retired && referenced.has(c));
+    expect(zombies, `retired but still thrown: ${zombies.join(', ')}`).toEqual([]);
   });
 
   it('a code that has gained a call site is no longer marked planned', () => {

@@ -23,7 +23,7 @@ export function buildUpiParams({ vpa, payee, amount, note, ref }) {
   const p = new URLSearchParams();
   p.set('pa', vpa);
   p.set('pn', payee);
-  p.set('am', amount.toFixed(2)); // always 2dp — the paise identify the flat
+  p.set('am', amount.toFixed(2)); // UPI wants 2dp on the wire even for a whole amount
   p.set('cu', 'INR');
   if (note) p.set('tn', note);
   if (ref) p.set('tr', ref);

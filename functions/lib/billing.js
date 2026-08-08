@@ -1,10 +1,20 @@
 /**
  * Pure billing arithmetic. No I/O — everything here is directly testable.
  *
- * THE INVARIANT: the paise of every bill total equal the flat's permanent
- * paise_tag. That is how the treasurer's bank statement identifies who paid.
- * Late fees are therefore whole rupees only (plan §4e); a fee carrying paise
- * would silently break reconciliation for the whole building.
+ * THE RULE: a bill is exactly what the meter and the rate say, rounded UP to
+ * the next whole rupee. Nothing is added to it and nothing is encoded in it.
+ *
+ * An earlier version stamped each flat's identifier into the paise so the
+ * treasurer could tell two identical bills apart on a bank statement. That is
+ * gone by decision: the amount a resident is asked for must be the amount the
+ * calculation produces. Reconciliation now relies on the payer's name on the
+ * UPI credit, the payment-intent list and the uploaded screenshot.
+ *
+ * Ceiling, not round-to-nearest. Most of flat 4A's real history cannot tell
+ * the two apart — 328.50 and 298.50 land on 329 and 299 either way. The case
+ * that decides it is 314.25, which the old portal billed as 315; rounding to
+ * nearest gives 314. Ceiling is also what the RWA asked for outright: 329.01
+ * is 330, never 329.
  */
 
 import { fail } from './errors.js';
@@ -14,8 +24,9 @@ export function round2(n) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
-export function paiseOf(total) {
-  return Math.round(round2(total) * 100) % 100;
+/** Round up to the next whole rupee. 328.50 -> 329, 329.01 -> 330, 315 -> 315. */
+export function toWholeRupees(amount) {
+  return Math.ceil(round2(amount));
 }
 
 export function isWholeRupees(n) {
@@ -54,48 +65,32 @@ export function computeConsumption(current, previous, conversionFactor = DEFAULT
   return round2(meterDelta(current, previous) * conversionFactor);
 }
 
-/**
- * Build a bill total. `paiseTag` is stamped onto the total as the flat's
- * identifier — the rupee part is the real amount owed.
- */
+/** Build a bill total: gas + charges + any late fee, rounded up to a whole rupee. */
 export function computeBill({
   consumption,
   ratePerKg,
   otherCharges = 0,
   additionalCharges = 0,
   lateFee = 0,
-  paiseTag,
 }) {
   if (!Number.isFinite(ratePerKg) || ratePerKg <= 0) fail('DDP-BILL-005', { ratePerKg });
-  if (!isWholeRupees(lateFee)) fail('DDP-BILL-008', { lateFee });
-  if (!Number.isInteger(paiseTag) || paiseTag < 1 || paiseTag > 99) {
-    fail('DDP-BILL-004', { paiseTag });
-  }
 
   const gasAmount = round2(consumption * ratePerKg);
   const subtotal = round2(gasAmount + otherCharges + additionalCharges + lateFee);
-  const rupees = Math.round(subtotal); // absorb the natural paise, then stamp ours
-  const total = round2(rupees + paiseTag / 100);
+  const total = toWholeRupees(subtotal);
 
   if (!Number.isFinite(total)) fail('DDP-BILL-003', { gasAmount, subtotal, total });
-  if (paiseOf(total) !== paiseTag) fail('DDP-BILL-004', { total, paiseTag });
 
-  return { gasAmount, lateFee, total };
+  return { gasAmount, subtotal, lateFee, total };
 }
 
 /**
- * Apply a late fee to an existing total, preserving the paise tag.
- * ₹329.04 + ₹50 -> ₹379.04, never ₹379.54.
+ * Add a late fee to an existing total, then round up as usual.
+ * The total is already whole, so this stays whole for a whole-rupee fee.
  */
 export function applyLateFee(currentTotal, lateFee) {
-  // The whole-rupee guard is what preserves the tag; addition then just works.
-  // The post-condition below is an assertion, not a branch — it exists so a
-  // future refactor that breaks the invariant fails loudly instead of quietly.
-  if (!isWholeRupees(lateFee)) fail('DDP-BILL-008', { lateFee });
-  const tag = paiseOf(currentTotal);
-  const total = round2(currentTotal + lateFee);
-  if (paiseOf(total) !== tag) fail('DDP-BILL-004', { currentTotal, lateFee, total });
-  return total;
+  if (!Number.isFinite(lateFee) || lateFee < 0) fail('DDP-BILL-008', { lateFee });
+  return toWholeRupees(round2(currentTotal + lateFee));
 }
 
 /**
@@ -180,7 +175,7 @@ export function meterReconciliation(bulkKg, sumOfFlatsKg) {
  * if that invoice is ~₹15,000 and this says ₹150,000, the rate has an extra
  * zero and 52 wrong bills are avoided.
  *
- * Pure. `rows` are { flat, reading, previous, paiseTag }.
+ * Pure. `rows` are { flat, reading, previous }.
  */
 export function previewGeneration({ rows, ratePerKg, conversionFactor = DEFAULT_CONVERSION,
                                     previousRate = null, expectedFlats = null }) {
@@ -191,9 +186,7 @@ export function previewGeneration({ rows, ratePerKg, conversionFactor = DEFAULT_
   for (const row of rows) {
     try {
       const consumption = computeConsumption(row.reading, row.previous, conversionFactor);
-      const { gasAmount, total } = computeBill({
-        consumption, ratePerKg, paiseTag: row.paiseTag,
-      });
+      const { gasAmount, total } = computeBill({ consumption, ratePerKg });
       bills.push({ flat: row.flat, consumption, gasAmount, total });
     } catch (err) {
       blocked.push({ flat: row.flat, reason: err.code ?? 'DDP-BILL-001' });

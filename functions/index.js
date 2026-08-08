@@ -587,15 +587,12 @@ async function patchBill(request, env, session, path) {
 
   const other = Number(b?.otherCharges ?? bill.other_charges);
   const additional = Number(b?.additionalCharges ?? bill.additional_charges);
-  const flat = await env.DB.prepare('SELECT paise_tag FROM flats WHERE flat = ?').bind(bill.flat).first();
-
   const { gasAmount, total } = computeBill({
     consumption: bill.consumption,
     ratePerKg: bill.rate_per_kg,
     otherCharges: other,
     additionalCharges: additional,
     lateFee: bill.late_fee,
-    paiseTag: flat.paise_tag,
   });
 
   await env.DB.prepare(
@@ -1235,7 +1232,7 @@ async function getPreview(env, url) {
 
   const rows = grid.flats
     .filter((f) => f.reading != null && f.previous != null)
-    .map((f) => ({ flat: f.flat, reading: f.reading, previous: f.previous, paiseTag: f.paise_tag }));
+    .map((f) => ({ flat: f.flat, reading: f.reading, previous: f.previous }));
 
   return json({
     ...previewGeneration({

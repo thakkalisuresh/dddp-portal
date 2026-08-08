@@ -10,6 +10,11 @@
 
 export const SEVERITIES = ['fatal', 'error', 'warn'];
 
+/** A retired code no longer fires, but still resolves for historical log rows. */
+export function isRetired(code) {
+  return ERROR_CODES[code]?.retired === true;
+}
+
 export const ERROR_CODES = {
   // ── AUTH ───────────────────────────────────────────────────────────────
   'DDP-AUTH-001': { severity: 'warn',  message: 'Login failed — unknown mobile number' },
@@ -24,11 +29,14 @@ export const ERROR_CODES = {
   'DDP-BILL-001': { severity: 'error', message: 'Bill generation found no reading for an active flat' },
   'DDP-BILL-002': { severity: 'error', message: 'Reading lower than previous reached generation' },
   'DDP-BILL-003': { severity: 'fatal', message: 'Bill total does not match its own components' },
-  'DDP-BILL-004': { severity: 'fatal', message: 'Bill total paise do not match the flat paise_tag' },
+  // Retired with the paise tag. Kept so an old error_log row still resolves to
+  // a meaning instead of rendering as a bare code nobody can look up.
+  'DDP-BILL-004': { severity: 'fatal', retired: true,
+                    message: 'Bill total paise do not match the flat paise_tag (retired — paise tags removed)' },
   'DDP-BILL-005': { severity: 'error', message: 'Period has no rate set' },
   'DDP-BILL-006': { severity: 'error', message: 'Duplicate bill for (flat, period)' },
   'DDP-BILL-007': { severity: 'error', message: 'Generation attempted on a locked period' },
-  'DDP-BILL-008': { severity: 'fatal', message: 'Late fee carries paise — reconciliation would break' },
+  'DDP-BILL-008': { severity: 'error', message: 'Late fee is negative or not a number' },
   'DDP-BILL-009': { severity: 'error', message: 'Late fee cron re-applied to an already-charged bill' },
   'DDP-BILL-010': { severity: 'fatal', message: 'Rate was inherited from a previous period instead of set for this one' },
   'DDP-BILL-011': { severity: 'warn',  message: 'Rate differs sharply from the previous period' },
@@ -56,6 +64,8 @@ export const ERROR_CODES = {
   'DDP-ADMIN-004': { severity: 'error', message: 'Non-admin reached an admin route' },
   'DDP-ADMIN-005': { severity: 'warn',  message: 'Flat transfer blocked — the outgoing owner has unpaid bills' },
   'DDP-ADMIN-006': { severity: 'fatal', message: 'Role change refused — it would leave no superadmin' },
+  'DDP-ADMIN-007': { severity: 'error', message: 'Flat label has no leading floor number' },
+  'DDP-ADMIN-008': { severity: 'fatal', message: 'Flat limit reached — the retired paise column caps the table at 99' },
 
   // ── SYS ────────────────────────────────────────────────────────────────
   'DDP-SYS-001': { severity: 'fatal', message: 'Unhandled exception in a Worker route' },

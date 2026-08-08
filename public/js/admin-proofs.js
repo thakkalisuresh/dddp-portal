@@ -3,7 +3,7 @@
  *
  * Two sections, because most residents pay and never upload anything. That is
  * the normal case, not an edge case: the second list is reconciled straight
- * against the bank statement using the unique paise, with no UTR required.
+ * against the bank statement by amount and payer name, with no UTR to go on.
  */
 
 import { api, ApiError } from './api.js';
@@ -64,7 +64,7 @@ function render(q) {
       el('div', { class: 'stack', style: 'gap:var(--s-1)' },
         el('h3', {}, 'Tapped Pay, no screenshot'),
         el('p', { class: 'small muted' },
-          'Match the paise against the bank statement. No screenshot or reference needed.'))),
+          'Match the amount and the payer name against the bank statement — there is no reference to go on.'))),
 
     ...(q.claimedNoProof.length
       ? q.claimedNoProof.map(claimedRow)

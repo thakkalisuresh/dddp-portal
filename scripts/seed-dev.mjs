@@ -15,7 +15,7 @@ const DEV_PASSWORD = 'diamond-park-dev';
 
 const PEOPLE = [
   { flat: '4A',  name: 'Sabarish Nair',        mobile: '9567791515', email: 'nair.sabarish97@gmail.com', role: 'superadmin' },
-  { flat: '13A', name: 'Mukesh',               mobile: '9846686885', email: null, role: 'admin' },
+  { flat: '13A', name: 'Mukesh',               mobile: '9846466511', email: null, role: 'admin' },
   { flat: '5A',  name: 'Sekharan',             mobile: '9847011223', email: null, role: 'owner' },
   { flat: '4B',  name: 'Priya Menon',          mobile: '9847011224', email: null, role: 'owner' },
   { flat: '5B',  name: 'Rajan Pillai',         mobile: '9847011225', email: null, role: 'owner' },
@@ -51,15 +51,17 @@ const PERIODS = [
   { period: '2026-06', rate: 75, due: '2026-07-10', status: 'open' },
 ];
 
-const PAISE = { '4A': 4, '4B': 5, '4C': 6, '5A': 7, '5B': 8, '13A': 21 };
+const FLATS = ['4A', '4B', '4C', '5A', '5B', '13A'];
 const q = (v) => (v == null ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`);
 
 const sql = [];
 sql.push('DELETE FROM sessions;', 'DELETE FROM bills;', 'DELETE FROM readings;',
          'DELETE FROM periods;', 'DELETE FROM owners;', 'DELETE FROM flats;');
 
-for (const [flat, tag] of Object.entries(PAISE)) {
-  sql.push(`INSERT INTO flats (flat, floor, paise_tag) VALUES (${q(flat)}, ${parseInt(flat, 10)}, ${tag});`);
+for (const flat of FLATS) {
+  // legacy_paise_tag is dead but still NOT NULL UNIQUE — see lib/flats.js.
+  sql.push(`INSERT INTO flats (flat, floor, legacy_paise_tag) VALUES (${q(flat)}, ${parseInt(flat, 10)}, ` +
+           `(SELECT COALESCE(MAX(legacy_paise_tag), 0) + 1 FROM flats));`);
 }
 
 for (const p of PEOPLE) {
@@ -92,9 +94,7 @@ for (const [flat, byPeriod] of Object.entries(READINGS)) {
     if (!conf) continue;
     const delta = meterDelta(byPeriod[period], byPeriod[periods[i - 1]]);
     const consumption = computeConsumption(byPeriod[period], byPeriod[periods[i - 1]]);
-    const { gasAmount, total } = computeBill({
-      consumption, ratePerKg: conf.rate, paiseTag: PAISE[flat],
-    });
+    const { gasAmount, total } = computeBill({ consumption, ratePerKg: conf.rate });
     const status = conf.status === 'locked' ? 'paid' : 'unpaid';
     sql.push(
       `INSERT INTO bills (flat, period, meter_delta, consumption, conversion_factor, rate_per_kg, gas_amount, total, status, paid_at, created_at)

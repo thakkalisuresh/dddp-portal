@@ -17,4 +17,4 @@ document.getElementById('demo').addEventListener('click', () => {
 });
 
 // smoke-check the formatters render as expected
-console.log('money', money(329.04), 'period', periodLabel('2026-07'), 'day', dayLabel('2026-08-10'));
+console.log('money', money(329), 'period', periodLabel('2026-07'), 'day', dayLabel('2026-08-10'));

@@ -39,7 +39,7 @@ export async function readingGrid(env, period) {
   const [periodRow, rows] = await Promise.all([
     env.DB.prepare('SELECT * FROM periods WHERE period = ?').bind(period).first(),
     env.DB.prepare(
-      `SELECT f.flat, f.floor, f.paise_tag,
+      `SELECT f.flat, f.floor,
               cur.reading  AS reading,
               cur.read_on  AS read_on,
               prv.reading  AS previous
@@ -118,7 +118,7 @@ export async function generateBills(env, period, actorId) {
   const grid = await readingGrid(env, period);
   const rows = grid.flats
     .filter((f) => f.reading != null && f.previous != null)
-    .map((f) => ({ flat: f.flat, reading: f.reading, previous: f.previous, paiseTag: f.paise_tag }));
+    .map((f) => ({ flat: f.flat, reading: f.reading, previous: f.previous }));
 
   const preview = previewGeneration({
     rows,
@@ -139,7 +139,7 @@ export async function generateBills(env, period, actorId) {
   const statements = rows.map((r) => {
     const consumption = computeConsumption(r.reading, r.previous, periodRow.conversion_factor);
     const { gasAmount, total } = computeBill({
-      consumption, ratePerKg: periodRow.rate_per_kg, paiseTag: r.paiseTag,
+      consumption, ratePerKg: periodRow.rate_per_kg,
     });
     const delta = Math.round((r.reading - r.previous) * 1000) / 1000;
     return env.DB.prepare(

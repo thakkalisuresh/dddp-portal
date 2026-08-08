@@ -2,9 +2,8 @@
  * Payment proofs.
  *
  * A screenshot is a CLAIM, not proof. Ground truth is the treasurer's bank
- * statement, where the unique paise identify the flat (plan §4). Everything
- * here exists to make the treasurer's review fast and to catch honest
- * mistakes — not to establish that money moved.
+ * statement. Everything here exists to make the treasurer's review fast and to
+ * catch honest mistakes — not to establish that money moved.
  */
 
 import { fail } from './errors.js';
@@ -133,8 +132,8 @@ export function shapeQueue({ proofs = [], claimed = [] }) {
     awaiting: withProof,
     exactMatches: withProof.filter((p) => p.matches).map((p) => p.proofId),
     needsAttention: withProof.filter((p) => !p.matches),
-    // Tapped Pay, sent nothing. Reconciled against the bank statement using
-    // the unique paise — no UTR required.
+    // Tapped Pay, sent nothing. Reconciled by matching the amount and the
+    // payer's name against the bank statement — no UTR to go on.
     claimedNoProof: claimed.map((b) => ({
       billId: b.id, flat: b.flat, name: b.name, period: b.period,
       billed: b.total, since: b.last_intent,

@@ -1,99 +1,83 @@
 import { describe, it, expect } from 'vitest';
 import {
-  round2, paiseOf, isWholeRupees, computeConsumption, meterDelta, computeBill,
+  round2, toWholeRupees, isWholeRupees, computeConsumption, meterDelta, computeBill,
   applyLateFee, lateFeeDecision,
 } from '../functions/lib/billing.js';
+import { floorOf, addFlat } from '../functions/lib/flats.js';
 
-describe('the paise invariant', () => {
-  it('stamps the flat tag onto the total', () => {
-    // 4A: 4.38 kg at Rs 75 = 328.50, paise_tag 04 -> 329.04
-    const { total } = computeBill({ consumption: 4.38, ratePerKg: 75, paiseTag: 4 });
-    expect(total).toBe(329.04);
-    expect(paiseOf(total)).toBe(4);
+describe('totals round UP to the next whole rupee', () => {
+  it('never asks for paise', () => {
+    // 4.38 kg at Rs 75 = 328.50 -> Rs 329.
+    expect(computeBill({ consumption: 4.38, ratePerKg: 75 }).total).toBe(329);
+    expect(Number.isInteger(computeBill({ consumption: 4.38, ratePerKg: 75 }).total)).toBe(true);
   });
 
-  it('keeps the tag distinct for every flat at the same consumption', () => {
-    const totals = [4, 5, 6, 17, 99].map(
-      (tag) => computeBill({ consumption: 4.38, ratePerKg: 75, paiseTag: tag }).total
-    );
-    expect(new Set(totals).size).toBe(totals.length);
-    expect(totals).toEqual([329.04, 329.05, 329.06, 329.17, 329.99]);
+  it('rounds up, not to nearest — a single paisa over pushes to the next rupee', () => {
+    // The rule the RWA stated: even 329.01 becomes 330. Math.round gives 329,
+    // so this is the assertion that would catch a regression to plain rounding.
+    expect(toWholeRupees(329.01)).toBe(330);
+    expect(toWholeRupees(329.5)).toBe(330);
+    expect(toWholeRupees(329.99)).toBe(330);
   });
 
-  it('rejects a paise tag outside 1..99', () => {
-    expect(() => computeBill({ consumption: 1, ratePerKg: 75, paiseTag: 0 })).toThrow(/DDP-BILL-004/);
-    expect(() => computeBill({ consumption: 1, ratePerKg: 75, paiseTag: 100 })).toThrow(/DDP-BILL-004/);
+  it('leaves an already-whole amount alone', () => {
+    // Ceiling must not inflate an exact figure into the next rupee.
+    expect(toWholeRupees(315)).toBe(315);
+    expect(computeBill({ consumption: 4, ratePerKg: 75 }).total).toBe(300);
+  });
+
+  it('is not fooled by float representation', () => {
+    // 0.1 + 0.2 is 0.30000000000000004; a naive Math.ceil turns Rs 315.3 worth
+    // of float noise into Rs 316. round2 runs first precisely to stop that.
+    expect(toWholeRupees(315 + 0.1 + 0.2 - 0.3)).toBe(315);
+    expect(toWholeRupees(4.35 * 3)).toBe(14);   // 13.049999999999999
+  });
+
+  it('keeps the pre-rounding subtotal so a resident can check the sum', () => {
+    // Rounding up must be visible as a line, not a discrepancy the resident
+    // cannot reconcile against the rate they were told.
+    const b = computeBill({ consumption: 4.38, ratePerKg: 75 });
+    expect(b.gasAmount).toBe(328.5);
+    expect(b.subtotal).toBe(328.5);
+    expect(b.total).toBe(329);
+  });
+
+  it('rounds once at the end, not per charge', () => {
+    // Three charges of .40 are Rs 1.20, so the total moves by 2 rupees, not 3.
+    const b = computeBill({
+      consumption: 0.4, ratePerKg: 1, otherCharges: 0.4, additionalCharges: 0.4,
+    });
+    expect(b.subtotal).toBe(1.2);
+    expect(b.total).toBe(2);
   });
 });
 
-describe('late fees are whole rupees', () => {
-  it('preserves the paise tag when a fee is applied', () => {
-    // the whole reconciliation rests on this staying .04
-    expect(applyLateFee(329.04, 50)).toBe(379.04);
-    expect(paiseOf(applyLateFee(329.04, 50))).toBe(4);
+describe('late fees', () => {
+  it('adds the fee and stays whole', () => {
+    expect(applyLateFee(329, 50)).toBe(379);
   });
 
-  it('refuses a fee carrying paise', () => {
-    expect(() => applyLateFee(329.04, 50.5)).toThrow(/DDP-BILL-008/);
-    expect(() => computeBill({ consumption: 4.38, ratePerKg: 75, lateFee: 0.5, paiseTag: 4 }))
-      .toThrow(/DDP-BILL-008/);
+  it('accepts a fee carrying paise now that nothing is encoded in them', () => {
+    // This used to throw DDP-BILL-008. The constraint existed only to protect
+    // the paise tag, so it went with it — the ceiling absorbs the fraction.
+    expect(applyLateFee(329, 50.5)).toBe(380);
   });
 
-  // NOTE: the paise are preserved by the whole-rupee guard, not by any clever
-  // arithmetic — mutation testing showed no input can distinguish a "rebuild
-  // the total from the tag" implementation from plain addition. The guard below
-  // is therefore the test that carries the invariant.
+  it('rejects a negative or non-numeric fee', () => {
+    expect(() => applyLateFee(329, -1)).toThrow(/DDP-BILL-008/);
+    expect(() => applyLateFee(329, NaN)).toThrow(/DDP-BILL-008/);
+  });
 
-  it('survives repeated application arithmetic without drift', () => {
-    let total = 329.04;
+  it('does not compound or drift over repeated application', () => {
+    let total = 329;
     for (let i = 0; i < 12; i++) total = applyLateFee(total, 50);
-    expect(paiseOf(total)).toBe(4);
-    expect(total).toBe(929.04);
+    expect(total).toBe(929);
   });
 
   it('recognises whole rupees regardless of float representation', () => {
     expect(isWholeRupees(50)).toBe(true);
     expect(isWholeRupees(0.1 + 0.2)).toBe(false);
     expect(isWholeRupees(NaN)).toBe(false);
-  });
-});
-
-describe('late fee decision', () => {
-  const due = '2026-08-10';
-  const after = '2026-08-12';
-
-  it('charges an untouched overdue bill', () => {
-    const d = lateFeeDecision({ status: 'unpaid', late_fee_at: null }, { today: after, dueDate: due });
-    expect(d.action).toBe('charge');
-  });
-
-  it('HOLDS a bill where the resident tapped Pay — approval lag is not their fault', () => {
-    const d = lateFeeDecision({ status: 'initiated', late_fee_at: null }, { today: after, dueDate: due });
-    expect(d.action).toBe('hold');
-    expect(d.reason).toBe('payment-claimed');
-  });
-
-  it('never charges a bill with a proof under review', () => {
-    const d = lateFeeDecision({ status: 'awaiting', late_fee_at: null }, { today: after, dueDate: due });
-    expect(d.action).toBe('skip');
-  });
-
-  it('is idempotent — a second cron run does not charge again', () => {
-    const bill = { status: 'unpaid', late_fee_at: '2026-08-11T03:00:00Z' };
-    expect(lateFeeDecision(bill, { today: after, dueDate: due }).action).toBe('skip');
-  });
-
-  it('respects the grace window', () => {
-    const bill = { status: 'unpaid', late_fee_at: null };
-    expect(lateFeeDecision(bill, { today: '2026-08-12', dueDate: due, graceDays: 5 }).action).toBe('skip');
-    expect(lateFeeDecision(bill, { today: '2026-08-16', dueDate: due, graceDays: 5 }).action).toBe('charge');
-  });
-
-  it('leaves settled bills alone', () => {
-    for (const status of ['paid', 'waived']) {
-      expect(lateFeeDecision({ status, late_fee_at: null }, { today: after, dueDate: due }).action)
-        .toBe('skip');
-    }
   });
 });
 
@@ -117,14 +101,23 @@ describe('consumption — the meter counts volume, the bill charges mass', () =>
   it('produces the same rupee amounts the old site billed', () => {
     for (const c of LIVE) {
       const consumption = computeConsumption(c.current, c.previous);
-      const { gasAmount } = computeBill({ consumption, ratePerKg: c.rate, paiseTag: 4 });
+      const { gasAmount } = computeBill({ consumption, ratePerKg: c.rate });
       expect(gasAmount).toBeCloseTo(c.gas, 1);
     }
   });
 
-  it('July 2026 comes out at the ₹329.04 the resident actually sees', () => {
+  it('July 2026 comes out at the ₹329 the resident actually sees', () => {
     const consumption = computeConsumption(5.817, 4.134);
-    expect(computeBill({ consumption, ratePerKg: 75, paiseTag: 4 }).total).toBe(329.04);
+    expect(computeBill({ consumption, ratePerKg: 75 }).total).toBe(329);
+  });
+
+  it('bills the whole live history the way the old portal did', () => {
+    // 314.25 -> 315 is the case that distinguishes ceiling from rounding to
+    // nearest; the others agree either way, so this row is the real evidence.
+    const billed = LIVE.map((c) =>
+      computeBill({ consumption: computeConsumption(c.current, c.previous), ratePerKg: c.rate }).total);
+    expect(billed).toEqual([329, 315, 299, 145]);
+    expect(billed.map((t) => Math.round(t * 100) % 100)).toEqual([0, 0, 0, 0]);
   });
 
   it('keeps the raw meter movement separate from billable mass', () => {
@@ -148,5 +141,42 @@ describe('consumption — the meter counts volume, the bill charges mass', () =>
 
   it('rounds without float drift', () => {
     expect(round2(0.1 + 0.2)).toBe(0.3);
+  });
+});
+
+describe('adding a flat around the retired column', () => {
+  it('reads the floor out of the label', () => {
+    expect(floorOf('4A')).toBe(4);
+    expect(floorOf('13E')).toBe(13);
+    expect(floorOf(' 5B ')).toBe(5);
+  });
+
+  it('refuses a label it cannot place on a floor', () => {
+    // Better to stop the import than to file someone on floor NaN.
+    expect(() => floorOf('Penthouse')).toThrow(/DDP-ADMIN-007/);
+    expect(() => floorOf('')).toThrow(/DDP-ADMIN-007/);
+  });
+
+  it('fills the dead column so callers never see it', async () => {
+    // The point of addFlat: legacy_paise_tag is NOT NULL UNIQUE and nothing
+    // reads it, so the INSERT must supply a value without the caller knowing.
+    const seen = [];
+    const env = { DB: {
+      prepare(sql) {
+        return {
+          first: async () => ({ n: 3 }),
+          bind: (...args) => ({ run: async () => seen.push({ sql, args }) }),
+        };
+      },
+    } };
+    await addFlat(env, '7C');
+    expect(seen[0].args).toEqual(['7C', 7]);
+    expect(seen[0].sql).toMatch(/legacy_paise_tag/);
+    expect(seen[0].sql).toMatch(/ON CONFLICT\(flat\) DO NOTHING/);
+  });
+
+  it('refuses to exceed the cap the dead CHECK imposes', async () => {
+    const env = { DB: { prepare: () => ({ first: async () => ({ n: 99 }) }) } };
+    await expect(addFlat(env, '99Z')).rejects.toThrow(/DDP-ADMIN-008/);
   });
 });

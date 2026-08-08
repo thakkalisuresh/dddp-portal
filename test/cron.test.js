@@ -1,26 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import { planLateFees } from '../functions/lib/cron.js';
-import { paiseOf } from '../functions/lib/billing.js';
 import { validateComment, shapeComments, MAX_COMMENT } from '../functions/lib/notices.js';
 
 const opts = { today: '2026-08-12', dueDate: '2026-08-10', lateFee: 50 };
 
-const bill = (over = {}) => ({ id: 1, flat: '4A', status: 'unpaid', total: 329.04, late_fee_at: null, ...over });
+const bill = (over = {}) => ({ id: 1, flat: '4A', status: 'unpaid', total: 329, late_fee_at: null, ...over });
 
 describe('planning a month of late fees', () => {
   it('charges bills nobody has touched', () => {
     const plan = planLateFees([bill()], opts);
     expect(plan.charge).toHaveLength(1);
-    expect(plan.charge[0].newTotal).toBe(379.04);
+    expect(plan.charge[0].newTotal).toBe(379);
   });
 
-  it('preserves the flat paise through the fee — the whole point', () => {
+  it('adds the same fee to every overdue bill and keeps them whole', () => {
     const plan = planLateFees(
-      [bill({ total: 329.04 }), bill({ id: 2, flat: '4B', total: 195.05 }),
-       bill({ id: 3, flat: '13A', total: 345.21 })],
+      [bill({ total: 329 }), bill({ id: 2, flat: '4B', total: 195 }),
+       bill({ id: 3, flat: '13A', total: 345 })],
       opts
     );
-    expect(plan.charge.map((b) => paiseOf(b.newTotal))).toEqual([4, 5, 21]);
+    expect(plan.charge.map((b) => b.newTotal)).toEqual([379, 245, 395]);
   });
 
   it('HOLDS a resident who tapped Pay — approval lag is not their fault', () => {
@@ -52,7 +51,7 @@ describe('planning a month of late fees', () => {
       if (!plan.charge.length) break;
       current = { ...current, total: plan.charge[0].newTotal, late_fee_at: '2026-08-11T03:00:00Z' };
     }
-    expect(current.total).toBe(379.04); // charged exactly once
+    expect(current.total).toBe(379); // charged exactly once
   });
 
   it('does nothing before the due date', () => {
@@ -73,8 +72,11 @@ describe('planning a month of late fees', () => {
     expect(plan.skip).toHaveLength(2);
   });
 
-  it('refuses a fee carrying paise before touching a single bill', () => {
-    expect(() => planLateFees([bill()], { ...opts, lateFee: 50.5 })).toThrow(/DDP-BILL-008/);
+  it('refuses a nonsense fee before touching a single bill', () => {
+    // A fee with paise is fine now (the ceiling absorbs it); a negative one
+    // would quietly credit every overdue resident.
+    expect(planLateFees([bill()], { ...opts, lateFee: 50.5 }).charge[0].newTotal).toBe(380);
+    expect(() => planLateFees([bill()], { ...opts, lateFee: -50 })).toThrow(/DDP-BILL-008/);
   });
 
   it('splits a mixed month correctly', () => {

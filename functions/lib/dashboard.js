@@ -64,7 +64,7 @@ export async function dashboardPayload(env, subject, userAgent = '') {
   const ownerId = subject.id;
 
   const [flatRow, billRow, readings, bills] = await Promise.all([
-    env.DB.prepare('SELECT flat, floor, paise_tag FROM flats WHERE flat = ?').bind(flat).first(),
+    env.DB.prepare('SELECT flat, floor FROM flats WHERE flat = ?').bind(flat).first(),
 
     env.DB.prepare(
       `SELECT b.*, p.due_date, p.late_fee AS period_late_fee, p.status AS period_status

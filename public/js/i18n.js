@@ -59,9 +59,13 @@ export function en(key) {
   return L[key]?.en ?? key;
 }
 
-/** Indian rupee, always 2dp — the paise identify the flat and must show. */
+/**
+ * Indian rupee. Bill totals are whole rupees, so '₹329.00' is noise — show
+ * paise only where they genuinely exist (a rate, a gas subtotal).
+ */
 export function money(amount) {
-  return `₹${Number(amount).toFixed(2)}`;
+  const n = Number(amount);
+  return `₹${Number.isInteger(n) ? n : n.toFixed(2)}`;
 }
 
 export function kg(value) {

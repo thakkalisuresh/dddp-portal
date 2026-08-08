@@ -7,7 +7,7 @@
  * `late_fee_at IS NULL` is the guard and there is a test for exactly that.
  */
 
-import { lateFeeDecision, applyLateFee, isWholeRupees } from './billing.js';
+import { lateFeeDecision, applyLateFee } from './billing.js';
 import { reportError, fail } from './errors.js';
 
 /**
@@ -19,7 +19,9 @@ import { reportError, fail } from './errors.js';
  * (plan §4e).
  */
 export function planLateFees(bills, { today, dueDate, graceDays = 0, lateFee }) {
-  if (!isWholeRupees(lateFee)) fail('DDP-BILL-008', { lateFee });
+  // Checked up front rather than per bill: a bad fee must stop the whole run,
+  // not charge half the building before it hits the first failure.
+  if (!Number.isFinite(lateFee) || lateFee < 0) fail('DDP-BILL-008', { lateFee });
 
   const charge = [];
   const hold = [];
