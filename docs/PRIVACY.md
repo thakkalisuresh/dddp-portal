@@ -103,3 +103,20 @@ Bills and payment proofs belong to the **person**, not the flat. When a flat is
 sold, the incoming owner cannot see the previous owner's bills or open their
 receipts, and the outgoing owner loses access immediately. Meter readings are
 a property fact and do carry across.
+
+## Break-glass recovery
+
+The superadmin has nobody above them, so a forgotten password is recovered by
+whoever holds the Cloudflare credentials:
+
+```
+node scripts/reset-my-password.mjs
+```
+
+The password is typed with echo off, hashed on that machine, and only the
+PBKDF2 hash reaches D1 — never an argument, never in shell history, never in a
+file that outlives the run. The script refuses to proceed unless the number
+matches an actual superadmin, and reads the hash back afterwards rather than
+trusting the write. Every use writes a `password.breakglass` audit row and
+signs out every existing session, because a forgotten password and a stolen one
+look identical from here.
