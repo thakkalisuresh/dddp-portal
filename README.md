@@ -40,8 +40,13 @@ the cron running old code, and shipping only the Worker leaves the site stale.
 | 7 | Public site — notices, committee, contact form | **done** |
 | 7b | Admin console, profile, forced password change | **done** |
 | — | Activity log, ownership transfer, editable committee | **done** |
-| — | Click capture (opt-in, self-expiring), single-superadmin rule | **done** |
+| — | Click capture (plain on/off), single-superadmin rule | **done** |
 | 8 | Nightly Drive backup, CSV export, retention, CSP | **done** |
+| — | Paise tag removed; totals round up to the whole rupee | **done** |
+| — | Association photographs rescued from the old portal | **done** |
+
+Deferred work is in [docs/BACKLOG.md](docs/BACKLOG.md) — parked deliberately, with
+the reasoning, not forgotten.
 
 Screen designs for all 19 screens were built before any app code.
 
@@ -76,11 +81,16 @@ factor is 2.60, derived from the old portal's own history (see test/billing.test
 Treating a meter delta as kilograms under-bills every flat by 2.6x. The factor is
 stored per period and snapshotted onto each bill, like the rate.
 
-**1 · The paise identify the flat.** Every bill total ends in that flat's permanent
-`paise_tag` — 4A always `.04`. That is how the treasurer's bank statement tells who paid,
-because a personal VPA gives no usable reference field. **Late fees are therefore whole
-rupees only**: ₹329.04 + ₹50 = ₹379.**04**, never ₹379.54. Enforced by a `CHECK` constraint,
-a guard in `applyLateFee`, and a test.
+**1 · A bill is exactly what the meter and the rate produce, rounded UP.** Nothing is
+added to the amount a resident is asked for and nothing is encoded in it. Ceiling, not
+round-to-nearest: 328.50 bills as 329 and so does 328.01. Verified against the old
+portal, where 314.25 was billed as 315 — ordinary rounding gives 314.
+
+Reconciliation rests on the UPI reference (`tr=DDP4A202606`, flat and period), the
+payer's name on the credit, and the payment-intent list. An earlier design stamped a
+per-flat identifier into the paise instead; it is gone, and `flats.legacy_paise_tag`
+is a dead column that could not be dropped — see `migrations/0005_retire_paise_tag.sql`
+for why, and use `lib/flats.js` to insert flats so you never have to care.
 
 **1b · Bills and proofs belong to the PERSON, not the flat.** When a flat is sold
 the incoming owner must not see the previous owner's bills or open their receipts.
@@ -112,7 +122,7 @@ code gaining a call site drops its `planned` flag.
 functions/
   index.js            router — auth, admin, god mode
   lib/
-    billing.js        pure arithmetic; the paise invariant lives here
+    billing.js        pure arithmetic; rounding and the 2.60 conversion live here
     crypto.js         PBKDF2 via Web Crypto, one-time passwords
     error-codes.js    the registry — docs are generated from it
     errors.js         reportError, AppError, alert rate limiting
