@@ -3,7 +3,24 @@
 Replacement for `gas.dddp.online`, a PHP/MySQL app on shared hosting abandoned by its author.
 Runs at **₹0**: Cloudflare Pages + Workers + D1 + R2, free subdomain, no payment gateway.
 
+**Live: https://diamondpark.pages.dev**
+
 Full design and rationale: `dddp-portal-plan.md` (kept alongside this repo).
+
+## Two deployments, one database
+
+| | What it is | Deploy |
+|---|---|---|
+| `pages/` | The public site — **diamondpark.pages.dev** | `npm run deploy:pages` |
+| root `wrangler.toml` | Cron only, no public route | `npm run deploy:cron` |
+
+Both bind to the **same** D1 (`dddp`, APAC) and the same R2 bucket. The Worker
+exists solely because Pages Functions have no cron triggers and the 3am
+late-fee / backup / prune job needs one; its `workers.dev` route is off, so
+residents have exactly one URL.
+
+`npm run deploy:all` does both. **Deploy both** — shipping only Pages leaves
+the cron running old code, and shipping only the Worker leaves the site stale.
 
 ## Status
 

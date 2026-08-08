@@ -1,0 +1,26 @@
+# Cloudflare Pages — the public URL (diamondpark.pages.dev).
+#
+# Pages allows only one wrangler.toml per directory and rejects --config, so
+# this lives in its own folder. The Worker config at ../wrangler.toml stays put.
+#
+# The Worker remains deployed alongside this with its workers.dev route OFF,
+# purely to run the 3am cron: Pages Functions still have no scheduled triggers.
+# Both bind to the SAME D1 and R2 — one database, one bucket, two entry points.
+
+name = "diamondpark"
+compatibility_date = "2026-08-01"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "dddp"
+database_id = "56951152-d3c7-4476-a779-9ef9afe0b4d8"
+
+[[r2_buckets]]
+binding = "PROOFS"
+bucket_name = "dddp-proofs"
+
+[vars]
+UPI_VPA = "qr.ddwelfare@sib"
+UPI_PAYEE = "DD Diamond Park RWA"
+PBKDF2_ITERATIONS = "100000"

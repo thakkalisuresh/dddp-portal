@@ -1,5 +1,11 @@
 name = "dddp-portal"
 main = "functions/index.js"
+
+# This Worker is NOT the public site — pages/ is (diamondpark.pages.dev).
+# It stays deployed for one reason: Pages Functions have no cron triggers, and
+# the 3am late-fee / backup / prune job needs one. Its public route is off so
+# there is exactly one URL residents can reach.
+workers_dev = false
 compatibility_date = "2026-08-01"
 
 [assets]
