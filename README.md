@@ -44,6 +44,8 @@ the cron running old code, and shipping only the Worker leaves the site stale.
 | 8 | Nightly Drive backup, CSV export, retention, CSP | **done** |
 | — | Paise tag removed; totals round up to the whole rupee | **done** |
 | — | Association photographs rescued from the old portal | **done** |
+| — | God edit — change any person or bill, every change recorded | **done** |
+| — | Mobile numbers stored in E.164, for owners settled abroad | **done** |
 
 Deferred work is in [docs/BACKLOG.md](docs/BACKLOG.md) — parked deliberately, with
 the reasoning, not forgotten.
@@ -96,6 +98,16 @@ for why, and use `lib/flats.js` to insert flats so you never have to care.
 the incoming owner must not see the previous owner's bills or open their receipts.
 `bills.owner_id` and `payment_proofs.owner_id` enforce it; readings stay keyed to the
 flat alone, because a meter reading is a property fact. See `docs/PRIVACY.md`.
+
+**1d · The superadmin can change anything, and cannot change anything silently.**
+God edit (`/god-edit`) writes any field on any person or bill. Those are one feature,
+not two: unlimited power is only safe to hand someone if the record of using it is
+automatic. Every save is a single field with before, after, actor and — for money — a
+reason. Three edits are refused, all of them lock-outs with no in-app way back:
+demoting the only superadmin, deactivating yourself, and a duplicate login number.
+Editing a bill component re-derives the total; editing the total overrides it and sets
+`manual_total`, which is what stops the fatal DDP-BILL-003 check from firing on a
+deliberate adjustment and burying the real signal.
 
 **1c · There is exactly one superadmin, and admins cannot see behavioural data.**
 The role can only be *moved*, never copied. Admins run the building; the activity

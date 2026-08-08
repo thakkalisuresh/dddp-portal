@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edit anything — Diamond Park</title>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+<style>
+  /* A row of fields that behave like text until you touch one. The page is a
+     record of the building, not a form, so it should read as one. */
+  .rec { border-bottom: 1px solid var(--border); padding: var(--s-3) var(--s-4); }
+  .rec__head { display: flex; gap: var(--s-2); align-items: baseline; flex-wrap: wrap; }
+  .rec__flat { font-family: var(--font-ui); font-weight: 700; }
+  .rec__meta { color: var(--ink-muted); font-size: var(--text-xs); }
+  .rec__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+               gap: var(--s-2); margin-top: var(--s-2); }
+
+  .cell { display: flex; flex-direction: column; gap: 2px; }
+  .cell__label { font-family: var(--font-ui); font-size: 10px; font-weight: 700;
+                 letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
+  .cell input, .cell select {
+    font: inherit; padding: 6px 8px; border: 1px solid transparent; border-radius: var(--radius);
+    background: transparent; color: var(--ink); width: 100%;
+  }
+  .cell input:hover, .cell select:hover { border-color: var(--border); background: var(--surface); }
+  .cell input:focus, .cell select:focus { border-color: var(--accent); background: var(--surface);
+                                          outline: 2px solid var(--accent-line); }
+  .cell--dirty input, .cell--dirty select { border-color: var(--accent); background: var(--accent-wash); }
+  .cell--num input { font-variant-numeric: tabular-nums; text-align: right; }
+
+  .flag { font-family: var(--font-ui); font-size: 10px; font-weight: 700; letter-spacing: .06em;
+          text-transform: uppercase; padding: 2px 6px; border-radius: var(--radius); border: 1px solid; }
+  .flag--manual { color: var(--awaiting); background: var(--awaiting-wash); border-color: var(--awaiting-line); }
+  .flag--bad    { color: var(--overdue);  background: var(--overdue-wash);  border-color: var(--overdue-line); }
+
+  .tabs { display: flex; gap: var(--s-1); padding: var(--s-3) var(--s-4) 0; flex-wrap: wrap; }
+  .tab { font: inherit; font-family: var(--font-ui); font-weight: 600; cursor: pointer;
+         padding: 6px 12px; border: 1px solid var(--border); background: var(--surface);
+         border-radius: var(--radius); color: var(--ink-muted); }
+  .tab.is-on { color: var(--ink); border-color: var(--accent); background: var(--accent-wash); }
+
+  .edit { border-bottom: 1px solid var(--border); padding: var(--s-2) var(--s-4);
+          font-size: var(--text-sm); display: grid; grid-template-columns: 170px 1fr;
+          gap: var(--s-3); align-items: baseline; }
+  .edit__at { font-family: var(--font-ui); font-variant-numeric: tabular-nums;
+              color: var(--ink-muted); font-size: var(--text-xs); white-space: nowrap; }
+  .edit__was { text-decoration: line-through; color: var(--ink-muted); }
+  @media (max-width: 640px) { .edit { grid-template-columns: 1fr; gap: 2px; } }
+</style>
+</head>
+<body>
+<div class="godbar" id="godbar" hidden></div>
+<header class="appbar">
+  <span class="appbar__who" id="who">Loading…</span>
+  <a class="appbar__action" href="/god">Activity log</a>
+</header>
+<main class="page page--wide" id="main"><p class="muted">Loading…</p></main>
+<script type="module" src="js/god-edit.js"></script>
+</body>
+</html>

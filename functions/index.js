@@ -19,6 +19,11 @@ import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden } from './lib/notices.js';
 import { publicNotices, submitMessage, fingerprintOf, AMENITIES } from './lib/public.js';
 import { transferFlat, canChangeRole, planHandover, outstandingFor, mergeTimeline, toIST } from './lib/tenancy.js';
+import {
+  OWNER_FIELDS, BILL_FIELDS, validateOwnerField, validateBillField,
+  lockoutCheck, applyBillEdit, computedTotal, isUnexplainedMismatch,
+  diff, checkReason, normaliseMobile,
+} from './lib/godedit.js';
 import { isCaptureOn, captureWindow, validateBatch } from './lib/clicks.js';
 import { runBackup, backupHealth, pruneOldRows, dumpTable, dumpAll, bundle, toCsv, TABLES } from './lib/backup.js';
 import {
@@ -206,6 +211,11 @@ export default {
         if (route === 'GET /api/god/export') return exportLogs(env, session, url);
         if (route === 'POST /api/god/capture') return setCapture(request, env, session);
         if (route === 'POST /api/god/handover') return handover(request, env, session);
+        if (route === 'GET /api/god/people') return godPeople(env);
+        if (route === 'GET /api/god/bills')  return godBills(env, url);
+        if (route === 'GET /api/god/edits')  return godEdits(env, url);
+        if (route.startsWith('PATCH /api/god/owner/')) return editOwner(request, env, session, path);
+        if (route.startsWith('PATCH /api/god/bill/'))  return editBill(request, env, session, path);
       }
 
       return problem(404, 'DDP-SYS-001', 'No such endpoint.');
@@ -224,9 +234,18 @@ export default {
 
 async function login(request, env, ctx) {
   const body = await readJson(request);
-  const mobile = String(body?.mobile ?? '').replace(/\D/g, '');
   const password = String(body?.password ?? '');
-  if (!mobile || !password) return problem(400, 'DDP-AUTH-001', 'Mobile number and password are required.');
+  // Normalised to E.164 exactly as god edits and the roster import store it.
+  // Before this, an owner whose number had been saved with a country code
+  // could not log in at all: the lookup compared bare digits against '+91...'.
+  // A resident still types the 10 digits they always have.
+  let mobile;
+  try {
+    mobile = normaliseMobile(body?.mobile);
+  } catch {
+    return problem(400, 'DDP-AUTH-001', 'Enter a valid mobile number.');
+  }
+  if (!password) return problem(400, 'DDP-AUTH-001', 'Mobile number and password are required.');
 
   if (!(await rateLimit(env, mobile))) {
     await reportError(env, 'DDP-AUTH-003', { mobile }, ctx);
@@ -1327,4 +1346,182 @@ async function errorLog(env) {
       GROUP BY code ORDER BY last_seen DESC`
   ).all();
   return json({ errors: results });
+}
+
+/* ── god edits ────────────────────────────────────────────────────────────
+   The superadmin can change anything. The only thing that is not optional is
+   the record of having changed it — that is what lets a decision be defended
+   to a resident six months later, and what keeps an altered bill from being
+   indistinguishable from a wrong one.                                       */
+
+/** Everyone, including admins and the superadmin — /api/god/residents omits those. */
+async function godPeople(env) {
+  const r = await env.DB.prepare(
+    `SELECT id, flat, name, mobile, email, role, active, moved_in_at, moved_out_at
+       FROM owners ORDER BY active DESC, flat, name`
+  ).all();
+  return json({ people: r.results ?? [] });
+}
+
+/** Every bill, newest first, with what the arithmetic would say for each. */
+async function godBills(env, url) {
+  const flat = url.searchParams.get('flat');
+  const r = await env.DB.prepare(
+    `SELECT b.id, b.flat, b.period, b.consumption, b.rate_per_kg, b.gas_amount,
+            b.other_charges, b.additional_charges, b.late_fee, b.total, b.status,
+            b.manual_total, b.adjusted_at, b.adjust_reason, o.name AS owner_name
+       FROM bills b LEFT JOIN owners o ON o.id = b.owner_id
+      ${flat ? 'WHERE b.flat = ?' : ''}
+      ORDER BY b.period DESC, b.flat`
+  ).bind(...(flat ? [flat] : [])).all();
+
+  const bills = (r.results ?? []).map((b) => ({
+    ...b,
+    computed: computedTotal(b),
+    // Surfaced rather than merely flagged: an override that does not say what
+    // the arithmetic wanted is just an unexplained number.
+    mismatch: isUnexplainedMismatch(b),
+  }));
+  return json({ bills });
+}
+
+/** The log of god edits alone, separated from ordinary audit traffic. */
+async function godEdits(env, url) {
+  const limit = Math.min(Number(url.searchParams.get('limit') ?? 100), 500);
+  const r = await env.DB.prepare(
+    `SELECT a.id, a.action, a.detail, a.at, o.name AS actor_name
+       FROM audit_log a LEFT JOIN owners o ON o.id = a.actor_id
+      WHERE a.action LIKE 'god.edit.%' ORDER BY a.at DESC LIMIT ?`
+  ).bind(limit).all();
+
+  return json({
+    edits: (r.results ?? []).map((row) => {
+      let detail = null;
+      try { detail = row.detail ? JSON.parse(row.detail) : null; } catch { detail = null; }
+      // toIST is the same helper the activity log uses, rather than a second
+      // client-side formatter that would drift from it.
+      return { id: row.id, at: row.at, atIST: toIST(row.at), actor: row.actor_name, ...detail };
+    }),
+  });
+}
+
+async function editOwner(request, env, session, path) {
+  // Editing while viewing as someone else would make the audit trail ambiguous
+  // about who decided what, which is the one thing it exists to be clear about.
+  if (session.impersonating) {
+    await reportError(env, 'DDP-AUTH-007', { actor: session.actor.id });
+    return problem(403, 'DDP-AUTH-007', 'Leave view-as before editing anyone.');
+  }
+
+  const id = Number(path.split('/').pop());
+  const target = await env.DB.prepare(
+    'SELECT id, flat, name, mobile, email, role, active FROM owners WHERE id = ?'
+  ).bind(id).first();
+  if (!target) return problem(404, 'DDP-ADMIN-010', 'No such person.');
+
+  const body = await readJson(request);
+  const field = String(body?.field ?? '');
+  if (!OWNER_FIELDS.includes(field)) {
+    return problem(400, 'DDP-ADMIN-010', `Cannot edit "${field}".`);
+  }
+
+  const value = validateOwnerField(field, body?.value);
+  const reason = checkReason(field, body?.reason);
+
+  const { n: superadminCount } = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM owners WHERE role = 'superadmin' AND active = 1"
+  ).first();
+
+  const verdict = lockoutCheck({
+    actor: session.actor, target, field, value, superadminCount,
+  });
+  if (!verdict.ok) {
+    await reportError(env, 'DDP-ADMIN-012', { field, target: id, actor: session.actor.id });
+    return problem(409, 'DDP-ADMIN-012', verdict.message);
+  }
+
+  // mobile is the login id and email will be the OTP address, so a duplicate
+  // would quietly hand one person's account to another.
+  if ((field === 'mobile' || field === 'email') && value != null) {
+    // Compared in normalised form. A raw string comparison here let two
+    // accounts share one number, because '9567791515' and '+919567791515' are
+    // different strings and the UNIQUE index could not see through that
+    // either. 0009 converted the stored rows; this keeps them that way.
+    const clash = field === 'mobile'
+      ? await env.DB.prepare(
+          `SELECT id, name, flat FROM owners
+            WHERE id <> ? AND (mobile = ? OR mobile = ? OR '+91' || mobile = ?)`
+        ).bind(id, value, value.replace(/^\+91/, ''), value).first()
+      : await env.DB.prepare(
+          'SELECT id, name, flat FROM owners WHERE email = ? AND id <> ?'
+        ).bind(value, id).first();
+    if (clash) {
+      return problem(409, 'DDP-ADMIN-013',
+        `That ${field} already belongs to ${clash.name} (${clash.flat}).`);
+    }
+  }
+
+  const change = diff({ entity: 'owner', id, field, before: target[field], after: value, reason });
+  if (!change) return json({ ok: true, unchanged: true });
+
+  await env.DB.prepare(`UPDATE owners SET ${field} = ? WHERE id = ?`).bind(value, id).run();
+  await audit(env, session, `god.edit.owner.${field}`,
+              { ...change, targetName: target.name, targetFlat: target.flat });
+
+  return json({ ok: true, field, value, confirm: verdict.confirm ?? null });
+}
+
+async function editBill(request, env, session, path) {
+  if (session.impersonating) {
+    await reportError(env, 'DDP-AUTH-007', { actor: session.actor.id });
+    return problem(403, 'DDP-AUTH-007', 'Leave view-as before editing a bill.');
+  }
+
+  const id = Number(path.split('/').pop());
+  const bill = await env.DB.prepare('SELECT * FROM bills WHERE id = ?').bind(id).first();
+  if (!bill) return problem(404, 'DDP-ADMIN-010', 'No such bill.');
+
+  const body = await readJson(request);
+  const field = String(body?.field ?? '');
+  if (!BILL_FIELDS.includes(field)) {
+    return problem(400, 'DDP-ADMIN-010', `Cannot edit "${field}".`);
+  }
+
+  const value = validateBillField(field, body?.value);
+  const reason = checkReason(field, body?.reason);   // always required for money
+
+  const change = diff({ entity: 'bill', id, field, before: bill[field], after: value, reason });
+  if (!change) return json({ ok: true, unchanged: true });
+
+  const { bill: next, derived, computed } = applyBillEdit(bill, field, value);
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(
+    `UPDATE bills SET gas_amount = ?, other_charges = ?, additional_charges = ?,
+            late_fee = ?, total = ?, status = ?, manual_total = ?,
+            adjusted_by = ?, adjusted_at = ?, adjust_reason = ?
+      WHERE id = ?`
+  ).bind(
+    next.gas_amount, next.other_charges, next.additional_charges, next.late_fee,
+    next.total, next.status, next.manual_total,
+    session.actor.id, now, reason, id
+  ).run();
+
+  await audit(env, session, `god.edit.bill.${field}`, {
+    ...change, flat: bill.flat, period: bill.period,
+    totalBefore: bill.total, totalAfter: next.total, derived, computed,
+  });
+
+  return json({
+    ok: true, field, value,
+    total: next.total,
+    manualTotal: Boolean(next.manual_total),
+    computed,
+    // So the UI can say "the arithmetic gives 329, you set 200" rather than
+    // letting an override look like an ordinary bill.
+    note: derived ? 'Total recalculated from the components.'
+        : field === 'total' && next.total !== computed
+          ? `Manual override. The components add up to ₹${computed}.`
+          : null,
+  });
 }

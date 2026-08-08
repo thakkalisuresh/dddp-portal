@@ -66,6 +66,11 @@ export const ERROR_CODES = {
   'DDP-ADMIN-006': { severity: 'fatal', message: 'Role change refused — it would leave no superadmin' },
   'DDP-ADMIN-007': { severity: 'error', message: 'Flat label has no leading floor number' },
   'DDP-ADMIN-008': { severity: 'fatal', message: 'Flat limit reached — the retired paise column caps the table at 99' },
+  'DDP-ADMIN-009': { severity: 'warn',  message: 'Mobile number is not a valid E.164 number' },
+  'DDP-ADMIN-010': { severity: 'warn',  message: 'God edit rejected — field or value not allowed' },
+  'DDP-ADMIN-011': { severity: 'warn',  message: 'God edit to money rejected — no reason given' },
+  'DDP-ADMIN-012': { severity: 'error', message: 'God edit would lock the superadmin out of their own account' },
+  'DDP-ADMIN-013': { severity: 'warn',  message: 'God edit rejected — mobile or email already belongs to someone else' },
 
   // ── SYS ────────────────────────────────────────────────────────────────
   'DDP-SYS-001': { severity: 'fatal', message: 'Unhandled exception in a Worker route' },

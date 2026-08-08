@@ -132,6 +132,13 @@ export const api = {
     setCapture:  (on, hours)   => request('POST', '/api/god/capture', { on, hours }),
     handover:    (toOwnerId)   => request('POST', '/api/god/handover', { toOwnerId }),
     residents:   ()            => request('GET',  '/api/god/residents'),
+    people:      ()            => request('GET',  '/api/god/people'),
+    bills:       (params = '') => request('GET',  `/api/god/bills${params}`),
+    edits:       (params = '') => request('GET',  `/api/god/edits${params}`),
+    editOwner:   (id, field, value, reason) =>
+                   request('PATCH', `/api/god/owner/${id}`, { field, value, reason }),
+    editBill:    (id, field, value, reason) =>
+                   request('PATCH', `/api/god/bill/${id}`, { field, value, reason }),
   },
 };
 

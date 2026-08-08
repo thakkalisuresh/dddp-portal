@@ -79,6 +79,11 @@ Ask the bot a code and it will explain it.
 | `DDP-ADMIN-006` | **fatal** | live | Role change refused — it would leave no superadmin |
 | `DDP-ADMIN-007` | error | live | Flat label has no leading floor number |
 | `DDP-ADMIN-008` | **fatal** | live | Flat limit reached — the retired paise column caps the table at 99 |
+| `DDP-ADMIN-009` | warn | live | Mobile number is not a valid E.164 number |
+| `DDP-ADMIN-010` | warn | live | God edit rejected — field or value not allowed |
+| `DDP-ADMIN-011` | warn | live | God edit to money rejected — no reason given |
+| `DDP-ADMIN-012` | error | live | God edit would lock the superadmin out of their own account |
+| `DDP-ADMIN-013` | warn | live | God edit rejected — mobile or email already belongs to someone else |
 
 ## SYS
 
@@ -95,7 +100,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-50 codes across 7 domains — 10 fatal, 4 awaiting their call site, 1 retired.
+55 codes across 7 domains — 10 fatal, 4 awaiting their call site, 1 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.
