@@ -26,7 +26,7 @@ form.addEventListener('submit', async (event) => {
     try {
       const result = await api.login(mobile, password);
       // A temporary password must be replaced before anything else is reachable.
-      location.href = result.mustChangePassword ? '/password.html' : '/dashboard.html';
+      location.href = result.mustChangePassword ? '/password' : '/dashboard';
     } catch (err) {
       showError(alertBox, err);
       submit.disabled = false;

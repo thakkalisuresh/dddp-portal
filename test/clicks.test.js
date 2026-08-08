@@ -13,6 +13,11 @@ describe('click capture is off unless deliberately on', () => {
     expect(isCaptureOn({ value: 'off' }, now)).toBe(false);
   });
 
+  it('stays on indefinitely when no window is set', () => {
+    // A plain switch, as asked for: on until someone turns it off.
+    expect(isCaptureOn({ value: 'on', expires_at: null }, now)).toBe(true);
+  });
+
   it('is on inside its window', () => {
     expect(isCaptureOn({ value: 'on', expires_at: '2026-08-07T14:00:00.000Z' }, now)).toBe(true);
   });
@@ -21,15 +26,10 @@ describe('click capture is off unless deliberately on', () => {
     expect(isCaptureOn({ value: 'on', expires_at: '2026-08-07T11:00:00.000Z' }, now)).toBe(false);
   });
 
-  it('treats an expiry-less switch as off — it must not run forever', () => {
-    expect(isCaptureOn({ value: 'on', expires_at: null }, now)).toBe(false);
-  });
-
-  it('caps the window however long is asked for', () => {
+  it('takes no window by default, and caps one when asked for', () => {
+    expect(captureWindow(undefined)).toEqual({ hours: null, expiresAt: null });
     expect(captureWindow(2).hours).toBe(2);
     expect(captureWindow(9999).hours).toBe(MAX_WINDOW_HOURS);
-    expect(captureWindow(-5).hours).toBe(DEFAULT_WINDOW_HOURS);
-    expect(captureWindow(undefined).hours).toBe(DEFAULT_WINDOW_HOURS);
   });
 });
 

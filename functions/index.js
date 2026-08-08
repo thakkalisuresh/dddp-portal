@@ -20,7 +20,7 @@ import { listNotices, getNotice, addComment, setCommentHidden } from './lib/noti
 import { publicNotices, submitMessage, fingerprintOf, AMENITIES } from './lib/public.js';
 import { transferFlat, canChangeRole, planHandover, outstandingFor, mergeTimeline, toIST } from './lib/tenancy.js';
 import { isCaptureOn, captureWindow, validateBatch } from './lib/clicks.js';
-import { runBackup, backupHealth, pruneOldRows, dumpTable, dumpAll, bundle, TABLES } from './lib/backup.js';
+import { runBackup, backupHealth, pruneOldRows, dumpTable, dumpAll, bundle, toCsv, TABLES } from './lib/backup.js';
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole,
@@ -71,6 +71,7 @@ export default {
       if (route === 'POST /api/logout') return logout(env, session);
       if (route === 'GET /api/me') return me(env, session, request);
       if (route === 'POST /api/password') return changePassword(request, env, session);
+      if (route === 'POST /api/onboard') return onboard(request, env, session);
       if (route === 'PATCH /api/me') return patchProfile(request, env, session);
       if (route === 'POST /api/activity') return recordActivity(request, env, session);
       if (route === 'GET /api/capture')   return captureState(env);
@@ -190,12 +191,19 @@ export default {
           await reportError(env, 'DDP-ADMIN-004', { path, actor: session.actor.id });
           return problem(403, 'DDP-ADMIN-004', 'Superadmin only.');
         }
+        if (route === 'GET /api/god/residents') {
+          const r = await env.DB.prepare(
+            `SELECT id, flat, name, role FROM owners WHERE active = 1 AND role = 'owner'
+              ORDER BY flat`).all();
+          return json({ residents: r.results ?? [] });
+        }
         if (route.startsWith('GET /api/god/view-as/')) return viewAs(env, session, path);
         if (route.startsWith('POST /api/god/impersonate/')) return impersonate(request, env, session, path);
         if (route === 'POST /api/god/exit') return exitImpersonation(env, session);
         if (route === 'GET /api/god/errors') return errorLog(env);
         if (route === 'GET /api/god/timeline') return timeline(env, url);
         if (route === 'GET /api/god/clicks') return clickLog(env, url);
+        if (route === 'GET /api/god/export') return exportLogs(env, session, url);
         if (route === 'POST /api/god/capture') return setCapture(request, env, session);
         if (route === 'POST /api/god/handover') return handover(request, env, session);
       }
@@ -417,6 +425,45 @@ async function waiveLateFee(env, session, path) {
 
 /** Residents may edit their own name and email. Mobile is admin-only: it is
  *  the login id and the tie to the flat (plan §4b). */
+/**
+ * First login. A resident arrives with a temporary password and a name typed
+ * by whoever imported the roster — often a spreadsheet abbreviation. This is
+ * the one moment they will reliably correct it, so it collects name, email and
+ * a password together rather than password alone.
+ *
+ * The mobile is shown but NOT editable: it is the login id and the tie to the
+ * flat. If it is wrong they cannot have logged in, so a mismatch means the
+ * roster is wrong and an admin has to fix it.
+ */
+async function onboard(request, env, session) {
+  if (session.impersonating) {
+    return problem(403, 'DDP-AUTH-007', 'Cannot complete setup while viewing as another resident.');
+  }
+
+  const b = await readJson(request);
+  const name = String(b?.name ?? '').trim();
+  const email = String(b?.email ?? '').trim() || null;
+  const password = String(b?.password ?? '');
+
+  if (!name) return problem(400, 'DDP-NOTICE-003', 'Please give your name.');
+  if (password.length < 8) {
+    return problem(400, 'DDP-AUTH-002', 'Choose a password of at least 8 characters.');
+  }
+  if (email && !/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)) {
+    return problem(400, 'DDP-NOTICE-003', 'That email address looks wrong. Check it, or leave it blank.');
+  }
+
+  const { hash, salt } = await hashPassword(password, ITER(env));
+  await env.DB.prepare(
+    `UPDATE owners SET name = ?, email = ?, pw_hash = ?, pw_salt = ?, must_change_pw = 0
+      WHERE id = ?`
+  ).bind(name, email, hash, salt, session.actor.id).run();
+
+  await destroyAllSessionsFor(env, session.actor.id);
+  await audit(env, session, 'onboard.complete', { name, email: Boolean(email) });
+  return json({ ok: true }, { headers: { 'set-cookie': clearCookieHeader() } });
+}
+
 async function patchProfile(request, env, session) {
   if (session.impersonating) {
     return problem(403, 'DDP-AUTH-007', 'Cannot edit details while viewing as another resident.');
@@ -760,6 +807,7 @@ async function recordClicks(request, env, session) {
 async function setCapture(request, env, session) {
   const body = await readJson(request);
   const turnOn = Boolean(body?.on);
+  // No hours -> on indefinitely. A window is opt-in, not the default.
   const { hours, expiresAt } = captureWindow(body?.hours);
   const now = new Date().toISOString();
 
@@ -785,6 +833,61 @@ async function clickLog(env, url) {
 
   return json({
     clicks: (rows.results ?? []).map((r) => ({ ...r, atIST: toIST(r.at) })),
+  });
+}
+
+/**
+ * Download the activity trail. Separate from the admin CSV export because this
+ * is behavioural data — superadmin only, and reading it is itself audited.
+ */
+async function exportLogs(env, session, url) {
+  const what = url.searchParams.get('what') ?? 'timeline';
+  const stamp = new Date().toISOString().slice(0, 10);
+
+  let rows;
+  let name;
+  if (what === 'clicks') {
+    const r = await env.DB.prepare(
+      `SELECT c.at, o.flat, o.name, c.page, c.target, c.label
+         FROM click_log c LEFT JOIN owners o ON o.id = c.owner_id
+        ORDER BY c.at DESC LIMIT 20000`
+    ).all();
+    rows = (r.results ?? []).map((x) => ({ ...x, at_ist: toIST(x.at) }));
+    name = `diamond-park-clicks-${stamp}.csv`;
+  } else {
+    const [audits, activities, errors] = await Promise.all([
+      env.DB.prepare(
+        `SELECT a.at, a.action, a.detail, ao.name AS actor_name, so.name AS subject_name, so.flat
+           FROM audit_log a
+           LEFT JOIN owners ao ON ao.id = a.actor_id
+           LEFT JOIN owners so ON so.id = a.subject_id
+          ORDER BY a.at DESC LIMIT 20000`).all(),
+      env.DB.prepare(
+        `SELECT v.at, v.kind, v.name, v.detail, o.name AS owner_name, o.flat
+           FROM activity v LEFT JOIN owners o ON o.id = v.owner_id
+          ORDER BY v.at DESC LIMIT 20000`).all(),
+      env.DB.prepare(
+        'SELECT at, code, severity, message, detail FROM error_log ORDER BY at DESC LIMIT 20000').all(),
+    ]);
+    rows = mergeTimeline({
+      audits: audits.results ?? [],
+      activities: activities.results ?? [],
+      errors: errors.results ?? [],
+    }).map((r) => ({
+      at_ist: r.atIST, kind: r.kind, event: r.name,
+      actor: r.actor ?? '', subject: r.subject ?? '', flat: r.flat ?? '',
+      severity: r.severity ?? '', detail: r.detail ?? '',
+    }));
+    name = `diamond-park-activity-${stamp}.csv`;
+  }
+
+  await audit(env, session, 'god.export', { what, rows: rows.length });
+  return new Response(toCsv(rows), {
+    headers: {
+      'content-type': 'text/csv; charset=utf-8',
+      'content-disposition': `attachment; filename="${name}"`,
+      'cache-control': 'no-store',
+    },
   });
 }
 

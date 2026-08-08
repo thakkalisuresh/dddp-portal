@@ -7,6 +7,7 @@
  */
 
 import { api, ApiError } from './api.js';
+import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
 import { $, el, esc, renderGodBanner, showError } from './ui.js';
 import { money, periodLabel } from './i18n.js';
@@ -24,6 +25,7 @@ async function init() {
     const me = await api.me();
     $('#who').innerHTML = `Flat ${esc(me.flat)} <span>· ${esc(me.name)}</span>`;
     renderGodBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
+    renderNav(me, '/proof');
 
     bill = me.bill;
     if (!bill) { main.replaceChildren(el('div', { class: 'note note--good' }, 'You have no bill to pay.')); return; }
@@ -34,7 +36,7 @@ async function init() {
     }
     render();
   } catch (err) {
-    if (err instanceof ApiError && err.status === 401) { location.href = '/login.html'; return; }
+    if (err instanceof ApiError && err.status === 401) { location.href = '/login'; return; }
     showError(main, err);
   }
 }
@@ -131,7 +133,7 @@ function outcome(result) {
         el('strong', {}, 'Received. '),
         'The treasurer will confirm it shortly — you don\'t need to do anything else.',
         readback),
-      el('a', { class: 'btn btn--ghost btn--block', href: '/dashboard.html' }, 'Back to your bill'));
+      el('a', { class: 'btn btn--ghost btn--block', href: '/dashboard' }, 'Back to your bill'));
   }
 
   // A mismatch is surfaced now rather than discovered by the treasurer days later.
@@ -143,5 +145,5 @@ function outcome(result) {
             `You may need to pay the remaining ${money(assessment.short)}.`)
         : null,
       readback),
-    el('a', { class: 'btn btn--block', href: '/dashboard.html' }, 'Back to your bill'));
+    el('a', { class: 'btn btn--block', href: '/dashboard' }, 'Back to your bill'));
 }

@@ -12,6 +12,7 @@
  */
 
 import { api, ApiError } from './api.js';
+import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
 import { $, el, esc, renderGodBanner, showError, setChildren } from './ui.js';
 
@@ -30,9 +31,10 @@ async function init() {
     }
     $('#who').innerHTML = `God mode <span>· ${esc(me.name)}</span>`;
     renderGodBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
+    renderNav(me, '/god');
     await load();
   } catch (err) {
-    if (err instanceof ApiError && err.status === 401) { location.href = '/login.html'; return; }
+    if (err instanceof ApiError && err.status === 401) { location.href = '/login'; return; }
     showError(main, err);
   }
 }
@@ -86,20 +88,33 @@ function controls() {
       status,
       el('p', { class: 'small muted' },
         state.on
-          ? `Click capture is ON until ${state.expiresAt}. It switches itself off then.`
-          : 'Click capture is off. Turn it on only to chase a specific problem — '
-            + 'it records which controls people press, never what they type.'),
+          ? (state.expiresAt
+              ? `Click capture is ON until ${state.expiresAt}.`
+              : 'Click capture is ON and stays on until you turn it off.')
+          : 'Click capture is off. It records which controls people press — '
+            + 'never what they type, and never a password field.'),
       el('div', { class: 'row' },
         el('button', {
           class: state.on ? 'btn btn--sm btn--quiet' : 'btn btn--sm', type: 'button',
-          onclick: async () => {
-            await api.god.setCapture(!state.on, 2);
-            location.reload();
-          },
-        }, state.on ? 'Turn capture off' : 'Turn on for 2 hours'),
-        state.on
-          ? el('a', { class: 'btn btn--sm btn--quiet', href: '/god-clicks.html' }, 'View clicks')
-          : null),
+          // A plain switch — no window. It stays on until turned off.
+          onclick: async () => { await api.god.setCapture(!state.on); location.reload(); },
+        }, state.on ? 'Turn capture OFF' : 'Turn capture ON'),
+        el('a', { class: 'btn btn--sm btn--quiet', href: '/god-clicks' }, 'View clicks')),
+      el('hr', { class: 'rule' }),
+      el('p', { class: 'label' }, 'Download'),
+      el('div', { class: 'row' },
+        el('a', { class: 'btn btn--sm btn--quiet', href: '/api/god/export?what=timeline', download: '' },
+          'Activity CSV'),
+        el('a', { class: 'btn btn--sm btn--quiet', href: '/api/god/export?what=clicks', download: '' },
+          'Clicks CSV')),
+
+      el('hr', { class: 'rule' }),
+      el('p', { class: 'label' }, 'View as a resident'),
+      el('p', { class: 'small muted' },
+        'Read-only opens their dashboard without touching their account. '
+        + 'Impersonating issues a real session — the amber banner stays up until you exit.'),
+      spoofControl(status),
+
       el('hr', { class: 'rule' }),
       el('p', { class: 'small muted' },
         'There is exactly one superadmin. The role can only be moved, never copied — '
@@ -108,6 +123,53 @@ function controls() {
   }).catch(() => {});
 
   return box;
+}
+
+/**
+ * The spoofing control (plan §5.5). Read-only is the default and the safe path:
+ * no session is issued and nothing is written to the resident's record.
+ */
+function spoofControl(status) {
+  const picker = el('select', { class: 'input', style: 'max-width:260px' },
+    el('option', { value: '' }, 'Choose a resident…'));
+
+  api.god.residents().then(({ residents }) => {
+    for (const r of residents) {
+      picker.append(el('option', { value: String(r.id), 'data-flat': r.flat },
+        `${r.flat} · ${r.name}`));
+    }
+  }).catch(() => {});
+
+  const chosen = () => picker.options[picker.selectedIndex];
+
+  return el('div', { class: 'stack', style: 'gap:var(--s-2)' }, picker,
+    el('div', { class: 'row', style: 'flex-wrap:wrap' },
+      el('button', {
+        class: 'btn btn--sm btn--ghost', type: 'button',
+        onclick: async () => {
+          const opt = chosen();
+          if (!opt?.value) return;
+          try {
+            const r = await api.god.viewAs(opt.dataset.flat);
+            status.replaceChildren(el('div', { class: 'note note--good' },
+              `${r.subject.flat} · ${r.subject.name} — ${r.subject.mobile ?? 'no mobile'} · `
+              + `${r.subject.email ?? 'no email'}. Read-only; nothing was changed.`));
+          } catch (err) { showError(status, err); }
+        },
+      }, 'View read-only'),
+      el('button', {
+        class: 'btn btn--sm', type: 'button',
+        onclick: async () => {
+          const opt = chosen();
+          if (!opt?.value) return;
+          if (!confirm(`Open the portal AS ${opt.textContent}? You will see exactly what they see. `
+                     + 'The amber banner stays up until you exit.')) return;
+          try {
+            await api.god.impersonate(Number(opt.value), false);
+            location.href = '/dashboard';
+          } catch (err) { showError(status, err); }
+        },
+      }, 'Impersonate (read-only)')));
 }
 
 function handoverControl(status) {

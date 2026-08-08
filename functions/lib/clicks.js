@@ -19,22 +19,35 @@ import { fail } from './errors.js';
 export const MAX_WINDOW_HOURS = 24;
 export const DEFAULT_WINDOW_HOURS = 2;
 
-/** Off unless explicitly on AND still inside its window. */
+/**
+ * A plain switch: on until it is turned off.
+ *
+ * This started as a self-expiring window, on the reasoning that behavioural
+ * recording should be hard to leave running. The owner-operator asked for a
+ * plain toggle instead, and it is their building and their data. An expiry is
+ * still honoured if one is set, so the timed behaviour remains available.
+ *
+ * What replaces the expiry as a safeguard: the state is shown on the god page,
+ * turning it on or off is written to the audit log, and click rows are pruned
+ * after 30 days regardless.
+ */
 export function isCaptureOn(setting, now = new Date().toISOString()) {
   if (!setting || setting.value !== 'on') return false;
-  if (!setting.expires_at) return false;      // an switch with no expiry is treated as off
-  return setting.expires_at > now;
+  if (setting.expires_at) return setting.expires_at > now;   // optional window
+  return true;
 }
 
+/**
+ * Only used when an explicit window is asked for. Omitting `hours` means the
+ * switch stays on indefinitely.
+ */
 export function captureWindow(hours) {
   const requested = Number(hours);
-  const capped = Number.isFinite(requested) && requested > 0
-    ? Math.min(requested, MAX_WINDOW_HOURS)
-    : DEFAULT_WINDOW_HOURS;
-  return {
-    hours: capped,
-    expiresAt: new Date(Date.now() + capped * 3600_000).toISOString(),
-  };
+  if (!Number.isFinite(requested) || requested <= 0) {
+    return { hours: null, expiresAt: null };   // on until switched off
+  }
+  const capped = Math.min(requested, MAX_WINDOW_HOURS);
+  return { hours: capped, expiresAt: new Date(Date.now() + capped * 3600_000).toISOString() };
 }
 
 /** Fields whose text must never be recorded, whatever the element is. */

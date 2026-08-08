@@ -7,6 +7,7 @@
  */
 
 import { api, ApiError } from './api.js';
+import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
 import { $, el, esc, statusChip, billBreakdown, renderGodBanner, showError } from './ui.js';
 import { money, kg, periodLabel, dayLabel, bilingual } from './i18n.js';
@@ -26,10 +27,10 @@ init();
 async function init() {
   try {
     const me = await api.me();
-    if (me.mustChangePassword) { location.href = '/password.html'; return; }
+    if (me.mustChangePassword) { location.href = '/password'; return; }
     render(me);
   } catch (err) {
-    if (err instanceof ApiError && err.status === 401) { location.href = '/login.html'; return; }
+    if (err instanceof ApiError && err.status === 401) { location.href = '/login'; return; }
     showError(main, err);
   }
 }
@@ -38,13 +39,14 @@ function render(me) {
   $('#who').innerHTML = `Flat ${esc(me.flat)} <span>· ${esc(me.name)}</span>`;
   $('#logout').addEventListener('click', async () => {
     await api.logout().catch(() => {});
-    location.href = '/login.html';
+    location.href = '/login';
   });
 
   renderGodBanner(me, {
     onExit: async () => { await api.god.exit(); location.reload(); },
     onAllowWrites: async () => { /* phase 7b: re-issue the session with writes */ },
   });
+  renderNav(me, '/dashboard');
 
   main.replaceChildren(
     ...(me.bill ? [billSection(me), paySection(me), breakdownSection(me.bill)] : [noBill()]),
@@ -141,7 +143,7 @@ function paySection(me) {
       el('strong', {}, String(b.total).slice(-3)),
       el('span', {}, ` identify flat ${me.flat} — please don't change the amount.`)),
     el('p', { style: 'text-align:center;margin-top:var(--s-3)' },
-      el('a', { class: 'linkish', href: '/proof.html' }, 'Already paid? Upload screenshot'))
+      el('a', { class: 'linkish', href: '/proof' }, 'Already paid? Upload screenshot'))
   );
 
   return block;

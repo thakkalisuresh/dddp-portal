@@ -8,6 +8,7 @@
  */
 
 import { api, ApiError } from './api.js';
+import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
 import { $, el, esc, renderGodBanner, showError, setChildren } from './ui.js';
 import { money, kg, periodLabel } from './i18n.js';
@@ -30,14 +31,15 @@ async function init() {
     $('#who').innerHTML = `Admin <span>· ${esc(me.name)}</span>`;
     $('#logout').addEventListener('click', async () => {
       await api.logout().catch(() => {});
-      location.href = '/login.html';
+      location.href = '/login';
     });
     renderGodBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
+    renderNav(me, '/admin/readings');
 
     if (!period) { period = defaultPeriod(); }
     await load();
   } catch (err) {
-    if (err instanceof ApiError && err.status === 401) { location.href = '/login.html'; return; }
+    if (err instanceof ApiError && err.status === 401) { location.href = '/login'; return; }
     showError(main, err);
   }
 }

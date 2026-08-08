@@ -30,15 +30,18 @@ Not recorded:
 
 **Scrolls, keystrokes, mouse movement, dwell time.** Never recorded.
 
-**Clicks — only while deliberately switched on.** Click capture exists, because
-"the button doesn't work for me" is otherwise unanswerable, but it is built to
-be hard to leave running:
+**Clicks — only while deliberately switched on.** Click capture exists because
+"the button doesn't work for me" is otherwise unanswerable. It is a plain
+on/off switch, on until someone turns it off:
 
-- only the superadmin can switch it on
-- it expires by itself, at most 24 hours, 2 by default
-- a switch with no expiry is treated as OFF
-- the server re-checks on every batch, so a page left open stops being recorded
-- rows live in their own table and can be dropped without touching the audit trail
+- only the superadmin can switch it on, and only they can read the results
+- the state is shown on the god page every time it is opened
+- switching it on or off is written to the audit log
+- the server re-checks the switch on every batch, so it stops the moment it is turned off
+- click rows are pruned after 30 days regardless, and live in their own table
+
+An optional expiry window is still supported by the API if a timed capture is
+ever wanted, but the default is a plain switch.
 
 **What a click records:** the element (`button#approve.btn`), its visible label
 (`"Approve"`), and the page. **Never a field value.** An input contributes its

@@ -45,6 +45,9 @@ the cron running old code, and shipping only the Worker leaves the site stale.
 
 Screen designs for all 19 screens were built before any app code.
 
+Navigation is role-driven (`public/js/nav.js`): residents see Bill · Notices ·
+Me; admins also see Admin; the superadmin also sees God.
+
 ## Getting started
 
 ```bash

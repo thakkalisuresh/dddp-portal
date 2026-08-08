@@ -7,6 +7,7 @@
  */
 
 import { api, ApiError } from './api.js';
+import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
 import { $, el, esc, renderGodBanner, showError } from './ui.js';
 import { dayLabel } from './i18n.js';
@@ -23,12 +24,13 @@ async function init() {
     isAdmin = me.role === 'admin' || me.role === 'superadmin';
     $('#who').innerHTML = `Flat ${esc(me.flat)} <span>· ${esc(me.name)}</span>`;
     renderGodBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
+    renderNav(me, '/notices');
 
     const id = new URLSearchParams(location.search).get('id');
     if (id) await renderOne(Number(id));
     else await renderList();
   } catch (err) {
-    if (err instanceof ApiError && err.status === 401) { location.href = '/login.html'; return; }
+    if (err instanceof ApiError && err.status === 401) { location.href = '/login'; return; }
     showError(main, err);
   }
 }

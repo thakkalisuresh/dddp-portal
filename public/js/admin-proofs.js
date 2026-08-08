@@ -7,6 +7,7 @@
  */
 
 import { api, ApiError } from './api.js';
+import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
 import { $, el, esc, renderGodBanner, showError, setChildren } from './ui.js';
 import { money, periodLabel } from './i18n.js';
@@ -21,9 +22,10 @@ async function init() {
     const me = await api.me();
     $('#who').innerHTML = `Admin <span>· ${esc(me.name)}</span>`;
     renderGodBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
+    renderNav(me, '/admin/proofs');
     await load();
   } catch (err) {
-    if (err instanceof ApiError && err.status === 401) { location.href = '/login.html'; return; }
+    if (err instanceof ApiError && err.status === 401) { location.href = '/login'; return; }
     showError(main, err);
   }
 }

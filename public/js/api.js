@@ -49,6 +49,7 @@ export const api = {
   /** Records that the resident opened their UPI app. NOT proof of payment. */
   payIntent: (billId) => request('POST', `/api/bills/${billId}/intent`),
 
+  onboard:       (body)      => request('POST', '/api/onboard', body),
   updateProfile: (name, email) => request('PATCH', '/api/me', { name, email }),
   trackActivity: (body)      => request('POST', '/api/activity', body),
   captureState:  ()          => request('GET',  '/api/capture'),
@@ -130,6 +131,7 @@ export const api = {
     clicks:      (params = '') => request('GET', `/api/god/clicks${params}`),
     setCapture:  (on, hours)   => request('POST', '/api/god/capture', { on, hours }),
     handover:    (toOwnerId)   => request('POST', '/api/god/handover', { toOwnerId }),
+    residents:   ()            => request('GET',  '/api/god/residents'),
   },
 };
 

@@ -7,6 +7,7 @@
  */
 
 import { api, ApiError } from './api.js';
+import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
 import { $, el, esc, renderGodBanner, showError } from './ui.js';
 import { bilingual } from './i18n.js';
@@ -21,9 +22,10 @@ async function init() {
     const me = await api.me();
     $('#who').innerHTML = `Flat ${esc(me.flat)} <span>· ${esc(me.name)}</span>`;
     renderGodBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
+    renderNav(me, '/profile');
     render(me);
   } catch (err) {
-    if (err instanceof ApiError && err.status === 401) { location.href = '/login.html'; return; }
+    if (err instanceof ApiError && err.status === 401) { location.href = '/login'; return; }
     showError(main, err);
   }
 }
@@ -69,7 +71,7 @@ function render(me) {
           await api.changePassword(current.value, next.value);
           // Every session ends on a password change, so send them to log in
           // again rather than leaving a page that will 401 on its next call.
-          location.href = '/login.html';
+          location.href = '/login';
         } catch (err) { showError(pwStatus, err); }
       },
     }, 'Change password'),

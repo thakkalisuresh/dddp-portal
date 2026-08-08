@@ -281,3 +281,57 @@ a { color: var(--accent); }
 /* Errors sit beside their field, and say how to fix it. */
 .field__hint { font-size: var(--text-xs); color: var(--ink-muted); }
 .field__error { font-size: var(--text-xs); color: var(--overdue); font-weight: 600; }
+
+/* ── bottom navigation ─────────────────────────────────────────────────── */
+
+/* Fixed, thumb-reachable, and role-driven (see js/nav.js). The portal shipped
+   without any navigation at all; this is the way between the screens. */
+.bottomnav {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: 90;
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  /* Clears the iPhone home indicator. */
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.bottomnav__item {
+  flex: 1;
+  min-height: var(--touch);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: var(--s-2) var(--s-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  text-decoration: none;
+  /* Reserve the indicator's space in both states so nothing shifts on nav. */
+  border-top: 2px solid transparent;
+}
+.bottomnav__item:hover { color: var(--ink); }
+
+/* Current location carries a label, a colour AND a rule — never colour alone. */
+.bottomnav__item.is-current {
+  color: var(--accent);
+  border-top-color: var(--accent);
+  font-weight: 600;
+}
+
+/* Fixed bars hide content underneath unless the page reserves room. */
+.has-bottomnav .page { padding-bottom: calc(var(--s-8) + 56px); }
+.has-bottomnav .footbar { bottom: calc(56px + env(safe-area-inset-bottom, 0)); }
+
+@media (min-width: 900px) {
+  /* On a desktop the bar sits at the top, where a menu is expected. */
+  .bottomnav { position: sticky; inset: 0 0 auto 0; border-top: none; border-bottom: 1px solid var(--border); }
+  .bottomnav__item { flex: 0 0 auto; flex-direction: row; gap: var(--s-2); padding: var(--s-3) var(--s-4);
+                     border-top: none; border-bottom: 2px solid transparent; }
+  .bottomnav__item.is-current { border-bottom-color: var(--accent); }
+  .has-bottomnav .page { padding-bottom: var(--s-8); }
+  .has-bottomnav .footbar { bottom: 0; }
+}
