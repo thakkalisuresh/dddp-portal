@@ -2,6 +2,8 @@
 
 Replacement for `gas.dddp.online`, a PHP/MySQL app on shared hosting abandoned by its author.
 Runs at **₹0**: Cloudflare Pages + Workers + D1 + R2, free subdomain, no payment gateway.
+Deploys are free; only usage meters, and the building sits ~1000x under every
+limit. Measured figures and the one thing worth watching: [docs/COSTS.md](docs/COSTS.md).
 
 **Live: https://diamondpark.pages.dev**
 
