@@ -49,7 +49,18 @@ export function renderNav(me, current = location.pathname) {
   let bar = $('#appnav');
   if (!bar) {
     bar = el('nav', { id: 'appnav', class: 'bottomnav', 'aria-label': 'Main' });
-    document.body.append(bar);
+    // Inserted after the header rather than appended to <body>.
+    //
+    // On a phone the bar is position:fixed, which ignores document order — but
+    // on a desktop it becomes position:sticky, and sticky sticks relative to
+    // where the element actually sits in the flow. Appended last, it parked
+    // *below* the content instead of at the top of the page.
+    //
+    // It also puts the nav next in the tab order after the header, which is
+    // where a screen reader user expects to find it.
+    const header = document.querySelector('.appbar');
+    if (header) header.insertAdjacentElement('afterend', bar);
+    else document.body.prepend(bar);
   }
 
   bar.replaceChildren(...items.map((item) =>
