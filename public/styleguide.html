@@ -152,22 +152,6 @@
 
 </main>
 
-<script type="module">
-  import { renderGodBanner } from './js/ui.js';
-  import { money, periodLabel, dayLabel } from './js/i18n.js';
-
-  let on = false;
-  document.getElementById('demo').addEventListener('click', () => {
-    on = !on;
-    renderGodBanner(
-      on ? { name: 'Sabarish Nair', flat: '4A', impersonation: { active: true, canWrite: false } } : null,
-      { onExit: () => { on = false; renderGodBanner(null); }, onAllowWrites: () => {} }
-    );
-    if (on) window.scrollTo({ top: 0, behavior: 'smooth' });
-  });
-
-  // smoke-check the formatters render as expected
-  console.log('money', money(329.04), 'period', periodLabel('2026-07'), 'day', dayLabel('2026-08-10'));
-</script>
+<script type="module" src="js/styleguide.js"></script>
 </body>
 </html>

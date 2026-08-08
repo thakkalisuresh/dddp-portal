@@ -1,2 +1,11 @@
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
+# Optional: screenshot OCR
+GROQ_API_KEY=
+# Optional: nightly off-site backup to a committee-owned Drive folder.
+# Publish the OAuth consent screen to PRODUCTION — a refresh token issued in
+# "Testing" mode expires after 7 days and the backup dies silently.
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REFRESH_TOKEN=
+GOOGLE_BACKUP_FOLDER_ID=

@@ -4,7 +4,7 @@
  * Billing, payments and proofs land in phases 3–6.
  */
 
-import { json, problem, readJson, audit, rateLimit, clearRateLimit, guard } from './lib/http.js';
+import { json, problem, readJson, audit, rateLimit, clearRateLimit, guard, withSecurityHeaders } from './lib/http.js';
 import { reportError, assertAlerting } from './lib/errors.js';
 import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex } from './lib/crypto.js';
 import { dashboardPayload } from './lib/dashboard.js';
@@ -20,6 +20,7 @@ import { listNotices, getNotice, addComment, setCommentHidden } from './lib/noti
 import { publicNotices, submitMessage, fingerprintOf, AMENITIES } from './lib/public.js';
 import { transferFlat, canChangeRole, planHandover, outstandingFor, mergeTimeline, toIST } from './lib/tenancy.js';
 import { isCaptureOn, captureWindow, validateBatch } from './lib/clicks.js';
+import { runBackup, backupHealth, pruneOldRows, dumpTable, dumpAll, bundle, TABLES } from './lib/backup.js';
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole,
@@ -33,9 +34,13 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    if (!path.startsWith('/api/')) return env.ASSETS.fetch(request);
+    // Static assets get the same headers as the API — a CSP that only covers
+    // JSON responses protects nothing.
+    if (!path.startsWith('/api/')) {
+      return withSecurityHeaders(await env.ASSETS.fetch(request));
+    }
 
-    return guard(env, ctx, async () => {
+    return withSecurityHeaders(await guard(env, ctx, async () => {
       const session = await resolveSession(env, request);
       const route = `${request.method} ${path}`;
 
@@ -132,6 +137,8 @@ export default {
           return json({ preview: await applyLateFees(env, { today: '1970-01-01' }),
                         stale: await staleIntents(env) });
         }
+        if (route === 'GET /api/admin/export') return exportData(env, session, url);
+        if (route === 'GET /api/admin/backup-health') return json(await backupHealth(env));
         if (route === 'GET /api/admin/messages') {
           const rows = await env.DB.prepare(
             'SELECT * FROM messages ORDER BY handled_at IS NOT NULL, created_at DESC LIMIT 100'
@@ -194,13 +201,14 @@ export default {
       }
 
       return problem(404, 'DDP-SYS-001', 'No such endpoint.');
-    });
+    }));
   },
 
   async scheduled(event, env, ctx) {
     await assertAlerting(env);
     await runScheduled(env, ctx);
-    // Phase 8: nightly Drive backup.
+    await runBackup(env, ctx);
+    await pruneOldRows(env);
   },
 };
 
@@ -798,6 +806,38 @@ async function handover(request, env, session) {
 
   await audit(env, session, 'superadmin.handover', { from: from.id, to: to.id, toName: to.name });
   return json({ from: from.name, to: to.name, note: 'You are now an admin.' });
+}
+
+/**
+ * Download the data. Deliberately available to admins, not just the
+ * superadmin: the committee owning a readable copy of its own records is the
+ * whole point, and is what the old site failed to provide.
+ */
+async function exportData(env, session, url) {
+  const table = url.searchParams.get('table');
+  const stamp = new Date().toISOString().slice(0, 10);
+
+  if (table) {
+    if (!TABLES.includes(table)) return problem(400, 'DDP-SYS-003', 'No such table.');
+    await audit(env, session, 'export.table', { table });
+    return new Response(await dumpTable(env, table), {
+      headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': `attachment; filename="diamond-park-${table}-${stamp}.csv"`,
+        'cache-control': 'no-store',
+      },
+    });
+  }
+
+  const files = await dumpAll(env);
+  await audit(env, session, 'export.all', { tables: Object.keys(files).length });
+  return new Response(bundle(files, { generatedAt: new Date().toISOString() }), {
+    headers: {
+      'content-type': 'text/csv; charset=utf-8',
+      'content-disposition': `attachment; filename="diamond-park-${stamp}.csv"`,
+      'cache-control': 'no-store',
+    },
+  });
 }
 
 // ── payment proofs ──────────────────────────────────────────────────────

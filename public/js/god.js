@@ -5,9 +5,10 @@
  * timeline, because "what happened to this resident on Tuesday" is a question
  * that spans all three and is unanswerable if they live in separate screens.
  *
- * What is NOT here, by design: individual clicks and keystrokes. See
- * docs/PRIVACY.md — the people this records live in the same building as the
- * people who can read it.
+ * Clicks are recorded only while capture is switched on, and live on their own
+ * page. Keystrokes, scrolling and mouse movement are never recorded at all.
+ * See docs/PRIVACY.md — the people this records live in the same building as
+ * the people who can read it.
  */
 
 import { api, ApiError } from './api.js';

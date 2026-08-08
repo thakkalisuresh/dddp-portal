@@ -21,31 +21,6 @@
   <a class="appbar__action" href="/god.html">Activity log</a>
 </header>
 <main class="page page--wide" id="main"><p class="muted">Loading…</p></main>
-<script type="module">
-  import { api } from './js/api.js';
-  import { $, el, showError } from './js/ui.js';
-
-  const main = $('#main');
-  try {
-    const state = await api.captureState();
-    const { clicks } = await api.god.clicks();
-    main.replaceChildren(
-      el('div', { class: 'panel', style: 'padding:var(--s-4)' },
-        el('h1', {}, 'Click capture'),
-        el('p', { class: 'small muted' },
-          state.on ? `Recording until ${state.expiresAt}.` : 'Not currently recording.'),
-        el('p', { class: 'small muted' },
-          `${clicks.length} events. Field values are never recorded — an input shows its `
-          + 'identity only, and a password field is dropped entirely.')),
-      ...(clicks.length
-        ? clicks.map((c) => el('div', { class: 'c' },
-            el('span', { class: 'c__at' }, c.atIST),
-            el('span', {}, `${c.flat ?? '—'} · ${c.name ?? ''}`),
-            el('div', {},
-              el('span', {}, c.label ?? '(no label)'),
-              el('div', { class: 'c__target' }, `${c.page} · ${c.target}`))))
-        : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nothing captured.')]));
-  } catch (err) { showError(main, err); }
-</script>
+<script type="module" src="js/god-clicks.js"></script>
 </body>
 </html>

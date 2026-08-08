@@ -40,39 +40,6 @@
   </p>
 </main>
 
-<script type="module">
-  import { api } from './js/api.js';
-  import { $, showError } from './js/ui.js';
-
-  const form = $('#form');
-  const submit = $('#submit');
-  const alertBox = $('#alert');
-
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    alertBox.replaceChildren();
-
-    const mobile = $('#mobile').value.trim();
-    const password = $('#password').value;
-    if (!mobile || !password) {
-      showError(alertBox, { message: 'Enter your mobile number and password.' });
-      return;
-    }
-
-    submit.disabled = true;
-    submit.textContent = 'Logging in…';
-    try {
-      const result = await api.login(mobile, password);
-      // A temporary password must be replaced before anything else is reachable.
-      location.href = result.mustChangePassword ? '/password.html' : '/dashboard.html';
-    } catch (err) {
-      showError(alertBox, err);
-      submit.disabled = false;
-      submit.textContent = 'Log in';
-      $('#password').value = '';
-      $('#password').focus();
-    }
-  });
-</script>
+<script type="module" src="js/login.js"></script>
 </body>
 </html>

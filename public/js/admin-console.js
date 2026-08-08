@@ -25,6 +25,7 @@ const TABS = [
   { id: 'notices',   label: 'Notices',   render: noticesPanel },
   { id: 'messages',  label: 'Messages',  render: messagesPanel },
   { id: 'archive',   label: 'Archive',   render: archivePanel },
+  { id: 'export',    label: 'Export',    render: exportPanel },
   { id: 'errors',    label: 'Errors',    render: errorsPanel, superadmin: true },
 ];
 
@@ -249,6 +250,42 @@ async function noticesPanel() {
 }
 
 /* ── messages ──────────────────────────────────────────────────────────── */
+
+/**
+ * The committee owning a readable copy of its own records is the point — it is
+ * exactly what the old site failed to provide. Available to admins, not just
+ * the superadmin.
+ */
+function exportPanel() {
+  const tables = ['bills', 'readings', 'owners', 'periods', 'payment_proofs', 'audit_log', 'messages'];
+  return el('div', { class: 'panel stack' },
+    el('h2', {}, 'Download the data'),
+    el('p', { class: 'muted small' },
+      'CSV, openable in Excel. Passwords are never included. A copy is also sent '
+      + 'to the committee Drive folder every night.'),
+    el('a', { class: 'btn', href: '/api/admin/export', download: '' }, 'Download everything'),
+    el('p', { class: 'label', style: 'margin-top:var(--s-4)' }, 'Single table'),
+    el('div', { class: 'row', style: 'flex-wrap:wrap' },
+      ...tables.map((t) =>
+        el('a', { class: 'btn btn--sm btn--quiet', href: `/api/admin/export?table=${t}`, download: '' }, t))),
+    el('hr', { class: 'rule' }),
+    el('p', { class: 'label' }, 'Nightly backup'),
+    backupHealthLine());
+}
+
+function backupHealthLine() {
+  const line = el('p', { class: 'small muted' }, 'Checking…');
+  api.admin.backupHealth().then((h) => {
+    line.replaceChildren(
+      h.ok
+        ? 'Google Drive is reachable and the token is valid.'
+        : h.reason === 'not-configured'
+          ? 'Not set up yet. Add the Google secrets to enable nightly off-site copies.'
+          : `Backup is BROKEN (${h.reason}). A refresh token issued in OAuth "Testing" mode expires after 7 days — publish the consent screen.`);
+    if (!h.ok && h.reason !== 'not-configured') line.className = 'small';
+  }).catch(() => line.replaceChildren('Could not check.'));
+  return line;
+}
 
 async function messagesPanel() {
   const { messages } = await api.admin.messages();

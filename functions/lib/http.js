@@ -1,5 +1,39 @@
 import { reportError } from './errors.js';
 
+/**
+ * Applied to every response, including static assets.
+ *
+ * The CSP is strict-by-default and possible because the app has no bundler, no
+ * CDN and no analytics: everything is same-origin. `frame-ancestors 'none'`
+ * matters most — it stops the portal being framed by a lookalike that
+ * harvests logins.
+ */
+export const SECURITY_HEADERS = {
+  'content-security-policy': [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",   // inline <style> blocks in the pages
+    "img-src 'self' data: blob:",         // blob: for the local upload preview
+    "font-src 'self'",                    // fonts are self-hosted, no CDN
+    "connect-src 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'none'",
+    "object-src 'none'",
+  ].join('; '),
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'strict-origin-when-cross-origin',
+  'x-frame-options': 'DENY',
+  'permissions-policy': 'geolocation=(), microphone=(), payment=(), interest-cohort=()',
+  'strict-transport-security': 'max-age=31536000; includeSubDomains',
+};
+
+export function withSecurityHeaders(response) {
+  const headers = new Headers(response.headers);
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) headers.set(k, v);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 export function json(data, init = {}) {
   return new Response(JSON.stringify(data), {
     status: init.status ?? 200,

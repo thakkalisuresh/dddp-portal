@@ -24,7 +24,7 @@ Full design and rationale: `dddp-portal-plan.md` (kept alongside this repo).
 | 7b | Admin console, profile, forced password change | **done** |
 | — | Activity log, ownership transfer, editable committee | **done** |
 | — | Click capture (opt-in, self-expiring), single-superadmin rule | **done** |
-| 8 | Backups, hardening | next |
+| 8 | Nightly Drive backup, CSV export, retention, CSP | **done** |
 
 Screen designs for all 19 screens were built before any app code.
 
@@ -39,7 +39,7 @@ npm run dev
 
 ```bash
 npm run seed      # local dev data: 6 residents, real readings from the old portal
-npm test          # 218 tests, no network or D1 needed
+npm test          # 237 tests, no network or D1 needed
 npm run errdoc    # regenerate docs/ERROR_CODES.md after editing the registry
 ```
 
@@ -104,6 +104,7 @@ functions/
     notices.js        comments — opt-in per notice, real names, soft hide
     proof.js          upload validation, claim assessment, queue shaping
     public.js         the unauthenticated surface; leaks nothing private
+    backup.js         CSV export, Drive upload, retention windows
     clicks.js         opt-in click capture; drops credential fields entirely
     tenancy.js        flat transfers, role guards, the merged timeline
     qr.js             QR matrix; tests decode it with an independent decoder
@@ -111,8 +112,21 @@ functions/
     upi.js            deep links; iOS needs per-app schemes, Android doesn't
 migrations/           D1 schema
 scripts/              doc generation
-test/                218 tests
+test/                237 tests
 ```
+
+## Operating it
+
+`wrangler.toml` sets `run_worker_first = true` so static pages get the same
+security headers as the API. Without it the asset server answers directly and
+the CSP covers JSON only — which is exactly the wrong way round.
+
+The CSP is `script-src 'self'`, so **no inline `<script>` blocks**. Four pages
+had them and were silently dead until they were extracted to files; keep new
+pages the same way.
+
+Retention: clicks 30 days, page views 180, errors 365. `audit_log` is never
+pruned — it is what makes administration accountable.
 
 ## Notes for whoever picks this up
 
@@ -124,3 +138,7 @@ test/                218 tests
 - **Test UPI amount-prefill on real apps early.** The VPA is personal, not a merchant one,
   so behaviour differs across GPay, PhonePe and Paytm and NPCI keeps tightening it.
 - **Malayalam labels need a native speaker** before launch.
+- **Publish the Google OAuth consent screen to Production** before relying on the
+  nightly backup. A refresh token issued in "Testing" mode expires after 7 days and
+  the backup then fails silently — `GET /api/admin/backup-health` and the Export tab
+  both surface it, and `DDP-SYS-008` alerts on it.

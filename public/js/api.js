@@ -105,6 +105,7 @@ export const api = {
     proofArchive:  (params = '') => request('GET', `/api/admin/proofs/archive${params}`),
     deleteProof:   (id)      => request('DELETE', `/api/admin/proofs/${id}`),
     updateBill:    (id, b)   => request('PATCH', `/api/admin/bills/${id}`, b),
+    backupHealth:  ()        => request('GET',  '/api/admin/backup-health'),
 
     /** Hand out the template first so column order is guaranteed on the way back. */
     downloadTemplate(period, grid) {
