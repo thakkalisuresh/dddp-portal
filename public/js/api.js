@@ -135,6 +135,7 @@ export const api = {
     people:      ()            => request('GET',  '/api/god/people'),
     bills:       (params = '') => request('GET',  `/api/god/bills${params}`),
     edits:       (params = '') => request('GET',  `/api/god/edits${params}`),
+    diagnostics: (params = '') => request('GET',  `/api/god/diagnostics${params}`),
     editOwner:   (id, field, value, reason) =>
                    request('PATCH', `/api/god/owner/${id}`, { field, value, reason }),
     editBill:    (id, field, value, reason) =>

@@ -87,6 +87,38 @@ the fallback for residents with no email at all: today they contact Mukesh, and
 the point of the OTP work was to remove that dependency. Decide whether a
 no-email resident is a real case in this building before building for it.
 
+## B7 — An AI triage step inside the portal
+
+**Deferred 2026-08-09,** with a recommendation against most of it.
+
+The idea: give a free AI API the PRD and the READMEs, let it review, debug and
+fix, and write a comment explaining what happened that gets forwarded on.
+
+The diagnostics work (`npm run doctor`, the Health tab) came out of this and
+covers the useful part. What is left is the AI itself, and it is worth being
+precise about what each piece would add.
+
+**Reviewing and explaining** — small gain, real cost. The destination for the
+explanation is an assistant that will read the raw report anyway. Inserting a
+second model to summarise first adds a lossy compression step, a secret to
+rotate, a dependency that can rate-limit, and the possibility of debugging from
+a confident summary that is wrong. `--md` output is already the artefact.
+
+**Fixing** — recommend against outright. An LLM with credentials to modify
+bills, roles or payment status in a live financial system, with no human
+between the decision and the write, is a bad trade at any accuracy. God edit
+exists so a person makes that call and signs it.
+
+**Where it would genuinely help,** if this is revisited:
+
+* Plain-language explanations of error codes for residents, in English and
+  Malayalam — bounded, low-stakes, wrong answers are embarrassing not costly.
+* Overnight triage: cluster the night's `error_log` rows and say which of the
+  57 codes is new versus routine. Read-only, and it saves reading a list.
+
+Both are additive to the report, not a replacement for it. If it is built, it
+reads and writes nothing but its own commentary — no credentials to any table.
+
 ## B6 — Telegram alerting secrets on both deployments
 
 The error-code registry routes `fatal` and `error` to Telegram immediately.

@@ -16,7 +16,8 @@
     "build:pages": "node scripts/build-pages.mjs",
     "deploy:pages": "npm run build:pages && cd pages && wrangler pages deploy",
     "deploy:cron": "wrangler deploy",
-    "deploy:all": "npm run deploy:pages && npm run deploy:cron"
+    "deploy:all": "npm run deploy:pages && npm run deploy:cron",
+    "doctor": "node scripts/doctor.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.1",

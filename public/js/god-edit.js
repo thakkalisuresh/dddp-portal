@@ -20,7 +20,7 @@ import { money, periodLabel } from './i18n.js';
 
 const main = $('#main');
 let tab = 'people';
-let data = { people: [], bills: [], edits: [] };
+let data = { people: [], bills: [], edits: [], health: null };
 
 trackPage('/god/edit');
 init();
@@ -43,10 +43,11 @@ async function init() {
 }
 
 async function load() {
-  const [people, bills, edits] = await Promise.all([
+  const [people, bills, edits, health] = await Promise.all([
     api.god.people(), api.god.bills(), api.god.edits('?limit=100'),
+    api.god.diagnostics('?md=1'),
   ]);
-  data = { people: people.people, bills: bills.bills, edits: edits.edits };
+  data = { people: people.people, bills: bills.bills, edits: edits.edits, health };
   render();
 }
 
@@ -55,7 +56,8 @@ function render() {
     el('div', { class: 'tabs' },
       tabButton('people', `People (${data.people.length})`),
       tabButton('bills', `Bills (${data.bills.length})`),
-      tabButton('log', `What I've changed (${data.edits.length})`)),
+      tabButton('log', `What I've changed (${data.edits.length})`),
+      tabButton('health', healthLabel())),
     el('div', { class: 'panel', style: 'padding:var(--s-3) var(--s-4)' },
       el('p', { class: 'small muted' }, blurb())),
     ...body()
@@ -72,7 +74,64 @@ function blurb() {
          + 'overrides it and the bill is marked so — the components are left as metered. '
          + 'Money edits need a reason.';
   }
+  if (tab === 'health') {
+    return 'The building\u2019s invariants, checked against live data. The same checks '
+         + 'run from the command line with: npm run doctor';
+  }
   return 'Every edit made here, newest first. This log cannot be edited from the portal.';
+}
+
+/* ── health ──────────────────────────────────────────────────────────────── */
+
+function healthBody() {
+  const h = data.health;
+  if (!h) return [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Could not run the checks.')];
+
+  const copy = el('button', { class: 'btn btn--ghost', type: 'button' }, 'Copy report');
+  copy.addEventListener('click', async () => {
+    // The whole point of the report is that it can be pasted somewhere else,
+    // so the button matters as much as the checks.
+    await navigator.clipboard.writeText(h.markdown ?? '');
+    copy.textContent = 'Copied';
+    setTimeout(() => { copy.textContent = 'Copy report'; }, 2000);
+  });
+
+  const head = el('div', { class: 'rec' },
+    el('div', { class: 'rec__head' },
+      el('span', { class: 'rec__flat' },
+        h.summary.healthy ? 'Everything checks out'
+                          : `${h.summary.fail} failing \u00b7 ${h.summary.warn} warnings`),
+      el('span', { class: 'rec__meta' },
+        Object.entries(h.meta.counts).map(([k, v]) => `${v} ${k}`).join(' \u00b7 ')),
+      copy));
+
+  return [head, ...h.findings.map(findingRow),
+    ...(h.errors.length ? [errorsPanel(h.errors)] : [])];
+}
+
+function findingRow(f) {
+  const tone = f.severity === 'fail' ? 'flag--bad'
+             : f.severity === 'warn' ? 'flag--manual' : '';
+  return el('div', { class: 'rec' },
+    el('div', { class: 'rec__head' },
+      el('span', { class: `flag ${tone}` }, f.severity),
+      el('span', { class: 'rec__flat' }, f.title),
+      el('span', { class: 'rec__meta' }, f.id)),
+    el('p', { class: 'rec__meta', style: 'margin-top:var(--s-1)' }, f.detail),
+    ...f.rows.slice(0, 10).map((r) =>
+      el('p', { class: 'rec__meta', style: 'margin-top:2px' },
+        Object.entries(r).map(([k, v]) => `${k}=${v}`).join('  \u00b7  '))),
+    f.rows.length > 10
+      ? el('p', { class: 'rec__meta' }, `\u2026${f.rows.length - 10} more`)
+      : null);
+}
+
+function errorsPanel(errors) {
+  return el('div', { class: 'rec' },
+    el('div', { class: 'rec__head' }, el('span', { class: 'rec__flat' }, 'Recent errors')),
+    ...errors.slice(0, 15).map((e) =>
+      el('p', { class: 'rec__meta', style: 'margin-top:2px' },
+        `${e.atIST ?? e.at}  ${e.code}  ${e.message}`)));
 }
 
 function tabButton(id, label) {
@@ -82,9 +141,18 @@ function tabButton(id, label) {
   }, label);
 }
 
+function healthLabel() {
+  const s = data.health?.summary;
+  if (!s) return 'Health';
+  if (s.fail) return `Health · ${s.fail} failing`;
+  if (s.warn) return `Health · ${s.warn} warnings`;
+  return 'Health · ok';
+}
+
 function body() {
   if (tab === 'people') return data.people.map(personRow);
   if (tab === 'bills')  return data.bills.map(billRow);
+  if (tab === 'health') return healthBody();
   return data.edits.length
     ? data.edits.map(editRow)
     : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nothing has been edited yet.')];

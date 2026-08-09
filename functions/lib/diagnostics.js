@@ -1,0 +1,316 @@
+/**
+ * Self-checks — the building's invariants, written down as assertions.
+ *
+ * WHY THIS EXISTS. Every real bug this system has had was an invariant
+ * violation that no code was watching for:
+ *
+ *   * mobiles stored in two different spellings, so the UNIQUE index stopped
+ *     protecting anything and two accounts shared a login number;
+ *   * new residents written as bare digits after login started normalising to
+ *     E.164, so an account could be created that could never log in;
+ *   * wa.me links built by string concatenation, dead on every reset;
+ *   * a bill total that no longer matched its own components.
+ *
+ * None of those threw. They were all found by a human looking at output and
+ * noticing. This module is the attempt to stop relying on that: state each
+ * rule once, check it on demand, and report the rows that break it.
+ *
+ * Pure — every check takes rows and returns findings, so it is testable
+ * without a database and runs identically from the CLI and from god mode.
+ *
+ * Severity is about what to do, not how bad it feels:
+ *   fail — something is broken now; a resident is affected or will be
+ *   warn — will break, or hides a real problem
+ *   info — worth knowing, not wrong
+ */
+
+import { computedTotal, isUnexplainedMismatch } from './godedit.js';
+
+export const SEVERITIES = ['fail', 'warn', 'info'];
+
+function finding(severity, id, title, detail, rows = []) {
+  return { severity, id, title, detail, rows, count: rows.length };
+}
+
+/* ── redaction ───────────────────────────────────────────────────────────── */
+
+/**
+ * A diagnostics report is written to be pasted into a chat window, so it must
+ * be safe to paste. Enough of a number to recognise who it is, not enough to
+ * be the number.
+ */
+export function maskMobile(mobile) {
+  const s = String(mobile ?? '');
+  if (s.length < 6) return '***';
+  return `${s.slice(0, 5)}${'*'.repeat(Math.max(0, s.length - 8))}${s.slice(-3)}`;
+}
+
+export function maskEmail(email) {
+  if (!email) return null;
+  const [user, domain] = String(email).split('@');
+  if (!domain) return '***';
+  return `${user.slice(0, 2)}***@${domain}`;
+}
+
+/* ── the checks ──────────────────────────────────────────────────────────── */
+
+/**
+ * Mobiles are the login identity. Two spellings of one number defeat both the
+ * UNIQUE index and the login lookup, which is exactly how one number ended up
+ * on two accounts.
+ */
+export function checkMobiles(owners) {
+  const out = [];
+
+  const notE164 = owners.filter((o) => !String(o.mobile ?? '').startsWith('+'));
+  if (notE164.length) {
+    out.push(finding('fail', 'MOBILE-FORMAT',
+      'Mobile numbers not stored in E.164',
+      'Login normalises to +91…, so these accounts cannot log in at all. '
+      + 'A write path is skipping normaliseMobile.',
+      notE164.map((o) => ({ flat: o.flat, name: o.name, mobile: maskMobile(o.mobile) }))));
+  }
+
+  // Compared on digits, because the whole failure mode is two spellings that
+  // a plain string comparison treats as different.
+  const byDigits = new Map();
+  for (const o of owners) {
+    const key = String(o.mobile ?? '').replace(/\D/g, '').slice(-10);
+    if (!key) continue;
+    byDigits.set(key, [...(byDigits.get(key) ?? []), o]);
+  }
+  const dupes = [...byDigits.values()].filter((group) => group.length > 1);
+  if (dupes.length) {
+    out.push(finding('fail', 'MOBILE-DUPLICATE',
+      'One number on more than one account',
+      'Whoever logs in gets whichever row the query returns first.',
+      dupes.map((g) => ({
+        mobile: maskMobile(g[0].mobile),
+        accounts: g.map((o) => `${o.flat} ${o.name}`).join(' + '),
+      }))));
+  }
+
+  return out;
+}
+
+/** Email will be the OTP address, so a shared one is a shared account. */
+export function checkEmails(owners) {
+  const seen = new Map();
+  for (const o of owners) {
+    const e = (o.email ?? '').trim().toLowerCase();
+    if (!e) continue;
+    seen.set(e, [...(seen.get(e) ?? []), o]);
+  }
+  const dupes = [...seen.entries()].filter(([, g]) => g.length > 1);
+  return dupes.length
+    ? [finding('warn', 'EMAIL-DUPLICATE', 'One email on more than one account',
+        'Password reset by email would send both accounts to the same inbox.',
+        dupes.map(([e, g]) => ({ email: maskEmail(e), accounts: g.map((o) => o.flat).join(' + ') })))]
+    : [];
+}
+
+/**
+ * The role can move but never be copied, and never vanish. Zero is worse than
+ * two: nobody can administer the portal and there is no in-app way back.
+ */
+export function checkSuperadmin(owners) {
+  const supers = owners.filter((o) => o.role === 'superadmin' && o.active);
+  if (supers.length === 1) return [];
+  if (supers.length === 0) {
+    return [finding('fail', 'SUPERADMIN-NONE', 'No active superadmin',
+      'God mode is unreachable. Recover with scripts/reset-my-password.mjs, '
+      + 'or set the role directly in D1.')];
+  }
+  return [finding('fail', 'SUPERADMIN-MANY', `${supers.length} active superadmins`,
+    'The single-superadmin rule has been bypassed, probably by a direct D1 write.',
+    supers.map((o) => ({ flat: o.flat, name: o.name })))];
+}
+
+/**
+ * A bill whose total does not match its components is either corruption or an
+ * acknowledged override. Only the first is a problem — hence manual_total.
+ */
+export function checkBills(bills) {
+  const out = [];
+
+  const broken = bills.filter(isUnexplainedMismatch);
+  if (broken.length) {
+    out.push(finding('fail', 'BILL-MISMATCH',
+      'Bills whose total does not match their own components',
+      'This is the DDP-BILL-003 condition. Either the components were changed '
+      + 'outside the app, or an override was written without manual_total.',
+      broken.map((b) => ({
+        flat: b.flat, period: b.period, total: b.total, components: computedTotal(b),
+      }))));
+  }
+
+  const overridden = bills.filter((b) => b.manual_total);
+  if (overridden.length) {
+    out.push(finding('info', 'BILL-OVERRIDE', 'Bills with a manual total',
+      'Deliberate adjustments. Listed so they are never a surprise at audit.',
+      overridden.map((b) => ({
+        flat: b.flat, period: b.period, total: b.total,
+        components: computedTotal(b), reason: b.adjust_reason ?? '(none recorded)',
+      }))));
+  }
+
+  const negative = bills.filter((b) => Number(b.total) < 0);
+  if (negative.length) {
+    out.push(finding('fail', 'BILL-NEGATIVE', 'Bills with a negative total',
+      'The portal cannot charge a negative amount; the UPI link will be invalid.',
+      negative.map((b) => ({ flat: b.flat, period: b.period, total: b.total }))));
+  }
+
+  return out;
+}
+
+/**
+ * A rate silently carried forward is the worst failure available here: every
+ * bill looks normal and every one is wrong.
+ */
+export function checkPeriods(periods) {
+  const out = [];
+
+  const noRate = periods.filter((p) => !(Number(p.rate_per_kg) > 0));
+  if (noRate.length) {
+    out.push(finding('warn', 'PERIOD-NO-RATE', 'Months with no rate set',
+      'Bill generation is blocked for these until a rate is entered.',
+      noRate.map((p) => ({ period: p.period }))));
+  }
+
+  const noConversion = periods.filter((p) => !(Number(p.conversion_factor) > 0));
+  if (noConversion.length) {
+    out.push(finding('fail', 'PERIOD-NO-CONVERSION', 'Months with no conversion factor',
+      'The meter counts cubic metres and the bill charges kilograms. Without '
+      + 'the factor every flat is under-billed roughly 2.6x.',
+      noConversion.map((p) => ({ period: p.period }))));
+  }
+
+  return out;
+}
+
+/** Bills and proofs belong to a person; readings belong to the property. */
+export function checkOwnership(bills, proofs) {
+  const out = [];
+  const orphanBills = bills.filter((b) => b.owner_id == null);
+  if (orphanBills.length) {
+    out.push(finding('warn', 'BILL-NO-OWNER', 'Bills not attached to a person',
+      'After a sale the new owner would see these. See the privacy note in the README.',
+      orphanBills.map((b) => ({ flat: b.flat, period: b.period }))));
+  }
+  const orphanProofs = proofs.filter((p) => p.owner_id == null);
+  if (orphanProofs.length) {
+    out.push(finding('warn', 'PROOF-NO-OWNER', 'Payment screenshots not attached to a person',
+      'A screenshot is a fact about a person, not a flat.',
+      orphanProofs.map((p) => ({ id: p.id, bill_id: p.bill_id }))));
+  }
+  return out;
+}
+
+/** Rows pointing at things that no longer exist. */
+export function checkIntegrity({ owners, flats, readings }) {
+  const known = new Set(flats.map((f) => f.flat));
+  const out = [];
+
+  const homeless = owners.filter((o) => o.active && o.flat && !known.has(o.flat));
+  if (homeless.length) {
+    out.push(finding('fail', 'OWNER-NO-FLAT', 'Residents whose flat is not on the register',
+      'They will fail to load a dashboard.',
+      homeless.map((o) => ({ name: o.name, flat: o.flat }))));
+  }
+
+  // Meters do not run backwards. A lower reading is a typo or a replaced meter.
+  const byFlat = new Map();
+  for (const r of [...readings].sort((a, b) => a.period.localeCompare(b.period))) {
+    const prev = byFlat.get(r.flat);
+    if (prev != null && Number(r.reading) < Number(prev.reading)) {
+      out.push(finding('fail', 'READING-BACKWARDS', 'A meter reading lower than the month before',
+        'Either a typo, or the meter was replaced and needs its own note.',
+        [{ flat: r.flat, period: r.period, reading: r.reading, previous: prev.reading }]));
+    }
+    byFlat.set(r.flat, r);
+  }
+
+  return out;
+}
+
+/** Things that are only wrong in production. */
+export function checkConfig({ upiVpa, alertingConfigured, remote }) {
+  const out = [];
+  if (!upiVpa) {
+    out.push(finding(remote ? 'fail' : 'warn', 'CONFIG-NO-VPA', 'No UPI payee configured',
+      'Every Pay button produces an invalid link.'));
+  }
+  if (remote && !alertingConfigured) {
+    out.push(finding('warn', 'CONFIG-NO-ALERTS', 'Error alerting is not configured',
+      'Fatal errors land in error_log and are visible in god mode, but nothing '
+      + 'is pushed anywhere — you find out by looking.'));
+  }
+  return out;
+}
+
+/* ── assembling a report ─────────────────────────────────────────────────── */
+
+export function runChecks(data) {
+  return [
+    ...checkMobiles(data.owners ?? []),
+    ...checkEmails(data.owners ?? []),
+    ...checkSuperadmin(data.owners ?? []),
+    ...checkBills(data.bills ?? []),
+    ...checkPeriods(data.periods ?? []),
+    ...checkOwnership(data.bills ?? [], data.proofs ?? []),
+    ...checkIntegrity({ owners: data.owners ?? [], flats: data.flats ?? [], readings: data.readings ?? [] }),
+    ...checkConfig(data.config ?? {}),
+  ].sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));
+}
+
+export function summarise(findings) {
+  const by = (s) => findings.filter((f) => f.severity === s).length;
+  return { fail: by('fail'), warn: by('warn'), info: by('info'), healthy: by('fail') + by('warn') === 0 };
+}
+
+/**
+ * Markdown, because the destination is a chat window. Rows are capped: a
+ * report nobody pastes because it is 900 lines long has failed at its job.
+ */
+export function toMarkdown({ findings, errors = [], meta = {} }) {
+  const s = summarise(findings);
+  const lines = [
+    `# Diamond Park — diagnostics`,
+    '',
+    `${meta.environment ?? 'unknown'} · ${meta.generatedAt ?? new Date().toISOString()}`,
+    '',
+    s.healthy
+      ? '**Every check passed.**'
+      : `**${s.fail} failing, ${s.warn} warnings, ${s.info} notes.**`,
+    '',
+  ];
+
+  if (meta.counts) {
+    lines.push('| | |', '|---|---|',
+      ...Object.entries(meta.counts).map(([k, v]) => `| ${k} | ${v} |`), '');
+  }
+
+  for (const f of findings) {
+    lines.push(`## ${f.severity.toUpperCase()} · ${f.id} — ${f.title}`, '', f.detail, '');
+    if (f.rows.length) {
+      const shown = f.rows.slice(0, 20);
+      const cols = Object.keys(shown[0]);
+      lines.push(`| ${cols.join(' | ')} |`, `|${cols.map(() => '---').join('|')}|`,
+        ...shown.map((r) => `| ${cols.map((c) => r[c] ?? '').join(' | ')} |`));
+      if (f.rows.length > shown.length) lines.push(`| …${f.rows.length - shown.length} more | |`);
+      lines.push('');
+    }
+  }
+
+  if (errors.length) {
+    lines.push('## Recent errors', '', '| when | code | meaning |', '|---|---|---|',
+      ...errors.slice(0, 25).map((e) => `| ${e.at ?? ''} | \`${e.code}\` | ${e.message ?? ''} |`), '');
+  }
+
+  lines.push('---', '',
+    'Mobiles and emails are masked. No password hashes, session tokens or ',
+    'screenshot contents appear here — this is written to be pasted as-is.', '');
+
+  return lines.join('\n');
+}

@@ -24,6 +24,8 @@ import {
   lockoutCheck, applyBillEdit, computedTotal, isUnexplainedMismatch,
   diff, checkReason, normaliseMobile,
 } from './lib/godedit.js';
+import { runChecks, summarise, toMarkdown } from './lib/diagnostics.js';
+import { ERROR_CODES } from './lib/error-codes.js';
 import { isCaptureOn, captureWindow, validateBatch } from './lib/clicks.js';
 import { runBackup, backupHealth, pruneOldRows, dumpTable, dumpAll, bundle, toCsv, TABLES } from './lib/backup.js';
 import {
@@ -214,6 +216,7 @@ export default {
         if (route === 'GET /api/god/people') return godPeople(env);
         if (route === 'GET /api/god/bills')  return godBills(env, url);
         if (route === 'GET /api/god/edits')  return godEdits(env, url);
+        if (route === 'GET /api/god/diagnostics') return godDiagnostics(env, url);
         if (route.startsWith('PATCH /api/god/owner/')) return editOwner(request, env, session, path);
         if (route.startsWith('PATCH /api/god/bill/'))  return editBill(request, env, session, path);
       }
@@ -1546,5 +1549,55 @@ async function editBill(request, env, session, path) {
         : field === 'total' && next.total !== computed
           ? `Manual override. The components add up to ₹${computed}.`
           : null,
+  });
+}
+
+/**
+ * The same self-checks the CLI runs, from inside god mode.
+ *
+ * Deliberately the same module: two implementations of "is this healthy"
+ * eventually disagree, and the one nobody is looking at is the correct one.
+ */
+async function godDiagnostics(env, url) {
+  const [owners, flats, bills, periods, readings, proofs, errors] = await Promise.all([
+    env.DB.prepare('SELECT id, flat, name, mobile, email, role, active FROM owners').all(),
+    env.DB.prepare('SELECT flat, floor, active FROM flats').all(),
+    env.DB.prepare(`SELECT id, flat, period, owner_id, gas_amount, other_charges,
+                           additional_charges, late_fee, total, status, manual_total,
+                           adjust_reason FROM bills`).all(),
+    env.DB.prepare('SELECT period, rate_per_kg, conversion_factor, status FROM periods').all(),
+    env.DB.prepare('SELECT flat, period, reading FROM readings').all(),
+    env.DB.prepare('SELECT id, bill_id, owner_id FROM payment_proofs').all(),
+    env.DB.prepare('SELECT code, severity, at FROM error_log ORDER BY id DESC LIMIT 25').all(),
+  ]);
+
+  const data = {
+    owners: owners.results ?? [], flats: flats.results ?? [], bills: bills.results ?? [],
+    periods: periods.results ?? [], readings: readings.results ?? [], proofs: proofs.results ?? [],
+    config: {
+      upiVpa: env.UPI_VPA, alertingConfigured: Boolean(env.TELEGRAM_BOT_TOKEN), remote: true,
+    },
+  };
+
+  const findings = runChecks(data);
+  const recent = (errors.results ?? []).map((e) => ({
+    ...e, atIST: toIST(e.at), message: ERROR_CODES[e.code]?.message ?? '',
+  }));
+  const meta = {
+    environment: 'production',
+    generatedAt: new Date().toISOString(),
+    counts: {
+      residents: data.owners.length, flats: data.flats.length, bills: data.bills.length,
+      readings: data.readings.length, months: data.periods.length,
+    },
+  };
+
+  // The markdown is built server-side so the page has nothing to assemble and
+  // the CLI and the Copy button produce a byte-identical report.
+  return json({
+    findings, summary: summarise(findings), errors: recent, meta,
+    markdown: url.searchParams.get('md') === '1'
+      ? toMarkdown({ findings, errors: recent, meta })
+      : undefined,
   });
 }
