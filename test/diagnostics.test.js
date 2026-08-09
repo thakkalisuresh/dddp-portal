@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   checkMobiles, checkEmails, checkSuperadmin, checkBills, checkPeriods,
   checkOwnership, checkIntegrity, checkConfig, runChecks, summarise,
-  toMarkdown, maskMobile, maskEmail, checkDigest,
+  toMarkdown, maskMobile, maskEmail, checkDigest, checkResetPath,
 } from '../functions/lib/diagnostics.js';
 
 const owner = (o) => ({ id: 1, flat: '4A', name: 'A', mobile: '+919567791515',
@@ -267,5 +267,33 @@ describe('alerting is configured on both deployments, or neither works properly'
     expect(checkConfig({ upiVpa: 'x', alertingConfigured: true, remote: true })).toEqual([]);
     expect(checkConfig({ upiVpa: 'x', alertingConfigured: false, remote: true })[0].id)
       .toBe('CONFIG-NO-ALERTS');
+  });
+});
+
+describe('who can actually reset their own password', () => {
+  const o = (flat, email, active = 1) => ({ flat, name: flat, email, active });
+
+  it('warns when the mail path is unconfigured — nobody can self-serve', () => {
+    const f = checkResetPath({ mailConfigured: false, remote: true }, []);
+    expect(f[0].id).toBe('MAIL-NOT-CONFIGURED');
+  });
+
+  it('names the residents with no email, since they are invisible until locked out', () => {
+    const f = checkResetPath({ mailConfigured: true, remote: true },
+      [o('4A', 'a@b.com'), o('4B', null), o('5A', '')]);
+    const e = f.find((x) => x.id === 'NO-EMAIL-ON-FILE');
+    expect(e.title).toMatch(/2 of 3/);
+    expect(e.rows.map((r) => r.flat)).toEqual(['4B', '5A']);
+  });
+
+  it('ignores inactive accounts — they cannot log in anyway', () => {
+    const f = checkResetPath({ mailConfigured: true, remote: true },
+      [o('4A', 'a@b.com'), o('9Z', null, 0)]);
+    expect(f).toEqual([]);
+  });
+
+  it('stays quiet locally about mail', () => {
+    expect(checkResetPath({ mailConfigured: false, remote: false }, []).map((x) => x.id))
+      .not.toContain('MAIL-NOT-CONFIGURED');
   });
 });

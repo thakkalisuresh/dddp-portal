@@ -82,6 +82,18 @@ function alertingSecrets() {
   return { cron: has(worker), pages: has(pages) };
 }
 
+/** Are the four Google/mail secrets present on the Pages deployment? */
+function mailSecrets() {
+  try {
+    const out = execFileSync('npx', ['wrangler', 'pages', 'secret', 'list'],
+      { encoding: 'utf8', cwd: join(process.cwd(), 'pages'), stdio: ['ignore', 'pipe', 'pipe'] });
+    return ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN', 'MAIL_FROM']
+      .every((n) => out.includes(n));
+  } catch {
+    return false;
+  }
+}
+
 const main = () => {
   const env = local ? 'local' : 'production';
   if (!asMarkdown) console.error(`${C.dim}Reading ${env}…${C.off}`);
@@ -112,6 +124,8 @@ const main = () => {
       // (Pages) and the digest from the cron Worker. One without the other is
       // half-working in a way nothing else would surface.
       alerting: local ? { cron: true, pages: true } : alertingSecrets(),
+      // Same reasoning as alerting: ask Cloudflare, not this shell.
+      mailConfigured: local ? true : mailSecrets(),
       remote: !local,
     },
   });

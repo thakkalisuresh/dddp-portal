@@ -25,6 +25,11 @@ import {
   diff, checkReason, normaliseMobile,
 } from './lib/godedit.js';
 import { runChecks, summarise, toMarkdown } from './lib/diagnostics.js';
+import {
+  generateCode, normaliseCode, expiryFrom, canIssue, resetState, failureMessage,
+  validateNewPassword, resetEmail, neutralReply,
+} from './lib/reset.js';
+import { sendEmail, mailConfigured } from './lib/mailer.js';
 import { ERROR_CODES } from './lib/error-codes.js';
 import { isCaptureOn, captureWindow, validateBatch } from './lib/clicks.js';
 import { runBackup, backupHealth, pruneOldRows, dumpTable, dumpAll, bundle, toCsv, TABLES } from './lib/backup.js';
@@ -53,6 +58,8 @@ export default {
 
       // ── public ────────────────────────────────────────────────────────
       if (route === 'POST /api/login') return login(request, env, ctx);
+      if (route === 'POST /api/forgot') return forgotPassword(request, env, ctx);
+      if (route === 'POST /api/reset') return resetWithCode(request, env, ctx);
       if (route === 'GET /api/health') return json({ ok: true });
 
       // ── public: no session required ───────────────────────────────────
@@ -1579,7 +1586,8 @@ async function godDiagnostics(env, url) {
     periods: periods.results ?? [], readings: readings.results ?? [], proofs: proofs.results ?? [],
     lastDigestAt: digest?.value ?? null,
     config: {
-      upiVpa: env.UPI_VPA, alertingConfigured: Boolean(env.TELEGRAM_BOT_TOKEN), remote: true,
+      upiVpa: env.UPI_VPA, alertingConfigured: Boolean(env.TELEGRAM_BOT_TOKEN),
+      mailConfigured: mailConfigured(env), remote: true,
     },
   };
 
@@ -1604,4 +1612,148 @@ async function godDiagnostics(env, url) {
       ? toMarkdown({ findings, errors: recent, meta })
       : undefined,
   });
+}
+
+/* ── self-service password reset ──────────────────────────────────────────
+   Removes the treasurer from the loop for anyone with an email on file.
+   Everyone else still goes through an admin, which is why the admin reset
+   path stays.                                                              */
+
+/**
+ * "I forgot my password."
+ *
+ * Answers identically whether or not the account exists. Anything else turns
+ * this into a directory: try a mobile number, and a different reply tells you
+ * whether that person lives in the building.
+ *
+ * Every branch below therefore returns the SAME shape. The differences are
+ * recorded in error_log, where only the committee can see them.
+ */
+async function forgotPassword(request, env, ctx) {
+  const body = await readJson(request);
+
+  let mobile;
+  try {
+    mobile = normaliseMobile(body?.mobile);
+  } catch {
+    return json(neutralReply());           // not even a hint that it parsed
+  }
+
+  const owner = await env.DB.prepare(
+    'SELECT id, name, flat, email FROM owners WHERE mobile = ? AND active = 1'
+  ).bind(mobile).first();
+
+  if (!owner) {
+    await reportError(env, 'DDP-AUTH-006', { mobile }, ctx);
+    return json(neutralReply());
+  }
+
+  if (!owner.email) {
+    // Worth an alert rather than a shrug: a resident is stuck and will phone
+    // somebody, and the fix is for an admin to add their address.
+    await reportError(env, 'DDP-AUTH-011', { flat: owner.flat, ownerId: owner.id }, ctx);
+    return json(neutralReply());
+  }
+
+  const recent = await env.DB.prepare(
+    'SELECT created_at FROM password_resets WHERE owner_id = ? ORDER BY created_at'
+  ).bind(owner.id).all();
+
+  const allowed = canIssue(recent.results ?? []);
+  if (!allowed.ok) {
+    await reportError(env, 'DDP-AUTH-010', { flat: owner.flat, ownerId: owner.id }, ctx);
+    return json(neutralReply());
+  }
+
+  const code = generateCode();
+  const { hash, salt } = await hashPassword(code, ITER(env));
+  const now = new Date();
+
+  await env.DB.prepare(
+    `INSERT INTO password_resets (owner_id, code_hash, code_salt, sent_to, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(owner.id, hash, salt, owner.email, expiryFrom(now), now.toISOString()).run();
+
+  const { subject, text } = resetEmail({ code, name: owner.name, flat: owner.flat });
+  const result = await sendEmail(env, { to: owner.email, subject, text });
+
+  if (!result.sent) {
+    // The resident is told the same thing either way, so this row is the only
+    // place the failure exists. Without it the whole feature could be dead and
+    // look perfectly healthy from outside.
+    await reportError(env, 'DDP-MAIL-001',
+                      { flat: owner.flat, reason: result.reason }, ctx);
+  }
+
+  await audit(env, { actor: { id: owner.id }, subject: { id: owner.id } },
+              'password.reset.requested', { flat: owner.flat, delivered: result.sent });
+
+  return json(neutralReply());
+}
+
+/** "Here is the code, here is my new password." */
+async function resetWithCode(request, env, ctx) {
+  const body = await readJson(request);
+
+  let mobile;
+  try {
+    mobile = normaliseMobile(body?.mobile);
+  } catch {
+    return problem(400, 'DDP-AUTH-009', 'That code is not right, or it has expired.');
+  }
+  const code = normaliseCode(body?.code);
+  const password = validateNewPassword(body?.password);   // throws DDP-AUTH-008
+
+  const owner = await env.DB.prepare(
+    'SELECT id, flat FROM owners WHERE mobile = ? AND active = 1'
+  ).bind(mobile).first();
+
+  // Same reply as a wrong code. An unknown number must not be distinguishable
+  // here either, or this endpoint becomes the directory the other one is not.
+  if (!owner) {
+    await reportError(env, 'DDP-AUTH-009', { mobile, reason: 'no-account' }, ctx);
+    return problem(400, 'DDP-AUTH-009', failureMessage('none'));
+  }
+
+  const row = await env.DB.prepare(
+    `SELECT * FROM password_resets WHERE owner_id = ?
+      ORDER BY created_at DESC LIMIT 1`
+  ).bind(owner.id).first();
+
+  const state = resetState(row);
+  if (!state.usable) {
+    await reportError(env, 'DDP-AUTH-009', { flat: owner.flat, reason: state.reason }, ctx);
+    return problem(400, 'DDP-AUTH-009', failureMessage(state.reason));
+  }
+
+  const ok = await verifyPassword(code, row.code_hash, row.code_salt, ITER(env));
+  if (!ok) {
+    // Counted BEFORE replying, so a client that gives up mid-request still
+    // spends the attempt. Otherwise the limit is bypassed by disconnecting.
+    await env.DB.prepare('UPDATE password_resets SET attempts = attempts + 1 WHERE id = ?')
+      .bind(row.id).run();
+    await reportError(env, 'DDP-AUTH-009', { flat: owner.flat, reason: 'wrong' }, ctx);
+    return problem(400, 'DDP-AUTH-009', failureMessage('wrong', state.remaining - 1));
+  }
+
+  const { hash, salt } = await hashPassword(password, ITER(env));
+  const now = new Date().toISOString();
+
+  await env.DB.batch([
+    env.DB.prepare('UPDATE owners SET pw_hash = ?, pw_salt = ?, must_change_pw = 0 WHERE id = ?')
+      .bind(hash, salt, owner.id),
+    // Single use, marked in the same batch as the password change so the two
+    // cannot come apart and leave a spent code still live.
+    env.DB.prepare('UPDATE password_resets SET used_at = ? WHERE id = ?').bind(now, row.id),
+    // Any other code outstanding for this account dies with it.
+    env.DB.prepare('UPDATE password_resets SET used_at = ? WHERE owner_id = ? AND used_at IS NULL')
+      .bind(now, owner.id),
+  ]);
+
+  // A forgotten password and a stolen one look identical from here.
+  await destroyAllSessionsFor(env, owner.id);
+  await audit(env, { actor: { id: owner.id }, subject: { id: owner.id } },
+              'password.reset.completed', { flat: owner.flat });
+
+  return json({ ok: true, message: 'Password changed. You can log in now.' });
 }

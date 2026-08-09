@@ -48,6 +48,11 @@ function render(me) {
 
     el('div', { class: 'field' },
       el('label', { for: 'email' }, 'Email (optional)'), email,
+      // Optional, but not arbitrary: it is the only way to reset your own
+      // password. Labelling it "optional" and saying nothing else is how a
+      // building ends up with one person unlocking everybody's account.
+      el('p', { class: 'small muted' },
+        'Without one you will have to ask an admin to reset your password.'),
       el('span', { class: 'field__hint' }, 'Only used to send you a reset link if you forget your password.')),
 
     el('div', { class: 'field' },

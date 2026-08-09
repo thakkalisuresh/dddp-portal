@@ -19,6 +19,16 @@ Ask the bot a code and it will explain it.
 | `DDP-AUTH-005` | error | planned | Password hash verify threw |
 | `DDP-AUTH-006` | warn | live | Password reset requested for unknown mobile |
 | `DDP-AUTH-007` | error | live | Impersonated session attempted a credential change |
+| `DDP-AUTH-008` | warn | live | New password rejected — too short |
+| `DDP-AUTH-009` | warn | live | Reset code rejected — wrong, expired or already used |
+| `DDP-AUTH-010` | warn | live | Reset codes requested too often for one account |
+| `DDP-AUTH-011` | error | live | Reset requested for an account with no email on file |
+
+## MAIL
+
+| Code | Severity | Status | Meaning |
+|---|---|---|---|
+| `DDP-MAIL-001` | error | live | Reset email could not be sent |
 
 ## BILL
 
@@ -101,7 +111,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-56 codes across 7 domains — 10 fatal, 3 awaiting their call site, 2 retired.
+61 codes across 8 domains — 10 fatal, 3 awaiting their call site, 2 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

@@ -51,6 +51,8 @@ export const api = {
 
   onboard:       (body)      => request('POST', '/api/onboard', body),
   updateProfile: (name, email) => request('PATCH', '/api/me', { name, email }),
+  forgot: (mobile) => request('POST', '/api/forgot', { mobile }),
+  reset:  (mobile, code, password) => request('POST', '/api/reset', { mobile, code, password }),
   trackActivity: (body)      => request('POST', '/api/activity', body),
   captureState:  ()          => request('GET',  '/api/capture'),
   sendClicks:    (clicks)    => request('POST', '/api/clicks', { clicks }),

@@ -80,12 +80,44 @@ sees it. There is no migration path from the old portal — nobody has access to
 its hosting — so the cutover is a clean start from a physical meter walk. That
 makes the dry-run the only rehearsal available.
 
-## B5 — Password reset without the treasurer
+## B5 — Residents with no email at all
 
-Superseded in part by the email-OTP work now in progress. What remains here is
-the fallback for residents with no email at all: today they contact Mukesh, and
-the point of the OTP work was to remove that dependency. Decide whether a
-no-email resident is a real case in this building before building for it.
+Self-service reset is built (`/forgot`), so anyone with an email on file can
+recover without an admin. What is left is the people who have none.
+
+`npm run doctor` reports this as NO-EMAIL-ON-FILE with the flats named, so the
+size of the problem is measurable rather than guessed. Onboarding asks for an
+address and explains why, so coverage should grow on its own as residents log
+in for the first time.
+
+Do not build anything here until the roster is imported and the number is
+known. If it turns out to be two households, an admin reset is the right
+answer and always was.
+
+## B8 — Tenancy: owners, tenants, and who owes what
+
+**Deferred 2026-08-09.** Rules are already decided, only the build is left:
+
+* the **tenant pays** the gas bill;
+* if a tenant leaves owing money the **owner is liable**, and the committee
+  raises a flag;
+* the owner can see the tenant's **bill amounts but not their payment
+  screenshots** — the amount is the owner's business, the receipt is not;
+* once anyone leaves the flat they get **no access whatsoever**, while
+  admin and god retain the full history.
+
+Shape: a `relationship` column on `owners` — `owner_resident`, `owner_absent`,
+`tenant` — rather than a separate table, since a person already belongs to a
+flat and the existing `transferFlat` handover machinery mostly fits.
+
+**Cheapest to do BEFORE the roster import, not after.** Capturing
+owner-vs-tenant while creating ~52 rows is nearly free; retrofitting it across
+52 existing rows is the kind of job that quietly never happens. If the roster
+lands first as owners-only, the import must at least leave room to set it
+per-flat later without a migration.
+
+Note `bills.owner_id` and `payment_proofs.owner_id` already exist, so
+"bills follow the person, not the flat" is done — that was the hard half.
 
 ## B7 — An AI triage step inside the portal
 

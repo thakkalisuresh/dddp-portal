@@ -24,6 +24,10 @@ export const ERROR_CODES = {
   'DDP-AUTH-005': { severity: 'error', message: 'Password hash verify threw', planned: true },
   'DDP-AUTH-006': { severity: 'warn',  message: 'Password reset requested for unknown mobile' },
   'DDP-AUTH-007': { severity: 'error', message: 'Impersonated session attempted a credential change' },
+  'DDP-AUTH-008': { severity: 'warn',  message: 'New password rejected — too short' },
+  'DDP-AUTH-009': { severity: 'warn',  message: 'Reset code rejected — wrong, expired or already used' },
+  'DDP-AUTH-010': { severity: 'warn',  message: 'Reset codes requested too often for one account' },
+  'DDP-AUTH-011': { severity: 'error', message: 'Reset requested for an account with no email on file' },
 
   // ── BILL ───────────────────────────────────────────────────────────────
   'DDP-BILL-001': { severity: 'error', message: 'Bill generation found no reading for an active flat' },
@@ -44,6 +48,9 @@ export const ERROR_CODES = {
   // on it — it just no longer files itself as a failure.
   'DDP-BILL-011': { severity: 'warn', retired: true,
                     message: 'Rate differs sharply from the previous period (retired — a rate change is not an error)' },
+
+  // ── MAIL ───────────────────────────────────────────────────────────────
+  'DDP-MAIL-001': { severity: 'error', message: 'Reset email could not be sent' },
 
   // ── PAY ────────────────────────────────────────────────────────────────
   'DDP-PAY-001': { severity: 'error', message: 'UPI URI requested for a bill that does not exist' },
@@ -95,7 +102,7 @@ export const ERROR_CODES = {
 };
 
 /** Domains in registry order, for the generated docs. */
-export const DOMAINS = ['AUTH', 'BILL', 'PAY', 'PROOF', 'NOTICE', 'ADMIN', 'SYS'];
+export const DOMAINS = ['AUTH', 'MAIL', 'BILL', 'PAY', 'PROOF', 'NOTICE', 'ADMIN', 'SYS'];
 
 export function domainOf(code) {
   return code.split('-')[1];

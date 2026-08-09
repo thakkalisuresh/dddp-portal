@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reset your password — Diamond Park</title>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+<style>
+  /* One field per step. A single form asking for mobile, code and new password
+     at once implies you already have the code, and it is the commonest way a
+     reset flow confuses the person using it. */
+  .step[hidden] { display: none; }
+  .code {
+    font-family: var(--font-ui);
+    font-size: 28px;
+    letter-spacing: 0.35em;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <span class="appbar__who">Diamond Park</span>
+  <a class="appbar__action" href="/login">Log in</a>
+</header>
+
+<main class="page stack--lg stack" style="max-width:420px">
+  <h1 id="heading">Reset your password <span class="ml">പാസ്‌വേഡ് മാറ്റുക</span></h1>
+
+  <div id="alert" role="alert" aria-live="polite"></div>
+
+  <!-- Step 1 — who are you -->
+  <form class="stack step" id="ask" novalidate>
+    <p class="small muted">
+      We will email a six-digit code to the address on your account.
+    </p>
+    <div>
+      <label for="mobile">Mobile number <span class="ml">മൊബൈൽ നമ്പർ</span></label>
+      <input class="input" id="mobile" name="mobile" type="tel"
+             autocomplete="username" inputmode="tel" required>
+    </div>
+    <button class="btn btn--block btn--lg" id="askSubmit" type="submit">Email me a code</button>
+  </form>
+
+  <!-- Step 2 — the code and the new password -->
+  <form class="stack step" id="finish" novalidate hidden>
+    <p class="small muted" id="sentTo"></p>
+    <div>
+      <label for="code">Six-digit code</label>
+      <input class="input code" id="code" name="code" type="text" inputmode="numeric"
+             autocomplete="one-time-code" maxlength="7" required>
+    </div>
+    <div>
+      <label for="password">New password <span class="ml">പുതിയ പാസ്‌വേഡ്</span></label>
+      <input class="input" id="password" name="password" type="password"
+             autocomplete="new-password" minlength="8" required>
+      <p class="small muted">At least 8 characters.</p>
+    </div>
+    <button class="btn btn--block btn--lg" id="finishSubmit" type="submit">Set my password</button>
+    <button class="btn btn--ghost btn--block" id="again" type="button">Send a new code</button>
+  </form>
+
+  <p class="small muted" id="fallback">
+    No email on your account? Contact <span id="treasurer">your treasurer</span>
+  </p>
+</main>
+
+<script type="module" src="js/forgot.js"></script>
+</body>
+</html>

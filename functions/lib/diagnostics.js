@@ -235,6 +235,34 @@ export function checkIntegrity({ owners, flats, readings }) {
 }
 
 /**
+ * Can residents reset their own password?
+ *
+ * Two separate ways this fails, and they need different fixes: nobody can
+ * reset if the mail path is unconfigured, and an individual cannot reset if
+ * their account has no email — which is invisible until they are locked out
+ * and phoning somebody.
+ */
+export function checkResetPath({ mailConfigured, remote }, owners = []) {
+  const out = [];
+  if (remote && !mailConfigured) {
+    out.push(finding('warn', 'MAIL-NOT-CONFIGURED', 'Password reset by email is not available',
+      'Every resident who forgets a password has to go through an admin. '
+      + 'Needs GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN and MAIL_FROM.'));
+  }
+
+  const active = owners.filter((o) => o.active);
+  const without = active.filter((o) => !o.email);
+  if (active.length && without.length) {
+    out.push(finding('info', 'NO-EMAIL-ON-FILE',
+      `${without.length} of ${active.length} accounts cannot reset their own password`,
+      'No email on file, so the emailed code has nowhere to go. They fall back '
+      + 'to an admin reset. Onboarding asks for one, but it is optional.',
+      without.map((o) => ({ flat: o.flat, name: o.name }))));
+  }
+  return out;
+}
+
+/**
  * Has the digest actually been running?
  *
  * The digest is the only thing that surfaces 22 of the warn codes, and it is
@@ -329,6 +357,7 @@ function runAvailable(data, have) {
       ? checkIntegrity({ owners: data.owners ?? [], flats: data.flats ?? [], readings: data.readings ?? [] })
       : []),
     ...checkConfig(data.config ?? {}),
+    ...(have('owners') ? checkResetPath(data.config ?? {}, data.owners ?? []) : []),
     ...checkDigest({ ...(data.config ?? {}), lastDigestAt: data.lastDigestAt ?? null }),
   ].sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));
 }
