@@ -56,8 +56,21 @@ the cron running old code, and shipping only the Worker leaves the site stale.
 | — | 99-flat ceiling removed (dead paise column dropped for real) | **done** |
 | — | Roster import — paste the building, preview, then chase who hasn't logged in | **done** |
 
-Deferred work is in [docs/BACKLOG.md](docs/BACKLOG.md) — parked deliberately, with
-the reasoning, not forgotten.
+### The documents
+
+| | |
+|---|---|
+| [docs/STATE.md](docs/STATE.md) | What is built, what is inert, what has never been tested. **Start here.** |
+| [docs/PRD.md](docs/PRD.md) | Goals, non-goals, the invariants, and decisions worth not re-making |
+| [docs/BACKLOG.md](docs/BACKLOG.md) | Deferred work, with the reasoning. Read before proposing anything |
+| [docs/HANDOFF.md](docs/HANDOFF.md) | A prompt to paste into a fresh session |
+| [docs/FUNCTIONS.md](docs/FUNCTIONS.md) | Every export, generated from source |
+| [docs/ERROR_CODES.md](docs/ERROR_CODES.md) | Every error code, generated from the registry |
+| [docs/COSTS.md](docs/COSTS.md) | Measured usage against the free tier |
+| [docs/PRIVACY.md](docs/PRIVACY.md) | What is recorded, and break-glass recovery |
+
+**99 flats of demo data are in production** for user testing. Remove with
+`node scripts/seed-demo.mjs --remote --remove` before importing the real roster.
 
 Screen designs for all 19 screens were built before any app code.
 
