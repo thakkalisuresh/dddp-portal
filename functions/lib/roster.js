@@ -13,6 +13,7 @@
  */
 
 import { isFlat, whyNot, parseFlat, allFlats, floorOfFlat } from './building.js';
+import { occupantOf } from './tenancy.js';
 import { normaliseMobile } from './godedit.js';
 
 /** Column headers people actually paste, mapped to what we need. */
@@ -215,5 +216,69 @@ export function previewRoster(rows, { existingFlats = [], existingPeople = [] } 
     // Blocked rows stop the import. Warnings do not: they are judgement calls,
     // and a preview nobody can get past is a preview people learn to bypass.
     canImport: blocked.length === 0 && create.length > 0,
+  };
+}
+
+/* ── bulk late-fee exemption ─────────────────────────────────────────────── */
+
+/**
+ * Resolve a typed list of flats to the people a late fee would actually hit.
+ *
+ * The unit is the FLAT, not the person, because the reason is always about the
+ * property: a meter fault, a supply outage, a month billed late. But the
+ * exemption has to land on whoever is billed — the tenant where there is one,
+ * the owner otherwise — so this resolves through the occupant rather than
+ * exempting everybody attached to the flat. Exempting an absent owner who is
+ * never charged would look like it worked and change nothing.
+ *
+ * Accepts "4A 4B 5A", commas, newlines, or the word "all".
+ *
+ * @param people  every owner row, active and not
+ */
+export function resolveExemptionTargets(input, people, { today } = {}) {
+  const text = String(input ?? '').trim();
+  const byFlat = new Map();
+  for (const p of people) {
+    if (!p.active) continue;
+    byFlat.set(p.flat, [...(byFlat.get(p.flat) ?? []), p]);
+  }
+
+  const everyone = /^all$/i.test(text);
+  const asked = everyone
+    ? [...byFlat.keys()]
+    : [...new Set(text.split(/[\s,;]+/).filter(Boolean).map((f) => {
+        const m = /^\s*(\d{1,2})\s*([A-Za-z])\s*$/.exec(f);
+        return m ? `${Number(m[1])}${m[2].toUpperCase()}` : f.toUpperCase();
+      }))];
+
+  const targets = [];
+  const unknown = [];
+  const empty = [];
+  const already = [];
+
+  for (const flat of asked) {
+    if (!isFlat(flat)) { unknown.push({ flat, reason: whyNot(flat) }); continue; }
+
+    const household = byFlat.get(flat) ?? [];
+    const occupant = occupantOf(household);
+    if (!occupant) { empty.push(flat); continue; }
+
+    // Listed rather than silently overwritten: an existing exemption was a
+    // decision somebody made, and replacing its reason erases why.
+    if (today && occupant.late_fee_exempt_until && occupant.late_fee_exempt_until >= today) {
+      already.push({
+        flat, name: occupant.name,
+        until: occupant.late_fee_exempt_until,
+        reason: occupant.late_fee_exempt_reason,
+      });
+    }
+    targets.push({ id: occupant.id, flat, name: occupant.name, relationship: occupant.relationship });
+  }
+
+  return {
+    targets, unknown, empty, already, everyone,
+    counts: { targets: targets.length, unknown: unknown.length, empty: empty.length,
+              already: already.length },
+    ok: targets.length > 0 && unknown.length === 0,
   };
 }

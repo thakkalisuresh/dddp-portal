@@ -34,7 +34,7 @@ import {
   validateNewPassword, resetEmail, neutralReply,
 } from './lib/reset.js';
 import { sendEmail, mailConfigured } from './lib/mailer.js';
-import { parseRoster, previewRoster } from './lib/roster.js';
+import { parseRoster, previewRoster, resolveExemptionTargets } from './lib/roster.js';
 import { floorSummary } from './lib/building.js';
 import { addFlat } from './lib/flats.js';
 import { ERROR_CODES } from './lib/error-codes.js';
@@ -153,6 +153,9 @@ export default {
           return markPaid(request, env, session, path);
         }
         if (route === 'GET /api/admin/late-fees') return lateFeePanel(env);
+        if (route === 'POST /api/admin/late-fee-exemption/bulk') {
+          return bulkLateFeeExemption(request, env, session);
+        }
         if (request.method === 'POST' && /^\/api\/admin\/residents\/\d+\/late-fee-exemption$/.test(path)) {
           return setLateFeeExemption(request, env, session, path);
         }
@@ -1969,4 +1972,61 @@ async function setLateFeeExemption(request, env, session, path) {
               { ownerId: id, flat: target.flat, name: target.name, until, reason });
 
   return json({ ok: true, until, reason });
+}
+
+/**
+ * Exempt a group of flats at once.
+ *
+ * Bulk exists because the reason is almost always about the building rather
+ * than the person — a supply outage, a meter fault, a month billed late — and
+ * doing that one resident at a time invites stopping halfway.
+ *
+ * `dryRun` first, always, from the UI. Applying an exemption to 99 people by
+ * mistyping "all" is reversible but embarrassing, and the preview costs one
+ * round trip.
+ */
+async function bulkLateFeeExemption(request, env, session) {
+  const body = await readJson(request);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const people = await env.DB.prepare(
+    `SELECT id, flat, name, relationship, active,
+            late_fee_exempt_until, late_fee_exempt_reason
+       FROM owners`
+  ).all();
+
+  const resolved = resolveExemptionTargets(body?.flats ?? '', people.results ?? [], { today });
+
+  if (body?.dryRun) return json({ ...resolved, dryRun: true });
+
+  const until = String(body?.until ?? '').trim();
+  const reason = String(body?.reason ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+    return problem(400, 'DDP-ADMIN-003', 'Give the end date as YYYY-MM-DD.');
+  }
+  if (reason.length < 3) {
+    return problem(400, 'DDP-ADMIN-003', 'Say why. Whoever inherits this will need to know.');
+  }
+  if (until < today) return problem(400, 'DDP-ADMIN-003', 'That date has already passed.');
+
+  // An unresolvable flat stops the whole thing rather than exempting the rest:
+  // a half-applied outage waiver is worse than none, because nobody can tell
+  // which half it was.
+  if (!resolved.ok) {
+    return problem(409, 'DDP-ADMIN-003', resolved.unknown.length
+      ? `${resolved.unknown[0].flat}: ${resolved.unknown[0].reason}`
+      : 'Nothing to exempt.');
+  }
+
+  await env.DB.batch(resolved.targets.map((t) =>
+    env.DB.prepare(
+      'UPDATE owners SET late_fee_exempt_until = ?, late_fee_exempt_reason = ? WHERE id = ?'
+    ).bind(until, reason, t.id)));
+
+  await audit(env, session, 'late-fee.exempt.bulk', {
+    flats: resolved.targets.map((t) => t.flat), count: resolved.targets.length,
+    until, reason, everyone: resolved.everyone,
+  });
+
+  return json({ exempted: resolved.targets, count: resolved.targets.length, until, reason });
 }

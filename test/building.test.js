@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   allFlats, unitsOn, isFlat, whyNot, parseFlat, floorOfFlat, floorSummary,
 } from '../functions/lib/building.js';
-import { parseRoster, previewRoster } from '../functions/lib/roster.js';
+import { parseRoster, previewRoster, resolveExemptionTargets } from '../functions/lib/roster.js';
 
 /* ── the building ────────────────────────────────────────────────────────── */
 
@@ -229,5 +229,77 @@ describe('the preview shows what is NOT there', () => {
     expect(p.counts.people).toBe(99);
     expect(p.counts.missing).toBe(0);
     expect(p.canImport).toBe(true);
+  });
+});
+
+/* ── bulk exemption ──────────────────────────────────────────────────────── */
+
+describe('resolving a list of flats to exempt', () => {
+  const people = [
+    { id: 1, flat: '4A', name: 'Sabarish', relationship: 'owner', active: 1 },
+    { id: 2, flat: '4B', name: 'Ravi', relationship: 'owner', active: 1 },
+    { id: 3, flat: '4B', name: 'Priya', relationship: 'tenant', active: 1 },
+    { id: 4, flat: '5A', name: 'Gone', relationship: 'owner', active: 0 },
+  ];
+  const go = (input, today) => resolveExemptionTargets(input, people, { today });
+
+  it('lands on the TENANT of a let flat, not the owner', () => {
+    // The exemption has to hit whoever is billed. Exempting an absent owner
+    // who is never charged would look like it worked and change nothing.
+    const r = go('4B');
+    expect(r.targets).toHaveLength(1);
+    expect(r.targets[0]).toMatchObject({ name: 'Priya', relationship: 'tenant' });
+  });
+
+  it('lands on the owner when they live there', () => {
+    expect(go('4A').targets[0].name).toBe('Sabarish');
+  });
+
+  it('accepts spaces, commas and mixed case', () => {
+    expect(go('4a, 4B').targets.map((t) => t.flat)).toEqual(['4A', '4B']);
+  });
+
+  it('expands "all" to everyone currently billed', () => {
+    const r = go('all');
+    expect(r.everyone).toBe(true);
+    expect(r.targets.map((t) => t.flat).sort()).toEqual(['4A', '4B']);
+  });
+
+  it('refuses a flat that does not exist, with the reason', () => {
+    const r = go('4A 11C');
+    expect(r.ok).toBe(false);
+    expect(r.unknown[0].reason).toMatch(/upper floor of 10C/);
+  });
+
+  it('skips a flat with nobody in it rather than failing', () => {
+    const r = go('4A 5A');
+    expect(r.empty).toEqual(['5A']);
+    expect(r.targets.map((t) => t.flat)).toEqual(['4A']);
+    expect(r.ok).toBe(true);
+  });
+
+  it('flags someone already exempt instead of silently replacing them', () => {
+    // An existing exemption was a decision. Overwriting its reason erases why.
+    const withExempt = [...people, {
+      id: 5, flat: '6A', name: 'Meera', relationship: 'owner', active: 1,
+      late_fee_exempt_until: '2026-11-30', late_fee_exempt_reason: 'Meter dispute',
+    }];
+    const r = resolveExemptionTargets('6A', withExempt, { today: '2026-08-09' });
+    expect(r.already[0]).toMatchObject({ flat: '6A', reason: 'Meter dispute' });
+    expect(r.targets).toHaveLength(1);
+  });
+
+  it('does not flag an exemption that has already expired', () => {
+    const stale = [{ id: 5, flat: '6A', name: 'M', relationship: 'owner', active: 1,
+                     late_fee_exempt_until: '2026-01-01' }];
+    expect(resolveExemptionTargets('6A', stale, { today: '2026-08-09' }).already).toEqual([]);
+  });
+
+  it('de-duplicates a flat listed twice', () => {
+    expect(go('4A 4A 4a').targets).toHaveLength(1);
+  });
+
+  it('has nothing to do with an empty input', () => {
+    expect(go('').ok).toBe(false);
   });
 });

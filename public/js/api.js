@@ -97,6 +97,9 @@ export const api = {
     lateFees:      ()        => request('GET',  '/api/admin/late-fees'),
     setExemption:  (id, until, reason) =>
                      request('POST', `/api/admin/residents/${id}/late-fee-exemption`, { until, reason }),
+    bulkExemption: (flats, until, reason, dryRun = false) =>
+                     request('POST', '/api/admin/late-fee-exemption/bulk',
+                             { flats, until, reason, dryRun }),
     setCommentHidden: (id, hidden) =>
                                request('POST', `/api/admin/comments/${id}/${hidden ? 'hide' : 'unhide'}`),
     runScheduled:  ()        => request('POST', '/api/admin/run-scheduled'),
