@@ -113,10 +113,13 @@ const main = () => {
     'SELECT code, severity, at FROM error_log ORDER BY id DESC LIMIT 25', 'error_log');
   const [digest] = safe(
     "SELECT value FROM settings WHERE key = 'last_digest_at'", 'settings');
+  const [demo] = safe(
+    "SELECT value FROM settings WHERE key = 'demo_seed_ids'", 'settings');
 
   const findings = runChecks({
     owners, flats, bills, periods, readings, proofs, unavailable,
     lastDigestAt: digest?.value ?? null,
+    demoMarker: demo?.value ?? null,
     config: {
       // Read from wrangler config rather than guessed: an empty VPA is a real
       // production failure and a non-issue locally.

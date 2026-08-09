@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   checkMobiles, checkEmails, checkSuperadmin, checkBills, checkPeriods,
   checkOwnership, checkIntegrity, checkConfig, runChecks, summarise,
-  toMarkdown, maskMobile, maskEmail, checkDigest, checkResetPath, checkTenancy, checkExemptions,
+  toMarkdown, maskMobile, maskEmail, checkDigest, checkResetPath, checkTenancy, checkExemptions, checkDemoData,
 } from '../functions/lib/diagnostics.js';
 
 const owner = (o) => ({ id: 1, flat: '4A', name: 'A', mobile: '+919567791515',
@@ -351,5 +351,26 @@ describe('late fee exemptions are visible while they run', () => {
 
   it('is quiet when nobody is exempt', () => {
     expect(checkExemptions([{ flat: '4A', active: 1 }], '2026-08-09')).toEqual([]);
+  });
+});
+
+describe('demo data announces itself', () => {
+  // In the doctor rather than only in a document, because a document goes
+  // stale the day the data is removed and a stale warning trains people to
+  // ignore the next one.
+  const demo = (flat) => ({ flat, name: `Someone [demo]`, active: 1 });
+
+  it('reports generated residents', () => {
+    const f = checkDemoData([demo('4A'), demo('4B'), { flat: '5A', name: 'Real Person' }], null);
+    expect(f[0].id).toBe('DEMO-DATA-PRESENT');
+    expect(f[0].rows[0]).toMatchObject({ residents: 2, flats: 2 });
+  });
+
+  it('says nothing once the demo is gone', () => {
+    expect(checkDemoData([{ flat: '4A', name: 'Real Person' }], null)).toEqual([]);
+  });
+
+  it('still speaks up if only the marker survives a failed removal', () => {
+    expect(checkDemoData([], '{"owners":[1,2]}')[0].id).toBe('DEMO-DATA-PRESENT');
   });
 });

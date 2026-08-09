@@ -165,6 +165,7 @@ Self-checks — the building's invariants, written down as assertions.
 | fn | `checkOwnership` |  |
 | fn | `checkIntegrity` |  |
 | fn | `checkTenancy` | Tenancy gaps — the ones that are invisible until money is owed. |
+| fn | `checkDemoData` | Is generated demo data still sitting in the database? Put here rather than only in a document because a document goes stale the day the data is removed, and a stale warning is worse than none — it trains people to ignore the next one. |
 | fn | `checkExemptions` | Who is currently exempt from late fees. |
 | fn | `checkResetPath` | Can residents reset their own password? Two separate ways this fails, and they need different fixes: nobody can reset if the mail path is unconfigured, and an individual cannot reset if their account has no email — which is invisible until they are locked out and phoning somebody. |
 | fn | `checkDigest` | Has the digest actually been running? The digest is the only thing that surfaces 22 of the warn codes, and it is silent by design when nothing happened — so "no digest arrived" is indistinguishable from "a quiet night" unless the watermark is checked. |
@@ -540,4 +541,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-267 exports. 169 have no doc comment.
+268 exports. 169 have no doc comment.

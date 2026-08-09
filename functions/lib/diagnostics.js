@@ -288,6 +288,29 @@ export function checkTenancy(owners) {
 }
 
 /**
+ * Is generated demo data still sitting in the database?
+ *
+ * Put here rather than only in a document because a document goes stale the
+ * day the data is removed, and a stale warning is worse than none — it trains
+ * people to ignore the next one. This reads the database, so it is true or
+ * silent, never wrong.
+ *
+ * It matters because the demo occupies the same tables the real roster will
+ * use: importing on top of it means meeting 99 flats that already exist.
+ */
+export function checkDemoData(owners, marker) {
+  const demo = owners.filter((o) => /\[demo\]$/.test(String(o.name ?? '')));
+  if (!demo.length && !marker) return [];
+
+  return [finding('warn', 'DEMO-DATA-PRESENT',
+    `${demo.length} generated demo residents are in this database`,
+    'Fine for user testing, and it must come out before the real roster: the '
+    + 'import would meet flats that already exist. Remove with '
+    + 'node scripts/seed-demo.mjs --remote --remove',
+    [{ residents: demo.length, flats: new Set(demo.map((o) => o.flat)).size }])];
+}
+
+/**
  * Who is currently exempt from late fees.
  *
  * The whole risk this feature carries is an exemption granted during one
@@ -436,6 +459,7 @@ function runAvailable(data, have) {
     ...(have('owners') ? checkResetPath(data.config ?? {}, data.owners ?? []) : []),
     ...(have('owners') ? checkTenancy(data.owners ?? []) : []),
     ...(have('owners') ? checkExemptions(data.owners ?? []) : []),
+    ...(have('owners') ? checkDemoData(data.owners ?? [], data.demoMarker) : []),
     ...checkDigest({ ...(data.config ?? {}), lastDigestAt: data.lastDigestAt ?? null }),
   ].sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));
 }

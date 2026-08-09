@@ -35,6 +35,10 @@ The portal is **built and deployed**. It has never billed a real month.
 > It removes exactly what it created, recorded before creation. The four real
 > committee accounts — 4A, 10A, 13A, 13E — are untouched by both the seed and
 > the removal.
+>
+> `npm run doctor` reports this as `DEMO-DATA-PRESENT` and stops reporting it
+> the moment the data is gone, so the database is the source of truth rather
+> than this paragraph.
 
 ## Built and verified
 

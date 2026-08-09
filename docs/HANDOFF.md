@@ -1,9 +1,28 @@
 # Handoff
 
-Paste the block below into a fresh session. Everything after it is context for
-whoever wants to read further.
+## The short version
+
+Two lines is enough:
+
+```
+Pick up the DD Diamond Park gas portal at /Users/sabarish/Downloads/Claude/dddp-portal
+Read docs/HANDOFF.md first, then run npm run doctor before doing anything.
+```
+
+`npm run doctor` is what makes that sufficient. It reads production and reports
+the current state — including whether demo data is still loaded — so nothing
+here has to be remembered or kept in step by hand. A warning written into a
+prompt goes stale the day it stops being true, and a stale warning teaches
+people to ignore the next one.
+
+Then add whatever you actually want done that day.
 
 ---
+
+## The long version
+
+Paste this instead when a session seems to be guessing, or when it started
+somewhere unexpected. Everything after it is context for a human reading on.
 
 ## The prompt
 
