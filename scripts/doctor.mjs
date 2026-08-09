@@ -17,6 +17,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
 import { runChecks, summarise, toMarkdown } from '../functions/lib/diagnostics.js';
 import { ERROR_CODES } from '../functions/lib/error-codes.js';
 
@@ -55,6 +56,32 @@ function safe(statement, label) {
   }
 }
 
+/**
+ * Which deployments have the alerting secrets.
+ *
+ * Read from Cloudflare, not from process.env. The first version checked the
+ * local shell, which knows nothing about Worker secrets — so it would have
+ * reported "alerting not configured" to someone who had just configured it
+ * correctly, and "configured" to anyone with a stray export in their profile.
+ *
+ * Only NAMES are listed; wrangler cannot read a secret's value back and
+ * neither can this.
+ */
+function alertingSecrets() {
+  const names = (args, cwd) => {
+    try {
+      return execFileSync('npx', ['wrangler', ...args], { encoding: 'utf8', cwd,
+        stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch {
+      return '';
+    }
+  };
+  const worker = names(['secret', 'list'], process.cwd());
+  const pages = names(['pages', 'secret', 'list'], join(process.cwd(), 'pages'));
+  const has = (text) => text.includes('TELEGRAM_BOT_TOKEN') && text.includes('TELEGRAM_CHAT_ID');
+  return { cron: has(worker), pages: has(pages) };
+}
+
 const main = () => {
   const env = local ? 'local' : 'production';
   if (!asMarkdown) console.error(`${C.dim}Reading ${env}…${C.off}`);
@@ -81,7 +108,10 @@ const main = () => {
       // Read from wrangler config rather than guessed: an empty VPA is a real
       // production failure and a non-issue locally.
       upiVpa: process.env.UPI_VPA ?? 'qr.ddwelfare@sib',
-      alertingConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN),
+      // Both deployments need it: instant alerts fire from the request path
+      // (Pages) and the digest from the cron Worker. One without the other is
+      // half-working in a way nothing else would surface.
+      alerting: local ? { cron: true, pages: true } : alertingSecrets(),
       remote: !local,
     },
   });

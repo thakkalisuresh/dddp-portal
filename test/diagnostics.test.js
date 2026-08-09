@@ -239,3 +239,33 @@ describe('an unreadable table is not an empty one', () => {
     expect(f.map((x) => x.id)).toContain('PERIOD-NO-CONVERSION');
   });
 });
+
+describe('alerting is configured on both deployments, or neither works properly', () => {
+  it('says nothing when both have it', () => {
+    expect(checkConfig({ upiVpa: 'x', alerting: { cron: true, pages: true }, remote: true }))
+      .toEqual([]);
+  });
+
+  it('reports the whole thing missing as one finding, not two', () => {
+    const f = checkConfig({ upiVpa: 'x', alerting: { cron: false, pages: false }, remote: true });
+    expect(f.map((x) => x.id)).toEqual(['CONFIG-NO-ALERTS']);
+  });
+
+  it('names which half is missing — the two-Workers trap', () => {
+    // Secrets on one deployment do not reach the other, and the half that
+    // works hides the half that does not.
+    const noCron = checkConfig({ upiVpa: 'x', alerting: { cron: false, pages: true }, remote: true });
+    expect(noCron[0].id).toBe('CONFIG-HALF-ALERTS');
+    expect(noCron[0].detail).toMatch(/digest will not/i);
+
+    const noPages = checkConfig({ upiVpa: 'x', alerting: { cron: true, pages: false }, remote: true });
+    expect(noPages[0].detail).toMatch(/instant alerts.*will not/i);
+  });
+
+  it('still accepts the single boolean the god endpoint can supply', () => {
+    // That endpoint can only see its own bindings, not the other deployment's.
+    expect(checkConfig({ upiVpa: 'x', alertingConfigured: true, remote: true })).toEqual([]);
+    expect(checkConfig({ upiVpa: 'x', alertingConfigured: false, remote: true })[0].id)
+      .toBe('CONFIG-NO-ALERTS');
+  });
+});

@@ -259,16 +259,31 @@ export function checkDigest({ lastDigestAt, remote, now = new Date() }) {
 }
 
 /** Things that are only wrong in production. */
-export function checkConfig({ upiVpa, alertingConfigured, remote }) {
+export function checkConfig({ upiVpa, alerting, alertingConfigured, remote }) {
   const out = [];
   if (!upiVpa) {
     out.push(finding(remote ? 'fail' : 'warn', 'CONFIG-NO-VPA', 'No UPI payee configured',
       'Every Pay button produces an invalid link.'));
   }
-  if (remote && !alertingConfigured) {
+  if (!remote) return out;
+
+  // Accepts either shape: a single boolean from the god-mode endpoint, which
+  // can only see its own bindings, or per-deployment detail from the CLI.
+  const a = alerting ?? { cron: alertingConfigured, pages: alertingConfigured };
+
+  if (!a.cron && !a.pages) {
     out.push(finding('warn', 'CONFIG-NO-ALERTS', 'Error alerting is not configured',
       'Fatal errors land in error_log and are visible in god mode, but nothing '
       + 'is pushed anywhere — you find out by looking.'));
+  } else if (!a.cron || !a.pages) {
+    // The trap worth naming: two Workers over one database, so secrets set on
+    // one do not reach the other, and the half that works hides the half that
+    // does not.
+    out.push(finding('warn', 'CONFIG-HALF-ALERTS',
+      `Alerting is configured on ${a.pages ? 'Pages' : 'the cron Worker'} only`,
+      a.cron
+        ? 'The nightly digest will send, but instant alerts from the site will not.'
+        : 'Instant alerts will send, but the nightly digest will not.'));
   }
   return out;
 }
