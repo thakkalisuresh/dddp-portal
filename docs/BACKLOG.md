@@ -119,30 +119,23 @@ exists so a person makes that call and signs it.
 Both are additive to the report, not a replacement for it. If it is built, it
 reads and writes nothing but its own commentary — no credentials to any table.
 
-## B6 — Telegram: create the bot and set the secrets
+## B6 — Telegram alerting — DONE 2026-08-09
 
-**Everything in code is done** (2026-08-09): instant alerts for `fatal` and
-`error`, the daily digest for `warn`, a failed send recorded as DDP-SYS-004
-instead of swallowed, and a staleness check so a digest that quietly stops gets
-noticed. What is left needs a human with a Telegram account.
+Closed. Bot created, secrets set on both deployments, and delivery proven end
+to end: a deliberate DDP-AUTH-004 (invalid session cookie against the live
+site) produced a real alert, and no DDP-SYS-004 followed it — which is how
+delivery success is confirmed without seeing the recipient's phone.
 
-1. Message `@BotFather`, `/newbot`, keep the token.
-2. Message the new bot once — a bot cannot open a conversation, so without this
-   it can never reach you. Use a group instead if the committee should see
-   alerts; add the bot to it and message there.
-3. `npm run telegram:test` — validates the token, finds the chat id for you,
-   and sends one message. Nothing is stored.
-4. Set both secrets on **both** deployments. They are separate Workers over one
-   database, so secrets on one do not reach the other:
+Worth keeping for whoever inherits this:
 
-   ```
-   npx wrangler secret put TELEGRAM_BOT_TOKEN
-   npx wrangler secret put TELEGRAM_CHAT_ID
-   cd pages && npx wrangler secret put TELEGRAM_BOT_TOKEN
-   cd pages && npx wrangler secret put TELEGRAM_CHAT_ID
-   ```
+* Two deployments over one database. Secrets on one do not reach the other,
+  and `dddp-portal` alone was reported by the doctor as CONFIG-HALF-ALERTS.
+* Pages secrets bind only to a NEW deployment. Saving them in the dashboard
+  and stopping there leaves it looking configured and doing nothing.
+* In the Workers dashboard, "Save version" stages; "Deploy" publishes. Only
+  Deploy makes a secret live.
+* `wrangler secret list` and `wrangler pages secret list` return names only,
+  so the setup can be verified without anyone handling the token.
+* A digest that stops is silent by design, so DIGEST-STALE watches the
+  watermark. Nothing else would notice.
 
-5. `npm run doctor` — CONFIG-NO-ALERTS should be gone.
-
-The digest rides the existing nightly cron (`0 3 * * *` UTC, 08:30 IST), so
-there is no second trigger to configure.

@@ -50,7 +50,7 @@ the cron running old code, and shipping only the Worker leaves the site stale.
 | — | Mobile numbers stored in E.164, for owners settled abroad | **done** |
 | — | Admin password-reset privilege escalation closed | **done** |
 | — | Self-checks — `npm run doctor` and the god-mode Health tab | **done** |
-| — | Daily digest for warn-level codes; failed sends no longer silent | **done** |
+| — | Telegram alerting live — instant alerts + daily digest, verified | **done** |
 
 Deferred work is in [docs/BACKLOG.md](docs/BACKLOG.md) — parked deliberately, with
 the reasoning, not forgotten.
