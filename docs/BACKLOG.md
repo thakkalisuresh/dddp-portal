@@ -94,30 +94,38 @@ Do not build anything here until the roster is imported and the number is
 known. If it turns out to be two households, an admin reset is the right
 answer and always was.
 
-## B8 — Tenancy: owners, tenants, and who owes what
+## B8 — Tenancy — DONE 2026-08-09
 
-**Deferred 2026-08-09.** Rules are already decided, only the build is left:
+Built as `relationship` on `owners`, values `owner` and `tenant`, set by an
+admin. Researched against real products first: ApnaComplex uses two fields
+(relationship type plus resident status) and MyGate has the OWNER add their own
+tenant. We took neither — one column, admin-set — and the reasoning is in the
+migration.
 
-* the **tenant pays** the gas bill;
-* if a tenant leaves owing money the **owner is liable**, and the committee
-  raises a flag;
-* the owner can see the tenant's **bill amounts but not their payment
-  screenshots** — the amount is the owner's business, the receipt is not;
-* once anyone leaves the flat they get **no access whatsoever**, while
-  admin and god retain the full history.
+The wording follows ApnaComplex rather than inventing our own, since the
+committee will have met "owner/tenant" elsewhere.
 
-Shape: a `relationship` column on `owners` — `owner_resident`, `owner_absent`,
-`tenant` — rather than a separate table, since a person already belongs to a
-flat and the existing `transferFlat` handover machinery mostly fits.
+One decision worth remembering: most society systems bill the OWNER, because
+they are maintenance systems and maintenance is a charge against the property.
+Gas is metered consumption, so it follows whoever burned it. That is why we
+differ from them.
 
-**Cheapest to do BEFORE the roster import, not after.** Capturing
-owner-vs-tenant while creating ~52 rows is nearly free; retrofitting it across
-52 existing rows is the kind of job that quietly never happens. If the roster
-lands first as owners-only, the import must at least leave room to set it
-per-flat later without a migration.
+## B9 — Owner-only notices
 
-Note `bills.owner_id` and `payment_proofs.owner_id` already exist, so
-"bills follow the person, not the flat" is done — that was the hard half.
+Borrowed from ApnaComplex, which has an "Only Owners" notice scope alongside
+the ordinary one. Some things a committee posts are genuinely owner business —
+AGM papers, sinking-fund decisions, anything with a vote attached — and a
+tenant seeing them is noise at best and confusing at worst.
+
+Cheap once `relationship` exists: a scope column on `notices`, and the list
+query filters on the viewer's relationship. The reason it is worth recording
+now rather than discovering later is that it is the second consumer of
+`relationship` — which is why that column belongs somewhere the notices code
+can reach, not buried in billing.
+
+Also worth deciding at the same time: whether an owner-only notice is visible
+to an absent owner (it should be — they are the audience) and whether comments
+on one are similarly scoped (they must be, or the scope leaks through replies).
 
 ## B7 — An AI triage step inside the portal
 

@@ -52,6 +52,7 @@ the cron running old code, and shipping only the Worker leaves the site stale.
 | — | Self-checks — `npm run doctor` and the god-mode Health tab | **done** |
 | — | Telegram alerting live — instant alerts + daily digest, verified | **done** |
 | — | Self-service password reset by emailed code (`/forgot`) | **built, needs Gmail** |
+| — | Owners and tenants — who pays, who is liable, who sees what | **done** |
 
 Deferred work is in [docs/BACKLOG.md](docs/BACKLOG.md) — parked deliberately, with
 the reasoning, not forgotten.

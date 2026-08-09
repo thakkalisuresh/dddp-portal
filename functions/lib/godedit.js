@@ -21,7 +21,7 @@ import { canChangeRole } from './tenancy.js';
 /* ── what may be edited ──────────────────────────────────────────────────── */
 
 /** Person fields. Changing these is ordinary correction work. */
-export const OWNER_FIELDS = ['name', 'email', 'mobile', 'role', 'flat', 'active'];
+export const OWNER_FIELDS = ['name', 'email', 'mobile', 'role', 'flat', 'active', 'relationship'];
 
 /**
  * Money fields. `total` is separated from the rest because editing it means
@@ -87,6 +87,11 @@ export function validateOwnerField(field, value) {
     }
     case 'flat':
       return String(value ?? '').trim().toUpperCase();
+    case 'relationship': {
+      const rel = String(value ?? '').trim();
+      if (!['owner', 'tenant'].includes(rel)) fail('DDP-ADMIN-010', { field, value });
+      return rel;
+    }
     case 'active':
       return value ? 1 : 0;
     default:

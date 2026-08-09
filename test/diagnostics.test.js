@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   checkMobiles, checkEmails, checkSuperadmin, checkBills, checkPeriods,
   checkOwnership, checkIntegrity, checkConfig, runChecks, summarise,
-  toMarkdown, maskMobile, maskEmail, checkDigest, checkResetPath,
+  toMarkdown, maskMobile, maskEmail, checkDigest, checkResetPath, checkTenancy,
 } from '../functions/lib/diagnostics.js';
 
 const owner = (o) => ({ id: 1, flat: '4A', name: 'A', mobile: '+919567791515',
@@ -295,5 +295,38 @@ describe('who can actually reset their own password', () => {
   it('stays quiet locally about mail', () => {
     expect(checkResetPath({ mailConfigured: false, remote: false }, []).map((x) => x.id))
       .not.toContain('MAIL-NOT-CONFIGURED');
+  });
+});
+
+describe('tenancy gaps that are invisible until money is owed', () => {
+  const p = (flat, relationship, name, active = 1) => ({ flat, relationship, name, active });
+
+  it('catches a let flat with nobody liable', () => {
+    // The tenant is billed, but if they leave owing, the liability rule has
+    // nothing to point at.
+    const f = checkTenancy([p('4B', 'tenant', 'Priya')]);
+    expect(f[0].id).toBe('TENANT-NO-OWNER');
+    expect(f[0].rows[0]).toMatchObject({ flat: '4B', tenant: 'Priya' });
+  });
+
+  it('is quiet when the owner is on record', () => {
+    expect(checkTenancy([p('4B', 'owner', 'Nair'), p('4B', 'tenant', 'Priya')])).toEqual([]);
+  });
+
+  it('catches two active tenants on one meter', () => {
+    const f = checkTenancy([p('4B', 'owner', 'N'), p('4B', 'tenant', 'A'), p('4B', 'tenant', 'B')]);
+    expect(f.map((x) => x.id)).toContain('TWO-TENANTS');
+  });
+
+  it('ignores a tenant who has moved out', () => {
+    expect(checkTenancy([
+      p('4B', 'owner', 'N'), p('4B', 'tenant', 'A'), p('4B', 'tenant', 'B', 0),
+    ])).toEqual([]);
+  });
+
+  it('notes joint owners without calling them wrong', () => {
+    const f = checkTenancy([p('4B', 'owner', 'A'), p('4B', 'owner', 'B')]);
+    expect(f[0].id).toBe('TWO-OWNERS');
+    expect(f[0].severity).toBe('info');
   });
 });

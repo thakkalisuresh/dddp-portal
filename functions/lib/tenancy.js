@@ -215,3 +215,140 @@ export function waLink(mobile, text) {
     : `91${digits}`;
   return `https://wa.me/${withCc}?text=${encodeURIComponent(text)}`;
 }
+
+/* ── owners and tenants ───────────────────────────────────────────────────
+   ONE stored fact — relationship, 'owner' or 'tenant' — and everything else
+   derived from it. "Absent" is not a property of a person: it is what being
+   an owner means when somebody else occupies your flat. Storing that
+   separately stores the same truth twice, and the copies drift the first time
+   a tenant moves out and nobody flips the owner back.                       */
+
+export const RELATIONSHIPS = ['owner', 'tenant'];
+
+export function isRelationship(value) {
+  return RELATIONSHIPS.includes(value);
+}
+
+/** Only people who still live here. Departure is `active = 0`, never a delete. */
+function present(people) {
+  return (people ?? []).filter((p) => p.active);
+}
+
+/**
+ * Who is billed for this flat.
+ *
+ * The tenant if there is one, otherwise the owner. A vacant flat therefore
+ * bills its owner, which is correct — somebody has to answer for the meter,
+ * and with nobody living there it is the person who owns it.
+ */
+export function occupantOf(people) {
+  const here = present(people);
+  return here.find((p) => p.relationship === 'tenant')
+      ?? here.find((p) => p.relationship === 'owner')
+      ?? null;
+}
+
+/** Who is liable when the bill goes unpaid. Always the owner, occupied or not. */
+export function landlordOf(people) {
+  return present(people).find((p) => p.relationship === 'owner') ?? null;
+}
+
+/** Is this flat let out — an owner living elsewhere with a tenant in place? */
+export function isTenanted(people) {
+  const here = present(people);
+  return here.some((p) => p.relationship === 'tenant');
+}
+
+/**
+ * What one person may see of a flat's bills.
+ *
+ * Three levels, and the middle one is the whole point of the feature: an
+ * absent owner needs to know whether their tenant is paying, because they are
+ * liable for it — but a payment screenshot is a bank record belonging to the
+ * person who uploaded it, and none of the owner's business.
+ */
+export function billAccess({ viewer, people }) {
+  if (!viewer?.active) {
+    // "Once they leave, no access whatsoever." History stays for admin and god.
+    return { amounts: false, proofs: false, canPay: false, reason: 'departed' };
+  }
+
+  const occupant = occupantOf(people);
+  if (occupant && occupant.id === viewer.id) {
+    return { amounts: true, proofs: true, canPay: true, reason: 'occupant' };
+  }
+
+  // The landlord OF THIS FLAT, not merely someone who owns a flat somewhere.
+  // The first version checked `viewer.relationship === 'owner'` against a
+  // tenanted flat, which let the owner of 5A read the bill amounts of every
+  // let flat in the building.
+  const landlord = landlordOf(people);
+  if (landlord && landlord.id === viewer.id && isTenanted(people)) {
+    return { amounts: true, proofs: false, canPay: false, reason: 'landlord' };
+  }
+
+  return { amounts: false, proofs: false, canPay: false, reason: 'unrelated' };
+}
+
+/** How to describe someone on their own profile. */
+export function describeRelationship({ viewer, people }) {
+  if (!viewer) return '';
+  if (viewer.relationship === 'tenant') return `Tenant of ${viewer.flat}`;
+  return isTenanted(people)
+    ? `Owner of ${viewer.flat} — let to a tenant`
+    : `Owner of ${viewer.flat}`;
+}
+
+/**
+ * A tenant is leaving. What does the committee need to decide before the row
+ * is deactivated?
+ *
+ * Never silently transfers the debt. The owner IS liable, but that liability
+ * is a conversation between two people and a committee, not a database write
+ * that reassigns somebody's bills while they are not looking.
+ */
+export function planDeparture({ leaver, people, bills }) {
+  const outstanding = outstandingFor(bills);
+  const landlord = landlordOf(people);
+
+  const steps = [{ id: leaver.id, active: 0, moved_out_at: new Date().toISOString() }];
+
+  if (outstanding.count === 0) {
+    return { ok: true, steps, outstanding, flag: null };
+  }
+
+  if (leaver.relationship === 'tenant') {
+    return {
+      ok: true,
+      steps,
+      outstanding,
+      // Raised for the committee, not applied. Somebody has to talk to the
+      // owner before their name goes on someone else's debt.
+      flag: landlord
+        ? {
+            kind: 'tenant-left-owing',
+            ownerId: landlord.id,
+            ownerName: landlord.name,
+            amount: outstanding.total,
+            message: `${leaver.name} is leaving ${leaver.flat} owing ₹${outstanding.total}. `
+                   + `${landlord.name} is liable as the owner — settle it with them before closing.`,
+          }
+        : {
+            kind: 'tenant-left-owing-no-owner',
+            amount: outstanding.total,
+            message: `${leaver.name} is leaving ${leaver.flat} owing ₹${outstanding.total}, `
+                   + 'and no owner is on record for that flat. Nobody is liable. Add the owner first.',
+          },
+    };
+  }
+
+  return {
+    ok: true, steps, outstanding,
+    flag: {
+      kind: 'owner-left-owing',
+      amount: outstanding.total,
+      message: `${leaver.name} owes ₹${outstanding.total} on ${leaver.flat}. `
+             + 'Settle or write it off before the sale completes.',
+    },
+  };
+}

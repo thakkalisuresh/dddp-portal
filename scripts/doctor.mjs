@@ -99,7 +99,7 @@ const main = () => {
   if (!asMarkdown) console.error(`${C.dim}Reading ${env}…${C.off}`);
 
   const owners = safe(
-    'SELECT id, flat, name, mobile, email, role, active FROM owners', 'owners');
+    'SELECT id, flat, name, mobile, email, role, active, relationship FROM owners', 'owners');
   const flats = safe('SELECT flat, floor, active FROM flats', 'flats');
   const bills = safe(
     `SELECT id, flat, period, owner_id, gas_amount, other_charges, additional_charges,

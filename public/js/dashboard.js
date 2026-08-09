@@ -37,6 +37,16 @@ async function init() {
 }
 
 function render(me) {
+  // A landlord is reading their TENANT's bill. Saying so is not decoration:
+  // an amount with no name against it looks like a demand for money you owe.
+  const t = me.tenancy;
+  const landlordBanner = t?.viewing === 'landlord'
+    ? el('div', { class: 'note' },
+        `You are the owner of ${me.flat}. This is ${t.occupantName ?? 'your tenant'}'s bill — `
+        + 'they pay it, and you are liable only if it goes unpaid. '
+        + 'Payment screenshots are not shown to owners.')
+    : null;
+
   $('#who').innerHTML = `Flat ${esc(me.flat)} <span>· ${esc(me.name)}</span>`;
   $('#logout').addEventListener('click', async () => {
     await api.logout().catch(() => {});
@@ -50,6 +60,7 @@ function render(me) {
   renderNav(me, '/dashboard');
 
   main.replaceChildren(
+    ...(landlordBanner ? [landlordBanner] : []),
     ...(me.bill ? [billSection(me), paySection(me), breakdownSection(me.bill)] : [noBill()]),
     ...(me.readings.length ? [consumptionSection(me.readings)] : []),
     ...(me.bills.length ? [billHistorySection(me.bills)] : []),

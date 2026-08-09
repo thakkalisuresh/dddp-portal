@@ -235,6 +235,59 @@ export function checkIntegrity({ owners, flats, readings }) {
 }
 
 /**
+ * Tenancy gaps — the ones that are invisible until money is owed.
+ *
+ * Neither of these throws, and neither shows up anywhere in the UI. They
+ * surface at the worst possible moment: a tenant leaves owing rent and nobody
+ * can say who is liable, or two people are billed for one meter.
+ */
+export function checkTenancy(owners) {
+  const out = [];
+  const active = owners.filter((o) => o.active);
+
+  const byFlat = new Map();
+  for (const o of active) byFlat.set(o.flat, [...(byFlat.get(o.flat) ?? []), o]);
+
+  const orphaned = [...byFlat.entries()].filter(([, people]) =>
+    people.some((p) => p.relationship === 'tenant')
+    && !people.some((p) => p.relationship === 'owner'));
+  if (orphaned.length) {
+    out.push(finding('warn', 'TENANT-NO-OWNER', 'Let flats with no owner on record',
+      'The tenant is billed, but nobody is liable if they leave owing. '
+      + 'The liability rule has nothing to point at.',
+      orphaned.map(([flat, people]) => ({
+        flat, tenant: people.find((p) => p.relationship === 'tenant')?.name,
+      }))));
+  }
+
+  const crowded = [...byFlat.entries()].filter(([, people]) =>
+    people.filter((p) => p.relationship === 'tenant').length > 1);
+  if (crowded.length) {
+    out.push(finding('warn', 'TWO-TENANTS', 'Flats with more than one active tenant',
+      'One meter, one bill — whichever tenant the query returns first is billed '
+      + 'and the other is not. Deactivate whoever has left.',
+      crowded.map(([flat, people]) => ({
+        flat, tenants: people.filter((p) => p.relationship === 'tenant')
+          .map((p) => p.name).join(' + '),
+      }))));
+  }
+
+  const twoOwners = [...byFlat.entries()].filter(([, people]) =>
+    people.filter((p) => p.relationship === 'owner').length > 1);
+  if (twoOwners.length) {
+    out.push(finding('info', 'TWO-OWNERS', 'Flats with more than one owner account',
+      'Joint owners are legitimate, but only one is treated as liable. Listed '
+      + 'so the choice is deliberate rather than whichever row came first.',
+      twoOwners.map(([flat, people]) => ({
+        flat, owners: people.filter((p) => p.relationship === 'owner')
+          .map((p) => p.name).join(' + '),
+      }))));
+  }
+
+  return out;
+}
+
+/**
  * Can residents reset their own password?
  *
  * Two separate ways this fails, and they need different fixes: nobody can
@@ -358,6 +411,7 @@ function runAvailable(data, have) {
       : []),
     ...checkConfig(data.config ?? {}),
     ...(have('owners') ? checkResetPath(data.config ?? {}, data.owners ?? []) : []),
+    ...(have('owners') ? checkTenancy(data.owners ?? []) : []),
     ...checkDigest({ ...(data.config ?? {}), lastDigestAt: data.lastDigestAt ?? null }),
   ].sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));
 }

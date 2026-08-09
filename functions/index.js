@@ -18,7 +18,11 @@ import { readReceipt } from './lib/vision.js';
 import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden } from './lib/notices.js';
 import { publicNotices, submitMessage, fingerprintOf, AMENITIES } from './lib/public.js';
-import { transferFlat, canChangeRole, canResetPassword, waLink, planHandover, outstandingFor, mergeTimeline, toIST } from './lib/tenancy.js';
+import {
+  transferFlat, canChangeRole, canResetPassword, waLink, planHandover, outstandingFor,
+  mergeTimeline, toIST, isRelationship, occupantOf, landlordOf, isTenanted,
+  billAccess, describeRelationship,
+} from './lib/tenancy.js';
 import {
   OWNER_FIELDS, BILL_FIELDS, validateOwnerField, validateBillField,
   lockoutCheck, applyBillEdit, computedTotal, isUnexplainedMismatch,
@@ -555,6 +559,13 @@ async function postResident(request, env, session) {
   const b = await readJson(request);
   const flat = String(b?.flat ?? '').trim().toUpperCase();
   const name = String(b?.name ?? '').trim();
+  // The committee records this, not the resident: it decides who is liable
+  // for unpaid gas, and it is the one field somebody has an incentive to get
+  // wrong about themselves. Defaults to owner, the common case.
+  const relationship = b?.relationship ?? 'owner';
+  if (!isRelationship(relationship)) {
+    return problem(400, 'DDP-ADMIN-003', 'Relationship must be owner or tenant.');
+  }
   // Normalised, not stripped. Storing bare digits here while login normalises
   // to E.164 meant a newly created resident could never log in — the same
   // mixed-format bug 0009 fixed, quietly reintroduced on the write path.
@@ -578,11 +589,13 @@ async function postResident(request, env, session) {
   const otp = generateOneTimePassword();
   const { hash, salt } = await hashPassword(otp, ITER(env));
   const row = await env.DB.prepare(
-    `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, must_change_pw, role, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 1, 'owner', ?) RETURNING id`
-  ).bind(flat, name, mobile, b?.email ?? null, hash, salt, new Date().toISOString()).first();
+    `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, must_change_pw,
+                         role, relationship, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 1, 'owner', ?, ?) RETURNING id`
+  ).bind(flat, name, mobile, b?.email ?? null, hash, salt, relationship,
+         new Date().toISOString()).first();
 
-  await audit(env, session, 'resident.create', { id: row.id, flat });
+  await audit(env, session, 'resident.create', { id: row.id, flat, relationship });
   const rawText =
     `Diamond Park portal — your temporary password is ${otp}\n` +
     `Log in at https://diamondpark.pages.dev and choose your own.`;
@@ -1569,7 +1582,7 @@ async function editBill(request, env, session, path) {
  */
 async function godDiagnostics(env, url) {
   const [owners, flats, bills, periods, readings, proofs, errors, digest] = await Promise.all([
-    env.DB.prepare('SELECT id, flat, name, mobile, email, role, active FROM owners').all(),
+    env.DB.prepare('SELECT id, flat, name, mobile, email, role, active, relationship FROM owners').all(),
     env.DB.prepare('SELECT flat, floor, active FROM flats').all(),
     env.DB.prepare(`SELECT id, flat, period, owner_id, gas_amount, other_charges,
                            additional_charges, late_fee, total, status, manual_total,

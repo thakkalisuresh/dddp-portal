@@ -8,6 +8,7 @@
 
 import { buildUpiLinks, payTargetFor } from './upi.js';
 import { computeConsumption, DEFAULT_CONVERSION } from './billing.js';
+import { billAccess, occupantOf, describeRelationship } from './tenancy.js';
 
 const READING_HISTORY = 6;
 const BILL_HISTORY = 12;
@@ -63,6 +64,20 @@ export async function dashboardPayload(env, subject, userAgent = '') {
   // a meter reading is a property fact and carries across.
   const ownerId = subject.id;
 
+  // Everyone attached to this flat, so the tenancy rules can be applied. An
+  // absent owner reads their TENANT's bills here, not their own, which is the
+  // one place the bills-follow-the-person rule is deliberately relaxed — and
+  // only for amounts, never for screenshots.
+  const household = await env.DB.prepare(
+    'SELECT id, name, flat, relationship, active FROM owners WHERE flat = ?'
+  ).bind(flat).all();
+  const people = household.results ?? [];
+
+  const access = billAccess({ viewer: subject, people });
+  const occupant = occupantOf(people);
+  // A landlord is shown the occupant's bills; everyone else, their own.
+  const billsOf = access.reason === 'landlord' && occupant ? occupant.id : ownerId;
+
   const [flatRow, billRow, readings, bills] = await Promise.all([
     env.DB.prepare('SELECT flat, floor FROM flats WHERE flat = ?').bind(flat).first(),
 
@@ -71,7 +86,7 @@ export async function dashboardPayload(env, subject, userAgent = '') {
          FROM bills b JOIN periods p ON p.period = b.period
         WHERE b.flat = ? AND (b.owner_id IS NULL OR b.owner_id = ?)
         ORDER BY b.period DESC LIMIT 1`
-    ).bind(flat, ownerId).first(),
+    ).bind(flat, billsOf).first(),
 
     env.DB.prepare(
       `SELECT period, reading, read_on FROM readings WHERE flat = ? ORDER BY period DESC LIMIT ?`
@@ -81,7 +96,7 @@ export async function dashboardPayload(env, subject, userAgent = '') {
       `SELECT period, consumption, rate_per_kg, total, status, late_fee
          FROM bills WHERE flat = ? AND (owner_id IS NULL OR owner_id = ?)
         ORDER BY period DESC LIMIT ?`
-    ).bind(flat, ownerId, BILL_HISTORY).all(),
+    ).bind(flat, billsOf, BILL_HISTORY).all(),
   ]);
 
   const period = billRow
@@ -92,7 +107,10 @@ export async function dashboardPayload(env, subject, userAgent = '') {
   // The QR and the button are built from the same URI, so a late fee changes
   // both automatically (plan §4e).
   let pay = null;
-  if (bill && bill.showPayButton) {
+  // A landlord never gets a Pay button. They are liable for the debt, but the
+  // bill is the tenant's to settle, and two people paying one bill is a
+  // reconciliation problem nobody wants.
+  if (bill && bill.showPayButton && access.canPay) {
     pay = {
       target: payTargetFor(userAgent),
       links: buildUpiLinks({
@@ -104,6 +122,17 @@ export async function dashboardPayload(env, subject, userAgent = '') {
       }),
     };
   }
+
+  const tenancy = {
+    // Shown on the profile. With no confirmation step in onboarding, this
+    // line IS the error-catching mechanism for a wrong roster entry.
+    description: describeRelationship({ viewer: subject, people }),
+    relationship: subject.relationship ?? 'owner',
+    viewing: access.reason,
+    canPay: access.canPay,
+    seesProofs: access.proofs,
+    occupantName: access.reason === 'landlord' ? (occupant?.name ?? null) : null,
+  };
 
   return {
     flat,
@@ -117,6 +146,7 @@ export async function dashboardPayload(env, subject, userAgent = '') {
     pay,
     readings: withConsumption(readings.results ?? [], billRow?.conversion_factor ?? DEFAULT_CONVERSION),
     bills: bills.results ?? [],
+    tenancy,
   };
 }
 

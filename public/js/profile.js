@@ -42,6 +42,17 @@ function render(me) {
   main.replaceChildren(
     el('h1', { html: bilingual('myDetails') }),
     status,
+    // Apartment, floor, and whether you own or rent. There is no confirmation
+    // step in onboarding by design, so this line IS how a wrong roster entry
+    // gets noticed — by the one person who knows it is wrong.
+    el('div', { class: 'field' },
+      el('label', {}, 'Apartment'),
+      el('input', {
+        class: 'input', readonly: true,
+        value: me.floor != null ? `${me.flat} (Floor ${me.floor})` : me.flat,
+      }),
+      el('span', { class: 'field__hint' },
+        `${me.tenancy?.description ?? ''}. If that is wrong, tell an admin.`)),
     el('div', { class: 'field' }, el('label', { for: 'name' }, 'Name'), name),
     el('div', { class: 'field' }, el('label', { for: 'email' }, 'Email'), email),
     el('div', { class: 'field' },

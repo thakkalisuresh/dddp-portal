@@ -61,7 +61,11 @@ export async function resolveSession(env, request) {
             a.name  AS actor_name,  a.role AS actor_role, a.flat AS actor_flat,
             b.name  AS subject_name, b.role AS subject_role, b.flat AS subject_flat,
             b.mobile AS subject_mobile, b.email AS subject_email,
-            b.must_change_pw AS subject_must_change_pw
+            b.must_change_pw AS subject_must_change_pw,
+            -- Needed by the tenancy rules. Without them billAccess reads
+            -- undefined as "departed" and locks everyone out of their own
+            -- dashboard, which is exactly what happened.
+            b.relationship AS subject_relationship, b.active AS subject_active
        FROM sessions s
        JOIN owners a ON a.id = s.actor_id
        JOIN owners b ON b.id = s.subject_id
@@ -91,6 +95,8 @@ export async function resolveSession(env, request) {
       mobile: row.subject_mobile,
       email: row.subject_email,
       mustChangePassword: !!row.subject_must_change_pw,
+      relationship: row.subject_relationship ?? 'owner',
+      active: row.subject_active ?? 1,
     },
   };
 }
