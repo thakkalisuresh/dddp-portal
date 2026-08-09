@@ -1,0 +1,11 @@
+-- Track who has been sent their login.
+--
+-- Importing 99 residents takes seconds. Getting 99 households to actually log
+-- in takes weeks, and that chasing is the real work of onboarding a building.
+-- Without a record of who was sent what, the committee cannot tell the
+-- difference between "not contacted yet" and "contacted and ignoring it" —
+-- which are different problems with different fixes.
+--
+-- "Has logged in" needs no column: must_change_pw flips to 0 when they finish
+-- setting themselves up, so the two facts together give the whole picture.
+ALTER TABLE owners ADD COLUMN invited_at TEXT;

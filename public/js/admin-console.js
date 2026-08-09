@@ -19,6 +19,7 @@ const main = $('#main');
 let me = null;
 
 const TABS = [
+  { id: 'roster',    label: 'Roster',    href: '/admin/roster.html' },
   { id: 'readings',  label: 'Readings',  href: '/admin/readings.html' },
   { id: 'proofs',    label: 'Proofs',    href: '/admin/proofs.html' },
   { id: 'periods',   label: 'Rates',     render: periodsPanel },

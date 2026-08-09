@@ -34,6 +34,9 @@ import {
   validateNewPassword, resetEmail, neutralReply,
 } from './lib/reset.js';
 import { sendEmail, mailConfigured } from './lib/mailer.js';
+import { parseRoster, previewRoster } from './lib/roster.js';
+import { floorSummary } from './lib/building.js';
+import { addFlat } from './lib/flats.js';
 import { ERROR_CODES } from './lib/error-codes.js';
 import { isCaptureOn, captureWindow, validateBatch } from './lib/clicks.js';
 import { runBackup, backupHealth, pruneOldRows, dumpTable, dumpAll, bundle, toCsv, TABLES } from './lib/backup.js';
@@ -124,6 +127,12 @@ export default {
         if (route === 'GET /api/admin/residents') return listResidents(env);
         if (route.startsWith('POST /api/admin/residents/') && path.endsWith('/reset')) {
           return resetPassword(request, env, session, path);
+        }
+        if (route === 'POST /api/admin/roster/preview') return rosterPreview(request, env);
+        if (route === 'POST /api/admin/roster/import')  return rosterImport(request, env, session);
+        if (route === 'GET /api/admin/roster/status')   return rosterStatus(env);
+        if (route.startsWith('POST /api/admin/roster/sent/')) {
+          return rosterMarkSent(request, env, session, path);
         }
         if (route === 'GET /api/admin/readings')  return getReadings(env, url);
         if (route === 'PUT /api/admin/readings')  return putReadings(request, env, session, url);
@@ -1772,4 +1781,113 @@ async function resetWithCode(request, env, ctx) {
               'password.reset.completed', { flat: owner.flat });
 
   return json({ ok: true, message: 'Password changed. You can log in now.' });
+}
+
+/* ── roster import ────────────────────────────────────────────────────────
+   One paste for the whole building. Nothing is written until a preview has
+   been read: a wrong mobile is a resident who can never log in, and a
+   duplicated flat is somebody billed twice.                                */
+
+async function rosterPreview(request, env) {
+  const body = await readJson(request);
+  const [flats, people] = await Promise.all([
+    env.DB.prepare('SELECT flat FROM flats').all(),
+    env.DB.prepare('SELECT flat, name, mobile, relationship, active FROM owners').all(),
+  ]);
+
+  const { rows, detectedHeader, columns } = parseRoster(body?.text ?? '');
+  const preview = previewRoster(rows, {
+    existingFlats: (flats.results ?? []).map((f) => f.flat),
+    existingPeople: people.results ?? [],
+  });
+
+  return json({ ...preview, detectedHeader, columns, building: floorSummary() });
+}
+
+async function rosterImport(request, env, session) {
+  const body = await readJson(request);
+  const [flats, people] = await Promise.all([
+    env.DB.prepare('SELECT flat FROM flats').all(),
+    env.DB.prepare('SELECT flat, name, mobile, relationship, active FROM owners').all(),
+  ]);
+
+  // Re-run the preview server-side rather than trusting the client's copy.
+  // The browser has already seen this, but "what was approved" and "what gets
+  // written" must be decided by the same code reading the same database.
+  const { rows } = parseRoster(body?.text ?? '');
+  const preview = previewRoster(rows, {
+    existingFlats: (flats.results ?? []).map((f) => f.flat),
+    existingPeople: people.results ?? [],
+  });
+
+  if (!preview.canImport) {
+    return problem(409, 'DDP-ADMIN-003',
+      `${preview.blocked.length} rows cannot be imported. Fix them and paste again.`);
+  }
+
+  const created = [];
+  const now = new Date().toISOString();
+
+  for (const row of preview.create) {
+    await addFlat(env, row.flat, row.floor);
+    if (row.vacant) continue;
+
+    const otp = generateOneTimePassword();
+    const { hash, salt } = await hashPassword(otp, ITER(env));
+    const inserted = await env.DB.prepare(
+      `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, must_change_pw,
+                           role, relationship, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, 'owner', ?, ?) RETURNING id`
+    ).bind(row.flat, row.name, row.mobile, row.email, hash, salt, row.relationship, now).first();
+
+    const text =
+      `Diamond Park gas portal: your login for flat ${row.flat}\n` +
+      `Mobile: ${row.mobile}\nTemporary password: ${otp}\n` +
+      'Log in at https://diamondpark.pages.dev and choose your own password.';
+
+    created.push({
+      id: inserted.id, flat: row.flat, name: row.name, mobile: row.mobile,
+      relationship: row.relationship, oneTimePassword: otp, whatsapp: waLink(row.mobile, text),
+    });
+  }
+
+  await audit(env, session, 'roster.import', {
+    flats: preview.counts.flats, people: created.length, vacant: preview.counts.vacant,
+  });
+
+  return json({ created, counts: preview.counts, warnings: preview.warnings }, { status: 201 });
+}
+
+/** Who has been sent their login, and who has actually used it. */
+async function rosterStatus(env) {
+  const r = await env.DB.prepare(
+    `SELECT id, flat, name, mobile, relationship, invited_at, must_change_pw, active
+       FROM owners WHERE active = 1 ORDER BY CAST(flat AS INTEGER), flat`
+  ).all();
+
+  const people = (r.results ?? []).map((p) => ({
+    ...p,
+    // Three states, and the middle one is why this exists: "sent and ignored"
+    // is a different problem from "never contacted".
+    state: !p.must_change_pw ? 'logged-in' : p.invited_at ? 'sent' : 'not-sent',
+  }));
+
+  return json({
+    people,
+    counts: {
+      total: people.length,
+      loggedIn: people.filter((p) => p.state === 'logged-in').length,
+      sent: people.filter((p) => p.state === 'sent').length,
+      notSent: people.filter((p) => p.state === 'not-sent').length,
+    },
+  });
+}
+
+/** Mark a login as sent. Called when the admin opens the WhatsApp link. */
+async function rosterMarkSent(request, env, session, path) {
+  const id = Number(path.split('/').pop());
+  await env.DB.prepare('UPDATE owners SET invited_at = ? WHERE id = ?')
+    .bind(new Date().toISOString(), id).run();
+  await audit(env, session, 'roster.invited', { ownerId: id });
+  return json({ ok: true });
 }

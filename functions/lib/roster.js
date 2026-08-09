@@ -1,0 +1,219 @@
+/**
+ * The roster import: turning a pasted spreadsheet into 99 flats and their
+ * residents.
+ *
+ * This runs ONCE for the building and then occasionally for a new arrival, so
+ * the design bias is entirely toward catching mistakes rather than toward
+ * speed. A wrong mobile number means a resident who can never log in and will
+ * not discover it until they try; a duplicated flat means somebody is billed
+ * twice. Both are far cheaper to catch in a preview than in a month's bills.
+ *
+ * Nothing here writes. parseRoster reads text, previewRoster decides what
+ * would happen, and the caller commits only what the preview approved.
+ */
+
+import { isFlat, whyNot, parseFlat, allFlats, floorOfFlat } from './building.js';
+import { normaliseMobile } from './godedit.js';
+
+/** Column headers people actually paste, mapped to what we need. */
+const HEADERS = {
+  flat: ['flat', 'flatno', 'flat no', 'flat number', 'apartment', 'unit', 'house'],
+  name: ['name', 'resident', 'owner', 'resident name', 'owner name'],
+  mobile: ['mobile', 'phone', 'contact', 'mobile no', 'number', 'mobile number'],
+  relationship: ['relationship', 'type', 'owner/tenant', 'owner or tenant', 'status'],
+  email: ['email', 'e-mail', 'mail'],
+};
+
+function headerFor(cell) {
+  const v = String(cell ?? '').trim().toLowerCase().replace(/[_-]+/g, ' ');
+  for (const [key, names] of Object.entries(HEADERS)) if (names.includes(v)) return key;
+  return null;
+}
+
+/** Tabs if present, otherwise commas. Tabs win because pasting from a sheet gives tabs. */
+function splitLine(line) {
+  return (line.includes('\t') ? line.split('\t') : line.split(',')).map((c) => c.trim());
+}
+
+/**
+ * Read the paste.
+ *
+ * Column ORDER is taken from a header row when there is one, and assumed to be
+ * flat, name, mobile, relationship otherwise. Guessing silently would be worse
+ * than either: `detectedHeader` is returned so the screen can say which
+ * happened, because a roster whose columns were misread looks perfectly
+ * plausible right up until the wrong people get the wrong bills.
+ */
+export function parseRoster(text) {
+  const lines = String(text ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return { rows: [], detectedHeader: false, columns: [] };
+
+  let columns = ['flat', 'name', 'mobile', 'relationship'];
+  let detectedHeader = false;
+
+  const first = splitLine(lines[0]);
+  const mapped = first.map(headerFor);
+  if (mapped.filter(Boolean).length >= 2) {
+    columns = mapped;
+    detectedHeader = true;
+    lines.shift();
+  }
+
+  const rows = lines.map((line, i) => {
+    const cells = splitLine(line);
+    const row = { line: i + 1 + (detectedHeader ? 1 : 0), raw: line };
+    columns.forEach((col, idx) => { if (col) row[col] = cells[idx] ?? ''; });
+    return row;
+  });
+
+  return { rows, detectedHeader, columns };
+}
+
+const RELATIONSHIPS = { owner: 'owner', o: 'owner', tenant: 'tenant', t: 'tenant', rent: 'tenant' };
+
+function readRelationship(value) {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (!v) return { ok: true, value: 'owner', defaulted: true };
+  const hit = RELATIONSHIPS[v];
+  return hit ? { ok: true, value: hit } : { ok: false };
+}
+
+/**
+ * What the paste would do, decided before anything is written.
+ *
+ * Splits into three: `create` is safe, `blocked` cannot be written at all, and
+ * `warnings` are rows that would import but probably should not. The split
+ * matters because blocking the whole import over one questionable row means
+ * somebody strips the warnings out to get it through, and blocking nothing
+ * means the questionable rows land silently.
+ *
+ * @param existingFlats  flats already in the database
+ * @param existingPeople active people, so a re-run does not duplicate them
+ */
+export function previewRoster(rows, { existingFlats = [], existingPeople = [] } = {}) {
+  const create = [];
+  const blocked = [];
+  const warnings = [];
+
+  const known = new Set(existingFlats);
+  const seenMobile = new Map();
+  const seenPerFlat = new Map();
+
+  for (const p of existingPeople) {
+    if (!p.active) continue;
+    const digits = String(p.mobile ?? '').replace(/\D/g, '').slice(-10);
+    if (digits) seenMobile.set(digits, { flat: p.flat, name: p.name, existing: true });
+    seenPerFlat.set(p.flat, [...(seenPerFlat.get(p.flat) ?? []), { ...p, existing: true }]);
+  }
+
+  for (const row of rows) {
+    const flatIn = String(row.flat ?? '').trim();
+    const parsed = parseFlat(flatIn);
+    const flat = parsed?.flat ?? flatIn.toUpperCase();
+    const name = String(row.name ?? '').trim();
+    const mobileIn = String(row.mobile ?? '').trim();
+    const email = String(row.email ?? '').trim().toLowerCase() || null;
+
+    const stop = (reason) => blocked.push({ line: row.line, flat: flat || '(blank)', name, reason });
+
+    if (!flatIn) { stop('No flat number on this line.'); continue; }
+    if (!isFlat(flat)) { stop(whyNot(flat)); continue; }
+
+    // A flat with no name is a vacant flat: legitimate, and worth recording so
+    // the meter still gets read even when nobody is living there.
+    if (!name && !mobileIn) {
+      create.push({ line: row.line, flat, floor: floorOfFlat(flat), vacant: true });
+      continue;
+    }
+    if (!name) { stop('A mobile number with no name against it.'); continue; }
+    if (!mobileIn) { stop(`${name} has no mobile number, and that is the login.`); continue; }
+
+    let mobile;
+    try {
+      mobile = normaliseMobile(mobileIn);
+    } catch {
+      stop(`"${mobileIn}" is not a usable mobile number. Include the country code if it is not Indian.`);
+      continue;
+    }
+
+    const rel = readRelationship(row.relationship);
+    if (!rel.ok) {
+      stop(`"${row.relationship}" is not owner or tenant.`);
+      continue;
+    }
+
+    // One number, one login. Two people sharing it means one cannot get in.
+    const digits = mobile.replace(/\D/g, '').slice(-10);
+    const clash = seenMobile.get(digits);
+    if (clash) {
+      stop(clash.existing
+        ? `That mobile already belongs to ${clash.name} in ${clash.flat}.`
+        : `Same mobile as ${clash.flat} ${clash.name} on this paste.`);
+      continue;
+    }
+    seenMobile.set(digits, { flat, name });
+
+    const household = [...(seenPerFlat.get(flat) ?? [])];
+    if (rel.value === 'tenant' && household.some((h) => h.relationship === 'tenant')) {
+      stop(`${flat} already has a tenant on this list. One meter, one bill.`);
+      continue;
+    }
+    seenPerFlat.set(flat, [...household, { name, relationship: rel.value }]);
+
+    create.push({
+      line: row.line, flat, floor: floorOfFlat(flat), name, mobile, email,
+      relationship: rel.value, relationshipDefaulted: rel.defaulted,
+      newFlat: !known.has(flat),
+    });
+  }
+
+  // ── warnings: importable, but somebody should look ─────────────────────
+  const byFlat = new Map();
+  for (const c of create) {
+    if (c.vacant) continue;
+    byFlat.set(c.flat, [...(byFlat.get(c.flat) ?? []), c]);
+  }
+  for (const [flat, people] of byFlat) {
+    const existing = (seenPerFlat.get(flat) ?? []).filter((p) => p.existing);
+    const all = [...existing, ...people];
+    if (all.some((p) => p.relationship === 'tenant') && !all.some((p) => p.relationship === 'owner')) {
+      warnings.push({
+        flat,
+        message: `${flat} has a tenant but no owner. Nobody would be liable if they left owing.`,
+      });
+    }
+    if (all.filter((p) => p.relationship === 'owner').length > 1) {
+      warnings.push({ flat, message: `${flat} has more than one owner listed. Only one is treated as liable.` });
+    }
+  }
+
+  const defaulted = create.filter((c) => c.relationshipDefaulted && !c.vacant).length;
+  if (defaulted) {
+    warnings.push({
+      message: `${defaulted} ${defaulted === 1 ? 'row has' : 'rows have'} no owner/tenant column, `
+             + 'so they will be recorded as owners.',
+    });
+  }
+
+  // Flats in the building that this paste does not mention, so a half-typed
+  // roster is visible as a gap rather than passing as complete.
+  const listed = new Set([...create.map((c) => c.flat), ...known]);
+  const missing = allFlats().filter((f) => !listed.has(f));
+
+  return {
+    create,
+    blocked,
+    warnings,
+    missing,
+    counts: {
+      flats: new Set(create.filter((c) => c.newFlat || c.vacant).map((c) => c.flat)).size,
+      people: create.filter((c) => !c.vacant).length,
+      vacant: create.filter((c) => c.vacant).length,
+      tenants: create.filter((c) => c.relationship === 'tenant').length,
+      missing: missing.length,
+    },
+    // Blocked rows stop the import. Warnings do not: they are judgement calls,
+    // and a preview nobody can get past is a preview people learn to bypass.
+    canImport: blocked.length === 0 && create.length > 0,
+  };
+}

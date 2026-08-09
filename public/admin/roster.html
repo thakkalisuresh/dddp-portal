@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roster — Diamond Park</title>
+<link rel="stylesheet" href="../css/tokens.css">
+<link rel="stylesheet" href="../css/app.css">
+<style>
+  .paste {
+    width: 100%; min-height: 220px; font: 14px/1.6 var(--font-ui);
+    padding: var(--s-3); border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); color: var(--ink); resize: vertical;
+    /* Tabular, because what gets pasted here is columns and misalignment is
+       the first clue that a column has been read wrongly. */
+    font-variant-numeric: tabular-nums; white-space: pre; overflow-x: auto;
+  }
+
+  .tally { display: flex; gap: var(--s-4); flex-wrap: wrap; padding: var(--s-3) 0; }
+  .tally__n { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tally__l { font-size: var(--text-xs); color: var(--ink-muted);
+              text-transform: uppercase; letter-spacing: .06em; }
+
+  .row { display: grid; grid-template-columns: 58px 1fr 130px 90px;
+         gap: var(--s-2); padding: 6px var(--s-4); border-bottom: 1px solid var(--border);
+         font-size: var(--text-sm); align-items: baseline; }
+  .row__flat { font-family: var(--font-ui); font-weight: 700; }
+  .row--bad { background: var(--overdue-wash); }
+  .row__why { grid-column: 2 / -1; color: var(--overdue); font-size: var(--text-xs); }
+
+  .state { font-family: var(--font-ui); font-size: 10px; font-weight: 700;
+           letter-spacing: .06em; text-transform: uppercase; padding: 2px 6px;
+           border-radius: var(--radius); border: 1px solid; text-align: center; }
+  .state--logged-in { color: #0A4F38; background: var(--accent-wash); border-color: var(--accent-line); }
+  .state--sent      { color: #6B4708; background: var(--awaiting-wash); border-color: var(--awaiting-line); }
+  .state--not-sent  { color: var(--ink-muted); background: #F5F4EF; border-color: var(--border); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+          gap: 4px; padding: var(--s-3) var(--s-4); }
+  .cell { font-family: var(--font-ui); font-size: 11px; text-align: center;
+          padding: 4px 2px; border-radius: var(--radius); border: 1px solid var(--border);
+          color: var(--ink-muted); }
+  .cell--have { color: #0A4F38; background: var(--accent-wash); border-color: var(--accent-line); }
+  @media (max-width: 640px) { .row { grid-template-columns: 50px 1fr 84px; } }
+</style>
+</head>
+<body>
+<div class="godbar" id="godbar" hidden></div>
+<header class="appbar">
+  <span class="appbar__who" id="who">Loading…</span>
+  <a class="appbar__action" href="/admin/index.html">Admin</a>
+</header>
+<main class="page page--wide" id="main"><p class="muted">Loading…</p></main>
+<script type="module" src="../js/admin-roster.js"></script>
+</body>
+</html>
