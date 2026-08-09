@@ -76,7 +76,10 @@ export const ERROR_CODES = {
   'DDP-ADMIN-005': { severity: 'warn',  message: 'Flat transfer blocked — the outgoing owner has unpaid bills' },
   'DDP-ADMIN-006': { severity: 'fatal', message: 'Role change refused — it would leave no superadmin' },
   'DDP-ADMIN-007': { severity: 'error', message: 'Flat label has no leading floor number' },
-  'DDP-ADMIN-008': { severity: 'fatal', message: 'Flat limit reached — the retired paise column caps the table at 99' },
+  // Retired with the column that caused it. The 99-flat ceiling is gone, which
+  // matters because the building has exactly 99 and would have hit it.
+  'DDP-ADMIN-008': { severity: 'fatal', retired: true,
+                     message: 'Flat limit reached — the retired paise column capped the table at 99 (retired)' },
   'DDP-ADMIN-009': { severity: 'warn',  message: 'Mobile number is not a valid E.164 number' },
   'DDP-ADMIN-010': { severity: 'warn',  message: 'God edit rejected — field or value not allowed' },
   'DDP-ADMIN-011': { severity: 'warn',  message: 'God edit to money rejected — no reason given' },

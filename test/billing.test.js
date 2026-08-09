@@ -148,11 +148,18 @@ describe('consumption — the meter counts volume, the bill charges mass', () =>
   });
 });
 
-describe('adding a flat around the retired column', () => {
+describe('placing a flat on a floor', () => {
   it('reads the floor out of the label', () => {
     expect(floorOf('4A')).toBe(4);
     expect(floorOf('13E')).toBe(13);
     expect(floorOf(' 5B ')).toBe(5);
+  });
+
+  it('gives a duplex the floor it starts on', () => {
+    // 10C occupies floors 10 and 11 but is one home, one meter, one bill.
+    // 11C is not a flat and must never be created.
+    expect(floorOf('10C')).toBe(10);
+    expect(floorOf('14C')).toBe(14);
   });
 
   it('refuses a label it cannot place on a floor', () => {
@@ -161,27 +168,17 @@ describe('adding a flat around the retired column', () => {
     expect(() => floorOf('')).toThrow(/DDP-ADMIN-007/);
   });
 
-  it('fills the dead column so callers never see it', async () => {
-    // The point of addFlat: legacy_paise_tag is NOT NULL UNIQUE and nothing
-    // reads it, so the INSERT must supply a value without the caller knowing.
+  it('inserts idempotently, so re-importing a roster is safe', async () => {
     const seen = [];
-    const env = { DB: {
-      prepare(sql) {
-        return {
-          first: async () => ({ n: 3 }),
-          bind: (...args) => ({ run: async () => seen.push({ sql, args }) }),
-        };
-      },
-    } };
-    await addFlat(env, '7C');
-    expect(seen[0].args).toEqual(['7C', 7]);
-    expect(seen[0].sql).toMatch(/legacy_paise_tag/);
+    const env = { DB: { prepare(sql) {
+      return { bind: (...args) => ({ run: async () => seen.push({ sql, args }) }) };
+    } } };
+    await addFlat(env, '4A');
     expect(seen[0].sql).toMatch(/ON CONFLICT\(flat\) DO NOTHING/);
-  });
-
-  it('refuses to exceed the cap the dead CHECK imposes', async () => {
-    const env = { DB: { prepare: () => ({ first: async () => ({ n: 99 }) }) } };
-    await expect(addFlat(env, '99Z')).rejects.toThrow(/DDP-ADMIN-008/);
+    expect(seen[0].args).toEqual(['4A', 4]);
+    // The cap that used to live here is gone with the column. The building has
+    // exactly 99 flats, so a 99-row ceiling was the limit, not headroom.
+    expect(seen[0].sql).not.toMatch(/legacy_paise_tag/);
   });
 });
 

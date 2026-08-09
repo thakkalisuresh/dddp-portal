@@ -1,25 +1,14 @@
 -- Retire the paise tag.
 --
--- Bills are now exactly what the meter and the rate produce, rounded UP to the
--- next whole rupee. Nothing is encoded in the amount a resident is asked for,
--- so the per-flat paise identifier has no job left.
+-- Now a no-op. It renamed flats.paise_tag to legacy_paise_tag, because the
+-- column is UNIQUE with a CHECK and SQLite cannot drop such a column in place.
 --
--- WHY THE COLUMN IS STILL HERE. Dropping it needs a full table rebuild: it is
--- UNIQUE, and SQLite will not DROP COLUMN on an indexed column. The rebuild
--- (create, copy, DROP TABLE flats, rename) cannot run inside a D1 migration:
+-- 0001 no longer creates that column at all, so on a fresh database there is
+-- nothing here to rename. On the live database this migration is already
+-- recorded and will never run again; the column was removed for real by
+-- scripts/rebuild-flats.mjs, which lifts out every referencing row, rebuilds
+-- the table, and puts them back with identical ids.
 --
---   * PRAGMA defer_foreign_keys = ON  -> fails at COMMIT. DROP TABLE on a
---     referenced parent runs an implicit DELETE FROM that registers a deferred
---     violation for every owners/readings/bills row, and the later RENAME never
---     decrements that counter — only an INSERT would.
---   * PRAGMA foreign_keys = OFF      -> the documented SQLite rebuild, verified
---     working against plain sqlite3, but D1 runs migrations inside its own
---     transaction where the pragma does not take effect. Also fails.
---
--- Both were tried against D1 before settling here. Rather than take a rebuild
--- risk on the live flats table for a cosmetic gain, the column is renamed to
--- say plainly that it is dead, and nothing reads it.
---
--- A rename keeps every FK intact: children reference flats(flat), not this
--- column, and SQLite rewrites the CHECK constraint along with the name.
-ALTER TABLE flats RENAME COLUMN paise_tag TO legacy_paise_tag;
+-- Kept as a file rather than deleted: removing it would renumber nothing but
+-- would make d1_migrations reference a migration that no longer exists.
+SELECT 1;

@@ -2,12 +2,22 @@
 -- Every reading and bill is keyed on (flat, period) so historical data can be
 -- backfilled later as a plain INSERT. See plan §3.
 
+-- EDITED AFTER THE FACT, deliberately. This originally carried
+--   paise_tag INTEGER NOT NULL UNIQUE, CHECK (paise_tag BETWEEN 1 AND 99)
+-- which encoded the flat's identity in the paise of its bill. That idea is
+-- gone (see 0005), but the column could not be dropped in place and D1 refuses
+-- the table rebuild while any row references flats — so production was fixed
+-- with scripts/rebuild-flats.mjs instead.
+--
+-- Editing an applied migration is normally wrong. It is right here because the
+-- two paths CONVERGE: an existing database has 0001 recorded and will never
+-- re-run it, while a fresh one is now born with exactly the schema the script
+-- produces. Leaving it alone would mean a new database silently inheriting a
+-- 99-flat ceiling in a building that has exactly 99 flats.
 CREATE TABLE flats (
-  flat      TEXT PRIMARY KEY,              -- '4A'
+  flat      TEXT PRIMARY KEY,              -- '4A'; a duplex takes its lower floor
   floor     INTEGER NOT NULL,
-  paise_tag INTEGER NOT NULL UNIQUE,       -- 1..99, permanent per flat
-  active    INTEGER NOT NULL DEFAULT 1,
-  CHECK (paise_tag BETWEEN 1 AND 99)
+  active    INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE owners (
