@@ -88,15 +88,16 @@ async function periodsPanel() {
   return el('div', { class: 'panel stack' },
     el('h2', {}, 'Rate per kg'),
     el('p', { class: 'muted small' },
-      'The rate changes every month and is never carried forward — a month with an '
-      + 'inherited rate produces 52 bills that look normal and are all wrong.'),
+      'Set the rate for every month, even when it has not changed. Nothing is '
+      + 'carried forward: an inherited rate would produce 52 bills that look '
+      + 'normal and are all wrong.'),
 
     el('div', { class: 'field' }, el('label', { for: 'p-period' }, 'Usage month'), period,
       el('span', { class: 'field__hint' }, 'The month the gas was used. Meters are read the month after.')),
     el('div', { class: 'field' }, el('label', { for: 'p-rate' }, 'Rate per kg'), rate),
     el('div', { class: 'field' }, el('label', { for: 'p-due' }, 'Payment due'), due),
     el('div', { class: 'field' }, el('label', { for: 'p-fee' }, 'Late fee (whole rupees)'), fee,
-      el('span', { class: 'field__hint' }, 'Paise are not allowed — they identify the flat.')),
+      el('span', { class: 'field__hint' }, 'Whole rupees only. No paise.')),
     status,
     el('button', {
       class: 'btn', type: 'button',
@@ -191,7 +192,7 @@ function otpPanel(result, who) {
     el('a', { class: 'btn btn--block', href: result.whatsapp, target: '_blank', rel: 'noopener' },
       'Send on WhatsApp'),
     el('p', { class: 'small', style: 'margin-top:var(--s-2)' },
-      'Single use · expires in 24 hours · all their other sessions have ended.'));
+      'They must change it at first login. All their other sessions have ended.'));
 }
 
 /* ── notices ───────────────────────────────────────────────────────────── */
@@ -283,7 +284,7 @@ function backupHealthLine() {
         ? 'Google Drive is reachable and the token is valid.'
         : h.reason === 'not-configured'
           ? 'Not set up yet. Add the Google secrets to enable nightly off-site copies.'
-          : `Backup is BROKEN (${h.reason}). A refresh token issued in OAuth "Testing" mode expires after 7 days — publish the consent screen.`);
+          : `Backup is BROKEN (${h.reason}). A refresh token issued in OAuth "Testing" mode expires after 7 days. Publish the consent screen.`);
     if (!h.ok && h.reason !== 'not-configured') line.className = 'small';
   }).catch(() => line.replaceChildren('Could not check.'));
   return line;

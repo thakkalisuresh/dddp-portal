@@ -42,8 +42,8 @@ function render(me) {
   const t = me.tenancy;
   const landlordBanner = t?.viewing === 'landlord'
     ? el('div', { class: 'note' },
-        `You are the owner of ${me.flat}. This is ${t.occupantName ?? 'your tenant'}'s bill — `
-        + 'they pay it, and you are liable only if it goes unpaid. '
+        `You are the owner of ${me.flat}. This is ${t.occupantName ?? 'your tenant'}'s bill. `
+        + 'They pay it. You are liable only if it goes unpaid. '
         + 'Payment screenshots are not shown to owners.')
     : null;
 
@@ -153,7 +153,7 @@ function paySection(me) {
     el('p', { class: 'helper' },
       el('span', {}, 'Pay exactly '),
       el('strong', {}, money(b.total)),
-      el('span', {}, ` and leave the reference as it is — that is how flat ${me.flat}'s payment is matched.`)),
+      el('span', {}, ` and leave the reference as it is. That is how flat ${me.flat}'s payment is matched.`)),
     el('p', { style: 'text-align:center;margin-top:var(--s-3)' },
       el('a', { class: 'linkish', href: '/proof' }, 'Already paid? Upload screenshot'))
   );
@@ -192,7 +192,7 @@ function consumptionSection(readings) {
           el('div', {
             class: `chart__bar ${i === withUse.length - 1 ? 'chart__bar--now' : ''}`,
             style: `height:${Math.max(4, (r.consumption / peak) * 100)}%`,
-            title: `${periodLabel(r.period)} — ${kg(r.consumption)}`,
+            title: `${periodLabel(r.period)}: ${kg(r.consumption)}`,
           }, el('span', {}, periodLabel(r.period).slice(0, 3).toUpperCase()))))),
     el('div', { class: 'scroll-x' },
       el('table', { class: 'table' },

@@ -146,7 +146,7 @@ export function resetEmail({ code, name, flat }) {
       '',
       'Enter it at https://diamondpark.pages.dev/forgot',
       '',
-      'If you did not ask for this, you can ignore it — your password has not',
+      'If you did not ask for this, you can ignore it. Your password has not',
       'changed, and nobody can use this code without your email.',
       '',
       'DD Diamond Park Residents\' Welfare Association',

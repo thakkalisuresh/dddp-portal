@@ -145,7 +145,7 @@ function contactForm() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error?.message ?? 'Could not send that.');
       form.replaceChildren(el('div', { class: 'note note--good' },
-        'Thank you — the committee has your message and will get back to you.'));
+        'Thank you. The committee has your message and will get back to you.'));
     } catch (err) {
       submit.disabled = false;
       submit.textContent = 'Send message';

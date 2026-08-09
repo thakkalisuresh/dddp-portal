@@ -53,7 +53,7 @@ function render(me) {
       // building ends up with one person unlocking everybody's account.
       el('p', { class: 'small muted' },
         'Without one you will have to ask an admin to reset your password.'),
-      el('span', { class: 'field__hint' }, 'Only used to send you a reset link if you forget your password.')),
+      el('span', { class: 'field__hint' }, 'Only used to send you a code if you forget your password.')),
 
     el('div', { class: 'field' },
       el('label', {}, 'Mobile number'),

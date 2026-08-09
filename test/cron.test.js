@@ -73,9 +73,14 @@ describe('planning a month of late fees', () => {
   });
 
   it('refuses a nonsense fee before touching a single bill', () => {
-    // A fee with paise is fine now (the ceiling absorbs it); a negative one
-    // would quietly credit every overdue resident.
-    expect(planLateFees([bill()], { ...opts, lateFee: 50.5 }).charge[0].newTotal).toBe(380);
+    // Both are refused, and refusing BEFORE any write is the point: the cron
+    // charges a whole month at once, so a bad fee caught halfway through would
+    // leave some residents charged and some not.
+    //
+    // The paise case previously asserted 380, on the belief that the ceiling
+    // absorbed the fraction. The database disagrees — it still requires whole
+    // rupees — so that would have been a 500 mid-run.
+    expect(() => planLateFees([bill()], { ...opts, lateFee: 50.5 })).toThrow(/DDP-BILL-008/);
     expect(() => planLateFees([bill()], { ...opts, lateFee: -50 })).toThrow(/DDP-BILL-008/);
   });
 

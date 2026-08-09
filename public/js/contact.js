@@ -19,7 +19,7 @@ export const TREASURER = {
 
 /** 'Mukesh (Treasurer) — +91 98464 66511' */
 export function treasurerLine() {
-  return `${TREASURER.name} (${TREASURER.role}) — ${TREASURER.phone}`;
+  return `${TREASURER.name} (${TREASURER.role}), ${TREASURER.phone}`;
 }
 
 /** Digits only, with country code, for a wa.me or tel: link. */

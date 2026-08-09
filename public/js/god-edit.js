@@ -71,7 +71,7 @@ function blurb() {
   }
   if (tab === 'bills') {
     return 'Editing a component recalculates the total. Editing the total directly '
-         + 'overrides it and the bill is marked so — the components are left as metered. '
+         + 'overrides it and the bill is marked so. The components are left as metered. '
          + 'Money edits need a reason.';
   }
   if (tab === 'health') {

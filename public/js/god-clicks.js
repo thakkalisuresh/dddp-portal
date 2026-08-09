@@ -16,7 +16,7 @@ try {
         el('p', { class: 'small muted' },
           state.on ? `Recording until ${state.expiresAt}.` : 'Not currently recording.'),
         el('p', { class: 'small muted' },
-          `${clicks.length} events. Field values are never recorded — an input shows its `
+          `${clicks.length} events. Field values are never recorded. An input shows its `
           + 'identity only, and a password field is dropped entirely.')),
       ...(clicks.length
         ? clicks.map((c) => el('div', { class: 'c' },

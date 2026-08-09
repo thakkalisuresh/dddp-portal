@@ -373,12 +373,15 @@ async function resetPassword(request, env, session, path) {
   await destroyAllSessionsFor(env, ownerId);
   await audit(env, session, 'password.reset', { ownerId, flat: target.flat });
 
+  // No expiry is promised, because none is enforced. The previous wording said
+  // "it expires in 24 hours" and `expiresInHours: 24` was a decorative number
+  // nothing acted on — a temporary password sent over WhatsApp worked forever.
+  // See backlog B10; until that exists, saying nothing is the honest option.
   const text =
-    `Diamond Park portal — your temporary password is ${otp}\n` +
-    `Log in at https://diamondpark.pages.dev and choose your own password. It expires in 24 hours.`;
+    `Diamond Park portal: your temporary password is ${otp}\n` +
+    'Log in at https://diamondpark.pages.dev and choose your own password straight away.';
   return json({
     oneTimePassword: otp,
-    expiresInHours: 24,
     whatsapp: waLink(target.mobile, text),
   });
 }

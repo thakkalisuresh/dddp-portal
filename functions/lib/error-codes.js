@@ -40,7 +40,7 @@ export const ERROR_CODES = {
   'DDP-BILL-005': { severity: 'error', message: 'Period has no rate set' },
   'DDP-BILL-006': { severity: 'error', message: 'Duplicate bill for (flat, period)' },
   'DDP-BILL-007': { severity: 'error', message: 'Generation attempted on a locked period' },
-  'DDP-BILL-008': { severity: 'error', message: 'Late fee is negative or not a number' },
+  'DDP-BILL-008': { severity: 'error', message: 'Late fee is negative, fractional or not a number' },
   'DDP-BILL-009': { severity: 'error', message: 'Late fee cron re-applied to an already-charged bill' },
   'DDP-BILL-010': { severity: 'fatal', message: 'Rate was inherited from a previous period instead of set for this one' },
   // Retired: a rate change is normal business, not an error. The unusual-jump

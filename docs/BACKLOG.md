@@ -110,6 +110,28 @@ they are maintenance systems and maintenance is a charge against the property.
 Gas is metered consumption, so it follows whoever burned it. That is why we
 differ from them.
 
+## B10 — Expire admin-issued temporary passwords
+
+Found during the content review, 2026-08-09. The reset message told residents
+"it expires in 24 hours" and the API returned `expiresInHours: 24`. Nothing
+enforced either. A temporary password sent over WhatsApp worked indefinitely.
+
+That matters more than it sounds: WhatsApp messages persist on both phones for
+years, get forwarded, and survive a handset changing hands. A credential with
+no lifetime sitting in a chat history is a real exposure, and it is the ONE
+credential in the system deliberately transmitted in the clear.
+
+The copy now promises nothing, which is honest but not a fix.
+
+Shape: `pw_expires_at` on `owners`, set when an admin issues a temporary
+password, checked at login only while `must_change_pw = 1` so it never affects
+a password the resident chose themselves. An expired one should say so plainly
+and point at /forgot rather than failing as "wrong password".
+
+Small — perhaps thirty lines and a test. It was left out of the content review
+because that review was meant to correct what is written, not change what the
+system does the day before a deploy.
+
 ## B9 — Owner-only notices
 
 Borrowed from ApnaComplex, which has an "Only Owners" notice scope alongside

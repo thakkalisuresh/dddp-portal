@@ -89,7 +89,14 @@ export function computeBill({
  * The total is already whole, so this stays whole for a whole-rupee fee.
  */
 export function applyLateFee(currentTotal, lateFee) {
-  if (!Number.isFinite(lateFee) || lateFee < 0) fail('DDP-BILL-008', { lateFee });
+  // Whole rupees, still. The paise tag is gone, but `periods` and `bills` both
+  // carry CHECK (late_fee = CAST(late_fee AS INTEGER)), so a fee of 50.50
+  // passed validation here and then died at the database as a 500 instead of
+  // a message. Nobody charges half a rupee in late fees; the rule is fine, it
+  // just needed saying in the one place that produces a readable error.
+  if (!Number.isFinite(lateFee) || lateFee < 0 || !isWholeRupees(lateFee)) {
+    fail('DDP-BILL-008', { lateFee });
+  }
   return toWholeRupees(round2(currentTotal + lateFee));
 }
 

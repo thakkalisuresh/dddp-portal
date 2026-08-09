@@ -91,7 +91,7 @@ function controls() {
           ? (state.expiresAt
               ? `Click capture is ON until ${state.expiresAt}.`
               : 'Click capture is ON and stays on until you turn it off.')
-          : 'Click capture is off. It records which controls people press — '
+          : 'Click capture is off. It records which controls people press, '
             + 'never what they type, and never a password field.'),
       el('div', { class: 'row' },
         el('button', {
@@ -112,12 +112,12 @@ function controls() {
       el('p', { class: 'label' }, 'View as a resident'),
       el('p', { class: 'small muted' },
         'Read-only opens their dashboard without touching their account. '
-        + 'Impersonating issues a real session — the amber banner stays up until you exit.'),
+        + 'Impersonating issues a real session. The amber banner stays up until you exit.'),
       spoofControl(status),
 
       el('hr', { class: 'rule' }),
       el('p', { class: 'small muted' },
-        'There is exactly one superadmin. The role can only be moved, never copied — '
+        'There is exactly one superadmin. The role moves, it is never copied: '
         + 'handing it over makes you an admin.'),
       handoverControl(status));
   }).catch(() => {});

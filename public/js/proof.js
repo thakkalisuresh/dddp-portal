@@ -131,7 +131,7 @@ function outcome(result) {
     return el('div', { class: 'stack' },
       el('div', { class: 'note note--good' },
         el('strong', {}, 'Received. '),
-        'The treasurer will confirm it shortly — you don\'t need to do anything else.',
+        'The treasurer will confirm it shortly. You do not need to do anything else.',
         readback),
       el('a', { class: 'btn btn--ghost btn--block', href: '/dashboard' }, 'Back to your bill'));
   }

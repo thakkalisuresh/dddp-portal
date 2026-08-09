@@ -64,7 +64,7 @@ function render(q) {
       el('div', { class: 'stack', style: 'gap:var(--s-1)' },
         el('h3', {}, 'Tapped Pay, no screenshot'),
         el('p', { class: 'small muted' },
-          'Match the amount and the payer name against the bank statement — there is no reference to go on.'))),
+          'Match the amount and the payer name against the bank statement.'))),
 
     ...(q.claimedNoProof.length
       ? q.claimedNoProof.map(claimedRow)

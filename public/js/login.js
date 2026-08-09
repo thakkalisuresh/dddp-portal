@@ -45,7 +45,7 @@ if (contact) {
     Object.assign(document.createElement('strong'), {
       textContent: `${TREASURER.name} (${TREASURER.role})`,
     }),
-    document.createTextNode(' — '),
+    document.createTextNode(', '),
     Object.assign(document.createElement('span'), {
       className: 'num', textContent: TREASURER.phone,
     })

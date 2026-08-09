@@ -100,7 +100,7 @@ const EXPECTED = {
   'DDP-BILL-010': [409, "This month has no rate of its own. Enter it — rates aren't carried forward."],
   'DDP-BILL-001': [409, 'Some readings are missing or need fixing. Check the grid before generating.'],
   'DDP-BILL-002': [409, 'A reading is lower than last month. Meters do not run backwards.'],
-  'DDP-BILL-008': [409, 'A late fee must be a positive number.'],
+  'DDP-BILL-008': [409, 'A late fee must be a whole number of rupees.'],
   'DDP-AUTH-007': [403, 'Credentials cannot be changed while viewing as another resident.'],
   'DDP-AUTH-008': [400, 'Use at least 8 characters.'],
   'DDP-AUTH-009': [400, 'That code is not right, or it has expired.'],

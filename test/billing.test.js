@@ -57,10 +57,14 @@ describe('late fees', () => {
     expect(applyLateFee(329, 50)).toBe(379);
   });
 
-  it('accepts a fee carrying paise now that nothing is encoded in them', () => {
-    // This used to throw DDP-BILL-008. The constraint existed only to protect
-    // the paise tag, so it went with it — the ceiling absorbs the fraction.
-    expect(applyLateFee(329, 50.5)).toBe(380);
+  it('still refuses a fee carrying paise', () => {
+    // This test previously asserted the OPPOSITE, on the reasoning that the
+    // whole-rupee rule existed only to protect the paise tag and could go with
+    // it. Half true: the tag is gone, but `periods` and `bills` both still
+    // carry CHECK (late_fee = CAST(late_fee AS INTEGER)). So 50.50 passed
+    // validation and died at the database as a 500 rather than a message —
+    // and this test was what made that look correct.
+    expect(() => applyLateFee(329, 50.5)).toThrow(/DDP-BILL-008/);
   });
 
   it('rejects a negative or non-numeric fee', () => {
@@ -178,5 +182,23 @@ describe('adding a flat around the retired column', () => {
   it('refuses to exceed the cap the dead CHECK imposes', async () => {
     const env = { DB: { prepare: () => ({ first: async () => ({ n: 99 }) }) } };
     await expect(addFlat(env, '99Z')).rejects.toThrow(/DDP-ADMIN-008/);
+  });
+});
+
+describe('late fees stay whole rupees', () => {
+  it('refuses a fractional fee with a message, not a database error', () => {
+    // The DB carries CHECK (late_fee = CAST(late_fee AS INTEGER)) on both
+    // periods and bills. When the paise tag was removed this validation went
+    // with it, so 50.50 passed here and died at the database as a 500.
+    expect(() => applyLateFee(329, 50.5)).toThrow(/DDP-BILL-008/);
+  });
+
+  it('still accepts an ordinary whole-rupee fee', () => {
+    expect(applyLateFee(329, 50)).toBe(379);
+    expect(applyLateFee(329, 0)).toBe(329);
+  });
+
+  it('refuses a negative fee', () => {
+    expect(() => applyLateFee(329, -10)).toThrow(/DDP-BILL-008/);
   });
 });

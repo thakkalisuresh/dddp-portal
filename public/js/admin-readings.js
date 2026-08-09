@@ -92,7 +92,7 @@ function header() {
         `Meters read in ${periodLabel(grid.readMonth)} · closes ${periodLabel(grid.period)}'s gas`),
       grid.rate == null
         ? el('p', { class: 'small', style: 'color:var(--overdue);font-family:var(--font-ui)' },
-            'No rate set for this month — required before generating.')
+            'Set this month\u2019s rate before generating.')
         : el('p', { class: 'small muted' },
             `Rate ₹${grid.rate.toFixed(2)} / kg · ${grid.conversionFactor} kg per unit`)),
     el('div', { class: 'progress' },
@@ -195,7 +195,7 @@ function row(f) {
       if (f.average != null && consumption > f.average * JUMP_MULTIPLE) {
         input.classList.add('input--warn');
         message.classList.add('msg--warn');
-        message.textContent = `Unusually high — usually about ${kg(f.average)}`;
+        message.textContent = `Unusually high. Usually about ${kg(f.average)}`;
       }
     }
     return value;
