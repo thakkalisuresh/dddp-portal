@@ -47,7 +47,11 @@ function render() {
   const submitSlot = el('div');
 
   const input = el('input', {
-    type: 'file', accept: 'image/*', capture: 'environment',
+    // No `capture` attribute. Setting it to 'environment' told phones to open
+    // the rear camera INSTEAD of the picker, so nobody could choose a
+    // screenshot they had already taken — which is the whole point here.
+    // Desktop ignores the attribute, which is why it only broke on phones.
+    type: 'file', accept: 'image/*',
     id: 'file', class: 'visually-hidden',
     onchange: async (e) => {
       const file = e.target.files?.[0];

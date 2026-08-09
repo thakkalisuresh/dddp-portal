@@ -381,3 +381,59 @@ a { color: var(--accent); }
   /* Declared width/height reserve the space; this stops them overriding it. */
   height: auto;
 }
+
+/* ── pay another way ──────────────────────────────────────────────────────
+   The route out when a deep link does nothing. Quiet by default, because most
+   people never need it, but never hidden behind an admission of failure.      */
+.manual { margin-top: var(--s-4); border: 1px solid var(--border); border-radius: var(--radius);
+          background: var(--surface); }
+.manual > summary { padding: var(--s-3) var(--s-4); cursor: pointer;
+                    font-family: var(--font-ui); font-weight: 600; }
+.manual > *:not(summary) { padding: 0 var(--s-4); }
+.manual > *:last-child { padding-bottom: var(--s-4); }
+.manual__row { display: flex; gap: var(--s-2); align-items: center; margin: var(--s-2) 0; }
+.manual .vpa { flex: 1; font-family: var(--font-ui); font-size: var(--text-base);
+               background: var(--accent-wash); border-radius: var(--radius);
+               padding: var(--s-2) var(--s-3); word-break: break-all; }
+.manual__grid { display: flex; gap: var(--s-5); flex-wrap: wrap; margin-bottom: var(--s-2); }
+.manual__grid .label { display: block; }
+.manual__grid .num { font-size: var(--text-lg); font-variant-numeric: tabular-nums; }
+.btn--sm { padding: var(--s-2) var(--s-3); font-size: var(--text-sm); }
+
+/* ── password reveal ─────────────────────────────────────────────────────── */
+.reveal-wrap { display: flex; gap: var(--s-2); align-items: stretch; }
+.reveal-wrap > .input { flex: 1; min-width: 0; }
+.reveal {
+  flex: 0 0 auto; padding: 0 var(--s-3); font: inherit; font-family: var(--font-ui);
+  font-size: var(--text-sm); color: var(--accent); background: transparent;
+  border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer;
+}
+.reveal:hover { background: var(--accent-wash); }
+.reveal:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ── chart readout ───────────────────────────────────────────────────────── */
+.chart-readout {
+  margin-top: var(--s-2); font-family: var(--font-ui); font-size: var(--text-sm);
+  color: var(--ink-muted); font-variant-numeric: tabular-nums; min-height: 1.4em;
+}
+.chart__bar { cursor: pointer; }
+.chart__bar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── checkbox line ───────────────────────────────────────────────────────── */
+.checkline { display: flex; gap: var(--s-3); align-items: flex-start; cursor: pointer;
+             font-family: var(--font-ui); font-size: var(--text-sm); }
+.checkline input { width: 20px; height: 20px; margin-top: 1px; flex: 0 0 auto; accent-color: var(--accent); }
+.checkline__hint { display: block; color: var(--ink-muted); font-size: var(--text-xs); }
+
+/* ── resident picker ─────────────────────────────────────────────────────── */
+.panel-sub > summary { cursor: pointer; font-family: var(--font-ui); font-size: var(--text-sm);
+                       color: var(--accent); padding: var(--s-2) 0; }
+.picker { max-height: 260px; overflow-y: auto; border: 1px solid var(--border);
+          border-radius: var(--radius); }
+.picker__row { display: flex; gap: var(--s-3); align-items: center; cursor: pointer;
+               padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--border);
+               font-size: var(--text-sm); }
+.picker__row:last-child { border-bottom: 0; }
+.picker__row:hover { background: var(--accent-wash); }
+.picker__row input { width: 18px; height: 18px; accent-color: var(--accent); flex: 0 0 auto; }
+.pay-app__logo { width: 22px; height: 22px; object-fit: contain; flex: 0 0 auto; }

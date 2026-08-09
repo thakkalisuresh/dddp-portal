@@ -13,8 +13,18 @@ import { reportError } from './errors.js';
 
 export const COOKIE = 'dddp_session';
 export const RESIDENT_TTL_DAYS = 90;      // logging in monthly shouldn't mean resetting monthly
+/** Unticked "remember me": the row still lives, but only until the browser closes. */
+export const SHARED_DEVICE_TTL_DAYS = 1;
 export const IMPERSONATE_TTL_MIN = 30;
 
+/**
+ * @param maxAgeSeconds  how long the cookie lives; null makes it a SESSION
+ *                       cookie, which the browser drops when it closes.
+ *
+ * The null case is what "remember me" being unticked has to mean. Without it
+ * the checkbox would be decoration: the session row already lasts 90 days
+ * either way, so only the cookie's lifetime can make the two states differ.
+ */
 export function cookieHeader(token, maxAgeSeconds) {
   const parts = [
     `${COOKIE}=${token}`,
@@ -22,7 +32,7 @@ export function cookieHeader(token, maxAgeSeconds) {
     'HttpOnly',
     'Secure',
     'SameSite=Lax',
-    `Max-Age=${maxAgeSeconds}`,
+    ...(maxAgeSeconds == null ? [] : [`Max-Age=${maxAgeSeconds}`]),
   ];
   return parts.join('; ');
 }

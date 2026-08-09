@@ -6,7 +6,7 @@ import {
 import {
   hasRole, isBlockedWhileImpersonating, cookieHeader, clearCookieHeader, readCookie, COOKIE,
 } from '../functions/lib/session.js';
-import { buildUpiLinks, payTargetFor, IOS_SCHEMES } from '../functions/lib/upi.js';
+import { buildUpiLinks, manualPayment, payTargetFor, IOS_SCHEMES } from '../functions/lib/upi.js';
 
 // Keep iterations low in tests — the production value is measured separately.
 const ITER = 1000;
@@ -130,10 +130,36 @@ describe('UPI links', () => {
     }
   });
 
-  it('encodes the payee and note safely', () => {
+  it('encodes spaces as %20, never as +', () => {
+    // URLSearchParams emits '+', which is right for HTML forms and wrong here:
+    // '+' only means space in form encoding, and UPI apps percent-decode the
+    // query strictly. The best case is a payee reading "DD+Diamond+Park+RWA";
+    // the worst is the app rejecting the intent, which from the outside looks
+    // exactly like the Pay button doing nothing at all.
     const { generic } = buildUpiLinks(args);
     expect(generic).toContain('pa=qr.ddwelfare%40sib');
-    expect(generic).toContain('tn=Gas+2026-07+4A');
+    expect(generic).toContain('%20');
+    expect(generic).not.toContain('+');
+  });
+
+  it('writes the note as (flat_DD_MM_YY)', () => {
+    const { generic } = buildUpiLinks({ ...args, now: new Date(Date.UTC(2026, 7, 9)) });
+    expect(decodeURIComponent(generic)).toContain('tn=(4A_09_08_26)');
+  });
+
+  it('offers an intent URI for Android', () => {
+    // Chrome hands bare custom schemes to the OS unevenly. When it declines,
+    // nothing happens at all — the reported failure. An intent URI is the
+    // documented shape and falls back to the Play Store rather than silence.
+    const { intent } = buildUpiLinks(args);
+    expect(intent.startsWith('intent://pay?')).toBe(true);
+    expect(intent).toContain('scheme=upi');
+    expect(intent.endsWith(';end')).toBe(true);
+  });
+
+  it('gives the details to type in by hand', () => {
+    const m = manualPayment({ ...args, now: new Date(Date.UTC(2026, 7, 9)) });
+    expect(m).toMatchObject({ vpa: 'qr.ddwelfare@sib', amount: 329.04, note: '(4A_09_08_26)' });
   });
 
   it('refuses a null or non-finite amount', () => {

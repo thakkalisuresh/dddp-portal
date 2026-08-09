@@ -62,7 +62,7 @@ function render(me) {
   main.replaceChildren(
     ...(landlordBanner ? [landlordBanner] : []),
     ...(me.bill ? [billSection(me), paySection(me), breakdownSection(me.bill)] : [noBill()]),
-    ...(me.readings.length ? [consumptionSection(me.readings)] : []),
+    ...(me.readings.length ? [consumptionSection(me.readings, me.bills)] : []),
     ...(me.bills.length ? [billHistorySection(me.bills)] : []),
     helpSection()
   );
@@ -121,6 +121,12 @@ function paySection(me) {
   // failed log must never stop someone paying their bill.
   const record = () => { api.payIntent(b.id).catch(() => {}); };
 
+  // Android gets the intent form. Chrome hands bare custom schemes to the OS
+  // unevenly, and when it declines, nothing at all happens — which is exactly
+  // what was reported. An intent URI is the documented shape and degrades to
+  // the Play Store rather than to silence.
+  const androidHref = links.intent ?? links.generic;
+
   if (target === 'ios') {
     // iOS has no UPI app chooser, so the apps must be listed explicitly.
     block.append(
@@ -128,13 +134,20 @@ function paySection(me) {
       el('div', { class: 'pay-apps' },
         ...UPI_APPS.map((app) =>
           el('a', { class: 'pay-app', href: links[app.key], onclick: record },
-            el('span', { class: 'pay-app__mark', style: `background:${app.colour}` }),
+            // The official mark when it is present, the coloured dot when it
+            // is not. onerror rather than a build-time check, so dropping an
+            // SVG into public/img/upi/ is the whole installation step and a
+            // missing file never leaves a broken image on a resident's phone.
+            appMark(app),
             app.label)))
     );
   } else {
     block.append(
-      el('a', { class: 'btn btn--block btn--lg', href: links.generic, onclick: record },
-        `Pay ${money(b.total)}`),
+      el('a', {
+        class: 'btn btn--block btn--lg',
+        href: target === 'android' ? androidHref : links.generic,
+        onclick: record,
+      }, `Pay ${money(b.total)}`),
       el('p', { class: 'helper' },
         target === 'android' ? 'Your phone will ask which UPI app to use' : 'Scan with any UPI app')
     );
@@ -148,6 +161,8 @@ function paySection(me) {
     block.append(el('div', { style: 'margin-top:var(--s-4);text-align:center' }, canvas));
     drawQr(canvas, links.qr, { target: 240 });
   }
+
+  if (me.pay.manual) block.append(manualBlock(me.pay.manual));
 
   block.append(
     el('p', { class: 'helper' },
@@ -179,9 +194,100 @@ function breakdownSection(bill) {
   );
 }
 
-function consumptionSection(readings) {
+/** The brand mark if we have it, the coloured dot if we do not. */
+function appMark(app) {
+  const dot = el('span', { class: 'pay-app__mark', style: `background:${app.colour}` });
+  const img = el('img', {
+    class: 'pay-app__logo', src: `/img/upi/${app.key}.svg`, alt: '', 'aria-hidden': 'true',
+    width: '22', height: '22', loading: 'lazy',
+  });
+  img.addEventListener('error', () => img.replaceWith(dot));
+  return img;
+}
+
+/**
+ * A single line under the chart that says what the bar you are touching cost.
+ *
+ * One shared readout rather than a floating tooltip per bar: a tooltip near
+ * the top of a phone screen ends up under the thumb that summoned it, and
+ * hover does not exist on touch at all. Pointer and keyboard both drive it,
+ * so it is reachable by tabbing as well.
+ */
+function chartReadout() {
+  const out = el('p', { class: 'chart-readout', 'aria-live': 'polite' },
+    'Touch a bar to see that month.');
+
+  const show = (bar) => {
+    if (!bar) return;
+    const amount = bar.dataset.amount;
+    out.textContent = `${periodLabel(bar.dataset.period)} · ${bar.dataset.kg}`
+                    + (amount ? ` · ${amount}` : '');
+  };
+
+  // Delegated, so it survives the chart being re-rendered.
+  setTimeout(() => {
+    const chart = document.querySelector('.chart');
+    if (!chart) return;
+    const pick = (e) => show(e.target.closest('.chart__bar'));
+    chart.addEventListener('pointerenter', pick, true);
+    chart.addEventListener('pointerdown', pick);
+    chart.addEventListener('focusin', pick);
+  }, 0);
+
+  return out;
+}
+
+/**
+ * The way out when no app opens.
+ *
+ * Always visible, never behind a "did it fail?" question. Someone whose app
+ * did not open is already unsure what happened, and someone who simply prefers
+ * their own app should not have to admit to a failure to find this.
+ */
+function manualBlock(m) {
+  const idField = el('code', { class: 'vpa' }, m.vpa);
+  const copy = el('button', { class: 'btn btn--ghost btn--sm', type: 'button' }, 'Copy');
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(m.vpa);
+      copy.textContent = 'Copied';
+      setTimeout(() => { copy.textContent = 'Copy'; }, 2000);
+    } catch {
+      // Clipboard is blocked in some in-app browsers. Selecting the text is
+      // then the fallback to the fallback, so make that possible.
+      const r = document.createRange();
+      r.selectNodeContents(idField);
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+      copy.textContent = 'Select and copy';
+    }
+  });
+
+  return el('details', { class: 'manual' },
+    el('summary', {}, 'Pay another way'),
+    el('p', { class: 'small muted' }, 'Open any UPI app and send to this ID.'),
+    el('div', { class: 'manual__row' }, idField, copy),
+    el('div', { class: 'manual__grid' },
+      el('div', {},
+        el('span', { class: 'label' }, 'Amount'),
+        el('strong', { class: 'num' }, money(m.amount))),
+      m.note
+        ? el('div', {},
+            el('span', { class: 'label' }, 'Add this note'),
+            el('code', {}, m.note))
+        : null),
+    m.note
+      ? el('p', { class: 'small', style: 'color:var(--awaiting)' },
+          'The note is how the treasurer matches your payment.')
+      : null);
+}
+
+function consumptionSection(readings, bills = []) {
   const withUse = readings.filter((r) => r.consumption != null).reverse();
   const peak = Math.max(...withUse.map((r) => r.consumption), 0.01);
+  // What each month cost, so the bar can say it. The chart plots kilograms,
+  // but the question people actually have is what they paid.
+  const paidFor = new Map(bills.map((b) => [b.period, b.total]));
 
   return el('section', { class: 'stack' },
     el('hr', { class: 'rule' }),
@@ -192,8 +298,16 @@ function consumptionSection(readings) {
           el('div', {
             class: `chart__bar ${i === withUse.length - 1 ? 'chart__bar--now' : ''}`,
             style: `height:${Math.max(4, (r.consumption / peak) * 100)}%`,
-            title: `${periodLabel(r.period)}: ${kg(r.consumption)}`,
+            // Native title is desktop-only and slow. The readout below works
+            // on touch too, where there is no hover at all.
+            title: `${periodLabel(r.period)}: ${kg(r.consumption)}`
+                 + (paidFor.has(r.period) ? ` · ${money(paidFor.get(r.period))}` : ''),
+            tabindex: '0',
+            'data-period': r.period,
+            'data-kg': kg(r.consumption),
+            'data-amount': paidFor.has(r.period) ? money(paidFor.get(r.period)) : '',
           }, el('span', {}, periodLabel(r.period).slice(0, 3).toUpperCase()))))),
+    chartReadout(),
     el('div', { class: 'scroll-x' },
       el('table', { class: 'table' },
         el('thead', {}, el('tr', {},

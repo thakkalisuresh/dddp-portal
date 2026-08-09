@@ -10,7 +10,7 @@
  */
 
 import { api, ApiError } from './api.js';
-import { $, el, showError } from './ui.js';
+import { $, el, showError, withReveal } from './ui.js';
 import { bilingual } from './i18n.js';
 
 const main = $('#main');
@@ -62,10 +62,10 @@ function render(me) {
         `This is your login and links you to flat ${me.flat}. If it is wrong, contact the treasurer.`)),
 
     el('div', { class: 'field' },
-      el('label', { for: 'pw', html: bilingual('newPassword') }), pw,
+      el('label', { for: 'pw', html: bilingual('newPassword') }), withReveal(pw),
       el('span', { class: 'field__hint' }, 'At least 8 characters.')),
 
-    el('div', { class: 'field' }, el('label', { for: 'pw2' }, 'Confirm password'), pw2),
+    el('div', { class: 'field' }, el('label', { for: 'pw2' }, 'Confirm password'), withReveal(pw2)),
 
     submit);
 

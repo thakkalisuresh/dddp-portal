@@ -440,41 +440,28 @@ async function lateFeesPanel() {
     const save = el('button', { class: 'btn', type: 'button', disabled: true }, 'Exempt');
     let checked = null;
 
-    // Checked before it is applied. "all" is one keystroke away from a flat
-    // number, and exempting 99 people by accident is reversible but awkward.
-    const check = el('button', { class: 'btn btn--ghost', type: 'button' }, 'Check');
-    check.addEventListener('click', async () => {
-      status.replaceChildren();
-      save.disabled = true;
-      try {
-        const r = await api.admin.bulkExemption(flats.value, '', '', true);
-        checked = r.ok ? flats.value : null;
-        save.disabled = !r.ok;
-        status.replaceChildren(el('div', { class: r.ok ? 'note' : 'note note--bad' },
-          r.unknown.length
-            ? `${r.unknown[0].flat}: ${r.unknown[0].reason}`
-            : r.targets.length
-              ? `${r.targets.length} ${r.targets.length === 1 ? 'resident' : 'residents'}: `
-                + r.targets.map((t) => `${t.flat} ${t.name}`).join(', ')
-                + (r.already.length ? ` — ${r.already.length} already exempt, this replaces it.` : '')
-                + (r.empty.length ? ` — ${r.empty.join(', ')} vacant, skipped.` : '')
-              : 'No flats matched.'));
-      } catch (err) { showError(status, err); }
-    });
+    // Tick people instead of typing flat numbers. Picking six out of ninety-nine
+    // by hand is where a typo becomes somebody billed who should not have been,
+    // and the field and the list stay in step so either way of working is fine.
+    const { residents } = await api.admin.residents();
+    const picker = el('div', { class: 'picker' },
+      ...residents.map((r) => {
+        const box = el('input', { type: 'checkbox', value: r.flat });
+        box.addEventListener('change', () => {
+          const on = [...picker.querySelectorAll('input:checked')].map((b) => b.value);
+          flats.value = on.join(' ');
+          flats.dispatchEvent(new Event('input'));
+        });
+        return el('label', { class: 'picker__row' }, box,
+          el('span', {}, el('strong', {}, r.flat), ` ${r.name}`));
+      }));
 
-    save.addEventListener('click', async () => {
-      status.replaceChildren();
-      try {
-        const r = await api.admin.bulkExemption(checked, until.value, why.value);
-        flats.value = ''; until.value = ''; why.value = '';
-        checked = null; save.disabled = true;
-        await draw();
-      } catch (err) { showError(status, err); }
-    });
-
-    // Re-checking is required after an edit, so the button can never apply a
-    // list the treasurer has not seen resolved.
-    flats.addEventListener('input', () => { save.disabled = true; checked = null; });
+    // Typing into the field is the other direction: keep the ticks honest so
+    // the two never disagree about who is about to be exempted.
+    const syncPicker = () => {
+      const wanted = new Set(flats.value.toUpperCase().split(/[\s,;]+/).filter(Boolean));
+      for (const box of picker.querySelectorAll('input')) box.checked = wanted.has(box.value);
+    };
 
     rows.push(el('div', { class: 'panel stack' },
       el('h2', {}, 'Exempt residents'),
@@ -484,7 +471,10 @@ async function lateFeesPanel() {
       status,
       el('div', { class: 'field' }, el('label', {}, 'Flats'), flats,
         el('span', { class: 'field__hint' },
-          'Separate with spaces or commas. Type "all" for the whole building.')),
+          'Tick below, or type them. "all" covers the whole building.')),
+      el('details', { class: 'panel-sub' },
+        el('summary', {}, `Choose from ${residents.length} residents`),
+        picker),
       el('div', { class: 'field' }, el('label', {}, 'Until'), until,
         el('span', { class: 'field__hint' }, 'Inclusive. They are charged again the day after.')),
       el('div', { class: 'field' }, el('label', {}, 'Reason'), why,

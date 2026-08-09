@@ -43,7 +43,7 @@ import { runBackup, backupHealth, pruneOldRows, dumpTable, dumpAll, bundle, toCs
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole,
-  RESIDENT_TTL_DAYS, IMPERSONATE_TTL_MIN,
+  RESIDENT_TTL_DAYS, SHARED_DEVICE_TTL_DAYS, IMPERSONATE_TTL_MIN,
 } from './lib/session.js';
 
 const ITER = (env) => Number(env.PBKDF2_ITERATIONS ?? 100_000);
@@ -299,13 +299,19 @@ async function login(request, env, ctx) {
   }
 
   await clearRateLimit(env, mobile);
-  const ttl = RESIDENT_TTL_DAYS * 86_400;
+
+  // Remember me, and what it actually changes. The session ROW is short-lived
+  // either way when unticked; the cookie is what decides whether closing the
+  // browser signs you out. Defaults to remembering, because most people are on
+  // their own phone and being logged out monthly is the complaint we would get.
+  const remember = body?.remember !== false;
+  const ttl = (remember ? RESIDENT_TTL_DAYS : SHARED_DEVICE_TTL_DAYS) * 86_400;
   const { token, maxAge } = await createSession(env, { actorId: owner.id, ttlSeconds: ttl });
   await audit(env, { actor: { id: owner.id }, subject: { id: owner.id } }, 'login');
 
   return json(
     { flat: owner.flat, name: owner.name, role: owner.role, mustChangePassword: !!owner.must_change_pw },
-    { headers: { 'set-cookie': cookieHeader(token, maxAge) } }
+    { headers: { 'set-cookie': cookieHeader(token, remember ? maxAge : null) } }
   );
 }
 

@@ -118,3 +118,45 @@ export function showError(container, error) {
     error?.message ?? 'Something went wrong. Please try again.');
   container.replaceChildren(node);
 }
+
+/**
+ * A show/hide control for a password field.
+ *
+ * Six password inputs across login, forgot, onboarding and profile, so this is
+ * one component rather than six copies. It toggles `type`, which keeps the
+ * field a real password input for autofill and managers until the moment
+ * somebody asks to see it.
+ *
+ * `aria-pressed` rather than a label change alone: a screen reader user needs
+ * to know the state, not just that a button exists. And the button never sits
+ * inside the input, because on a narrow phone that overlaps the text being
+ * revealed — the whole point of pressing it.
+ */
+export function withReveal(input) {
+  const btn = el('button', {
+    type: 'button', class: 'reveal', 'aria-pressed': 'false',
+    'aria-label': 'Show password',
+  }, 'Show');
+
+  btn.addEventListener('click', () => {
+    const shown = input.type === 'text';
+    input.type = shown ? 'password' : 'text';
+    btn.textContent = shown ? 'Show' : 'Hide';
+    btn.setAttribute('aria-pressed', String(!shown));
+    btn.setAttribute('aria-label', shown ? 'Show password' : 'Hide password');
+    // Focus returns to the field so typing continues uninterrupted.
+    input.focus();
+  });
+
+  // Works whether the input is already on the page or freshly built. The first
+  // version returned the wrapper and left callers to do
+  // `input.replaceWith(withReveal(input))`, which throws: the wrapper contains
+  // the very node being replaced. Doing the swap in here means neither caller
+  // has to know the difference.
+  const parent = input.parentNode;
+  const next = input.nextSibling;
+  const wrap = el('div', { class: 'reveal-wrap' });
+  wrap.append(input, btn);
+  if (parent) parent.insertBefore(wrap, next);
+  return wrap;
+}

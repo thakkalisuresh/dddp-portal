@@ -6,7 +6,7 @@
  * under /api/admin/ instead.
  */
 
-import { buildUpiLinks, payTargetFor } from './upi.js';
+import { buildUpiLinks, payTargetFor, manualPayment } from './upi.js';
 import { computeConsumption, DEFAULT_CONVERSION } from './billing.js';
 import { billAccess, occupantOf, describeRelationship } from './tenancy.js';
 
@@ -119,6 +119,12 @@ export async function dashboardPayload(env, subject, userAgent = '') {
         amount: bill.total,
         flat,
         period: bill.period,
+      }),
+      // Always sent, on every platform. A deep link that does nothing is the
+      // commonest failure here — no UPI app on iOS, or Chrome declining the
+      // scheme on Android — and without this the resident has nowhere to go.
+      manual: manualPayment({
+        vpa: env.UPI_VPA, payee: env.UPI_PAYEE, amount: bill.total, flat,
       }),
     };
   }

@@ -12,7 +12,7 @@
  */
 
 import { api, ApiError } from './api.js';
-import { $, el, showError } from './ui.js';
+import { $, el, showError, withReveal } from './ui.js';
 import { TREASURER } from './contact.js';
 
 const ask = $('#ask');
@@ -117,3 +117,10 @@ $('#again').addEventListener('click', async () => {
 // Filled in rather than written into the HTML, so the number lives in one place.
 const slot = $('#treasurer');
 if (slot) slot.textContent = `${TREASURER.name} on ${TREASURER.phone}`;
+
+// Wrap the password field so it can be revealed. Done here rather than in the
+// HTML because the CSP forbids inline script, and the control needs a listener.
+for (const id of ['password']) {
+  const field = $('#' + id);
+  if (field && !field.closest('.reveal-wrap')) withReveal(field);
+}

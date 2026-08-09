@@ -4,7 +4,7 @@
  * four small blocks in place would defeat having a policy at all.
  */
 import { api } from './api.js';
-import { $, showError } from './ui.js';
+import { $, el, showError, withReveal } from './ui.js';
 import { TREASURER } from './contact.js';
 
 const form = $('#form');
@@ -25,7 +25,7 @@ form.addEventListener('submit', async (event) => {
     submit.disabled = true;
     submit.textContent = 'Logging in…';
     try {
-      const result = await api.login(mobile, password);
+      const result = await api.login(mobile, password, $('#remember')?.checked !== false);
       // A temporary password must be replaced before anything else is reachable.
       location.href = result.mustChangePassword ? '/password' : '/dashboard';
     } catch (err) {
@@ -50,4 +50,11 @@ if (contact) {
       className: 'num', textContent: TREASURER.phone,
     })
   );
+}
+
+// Wrap the password field so it can be revealed. Done here rather than in the
+// HTML because the CSP forbids inline script, and the control needs a listener.
+for (const id of ['password']) {
+  const field = $('#' + id);
+  if (field && !field.closest('.reveal-wrap')) withReveal(field);
 }

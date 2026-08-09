@@ -40,7 +40,8 @@ async function request(method, path, body) {
 
 export const api = {
   health:  ()               => request('GET',  '/api/health'),
-  login:   (mobile, password) => request('POST', '/api/login', { mobile, password }),
+  login:   (mobile, password, remember = true) =>
+             request('POST', '/api/login', { mobile, password, remember }),
   logout:  ()               => request('POST', '/api/logout'),
   me:      ()               => request('GET',  '/api/me'),
   changePassword: (currentPassword, newPassword) =>
