@@ -112,9 +112,17 @@ export function assertRateSetForPeriod(period) {
 }
 
 /**
- * Catch a fat-fingered rate before 52 bills are generated from it. This warns
- * rather than blocks — gas prices genuinely do jump, and a treasurer who means
- * it must be able to proceed.
+ * Catch a fat-fingered rate before 52 bills are generated from it.
+ *
+ * This is a note at the point of entry, NOT an error. A rate that moved is
+ * ordinary monthly business: the real history here is 72 -> 75 -> 75 -> 75, a
+ * single 4% change across four months. Filing that as a failure put a normal
+ * event in the same list as genuine faults, so DDP-BILL-011 is retired and
+ * nothing is logged or alerted.
+ *
+ * What survives is the one thing worth keeping: a line on screen at the moment
+ * the number is typed, when it costs nothing to double-check the supplier bill
+ * and everything to discover it after 52 bills have gone out.
  */
 export const RATE_JUMP_THRESHOLD = 0.25;
 
@@ -129,9 +137,10 @@ export function rateSanity(newRate, previousRate) {
   if (Math.abs(change) < RATE_JUMP_THRESHOLD) return { ok: true, level: 'none' };
   return {
     ok: true,
-    level: 'warn',
+    level: 'notice',
     change,
-    message: `That is ${Math.abs(change * 100).toFixed(0)}% ${change > 0 ? 'higher' : 'lower'} than last month (₹${previousRate}). Check the supplier bill before generating.`,
+    message: `${Math.abs(change * 100).toFixed(0)}% ${change > 0 ? 'higher' : 'lower'} than last month `
+           + `(₹${previousRate}). Worth a glance at the supplier bill — then carry on.`,
   };
 }
 

@@ -39,7 +39,7 @@ describe('what this month will bill, before anything is written', () => {
     const right = previewGeneration({ rows, ratePerKg: 75, previousRate: 75 });
     const typo  = previewGeneration({ rows, ratePerKg: 750, previousRate: 75 });
     expect(typo.totalAmount / right.totalAmount).toBeCloseTo(10, 0);
-    expect(typo.rateSanity.level).toBe('warn');
+    expect(typo.rateSanity.level).toBe('notice');
   });
 
   it('surfaces the largest and smallest bill, where a transposed digit shows', () => {
@@ -72,7 +72,7 @@ describe('generation is refused while anything is unresolved', () => {
   it('still allows a genuine large rate move once seen', () => {
     // A 25%+ jump warns but must not stop a treasurer who means it.
     const p = previewGeneration({ rows, ratePerKg: 100, previousRate: 75, expectedFlats: 3 });
-    expect(p.rateSanity.level).toBe('warn');
+    expect(p.rateSanity.level).toBe('notice');
     expect(p.canGenerate).toBe(true);
   });
 });

@@ -1302,9 +1302,11 @@ async function postPeriod(request, env, session) {
     dueDate: body?.dueDate,
     lateFee: Number(body?.lateFee ?? 0),
   });
-  if (result.sanity.level === 'warn') {
-    await reportError(env, 'DDP-BILL-011', { period: result.period, ...result.sanity });
-  }
+  // A rate that moved is not a fault. It used to raise DDP-BILL-011 into the
+  // error log, which put an ordinary monthly business event in the same list
+  // as genuine failures — and would have pushed a Telegram alert once the
+  // digest exists. The rate still lands in the audit log via period.open,
+  // which is where "what did the treasurer set, and when" belongs.
   await audit(env, session, 'period.open', result);
   return json(result, { status: 201 });
 }

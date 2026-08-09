@@ -34,7 +34,7 @@ Ask the bot a code and it will explain it.
 | `DDP-BILL-008` | error | live | Late fee is negative or not a number |
 | `DDP-BILL-009` | error | live | Late fee cron re-applied to an already-charged bill |
 | `DDP-BILL-010` | **fatal** | live | Rate was inherited from a previous period instead of set for this one |
-| `DDP-BILL-011` | warn | live | Rate differs sharply from the previous period |
+| `DDP-BILL-011` | warn | retired | Rate differs sharply from the previous period (retired — a rate change is not an error) |
 
 ## PAY
 
@@ -101,7 +101,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-56 codes across 7 domains — 10 fatal, 4 awaiting their call site, 1 retired.
+56 codes across 7 domains — 10 fatal, 4 awaiting their call site, 2 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

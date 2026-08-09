@@ -42,13 +42,13 @@ describe('rate sanity check', () => {
   it('warns on a fat-fingered rate rather than blocking it', () => {
     // 750 instead of 75 is the typo that would bill the building 10x.
     const r = rateSanity(750, 75);
-    expect(r.level).toBe('warn');
+    expect(r.level).toBe('notice');
     expect(r.ok).toBe(true); // a treasurer who means it can proceed
     expect(r.message).toMatch(/higher than last month/);
   });
 
   it('warns on a suspiciously large drop too', () => {
-    expect(rateSanity(7.5, 75).level).toBe('warn');
+    expect(rateSanity(7.5, 75).level).toBe('notice');
   });
 
   it('rejects a zero or negative rate outright', () => {

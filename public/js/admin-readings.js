@@ -273,8 +273,8 @@ function previewSummary(p) {
       el('strong', { style: 'font-size:var(--text-md)' }, `Total ${money(p.totalAmount)}`),
       el('div', { class: 'small' },
         'Check this against the supplier invoice before generating.')),
-    p.rateSanity.level === 'warn'
-      ? el('div', { class: 'note note--warn' }, p.rateSanity.message)
+    p.rateSanity.level === 'notice'
+      ? el('div', { class: 'note' }, p.rateSanity.message)
       : null,
     el('button', {
       class: 'btn btn--block', type: 'button',

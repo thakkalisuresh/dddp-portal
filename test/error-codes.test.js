@@ -50,11 +50,19 @@ describe('generated docs cannot drift', () => {
 describe('no code is silently inert', () => {
   // The failure mode being guarded: a code marked fatal whose throw sites all
   // bypass reportError, leaving it invisible to alerts AND the digest.
+  // Comments are stripped first. A plain text scan counted a comment EXPLAINING
+  // why a code was retired as proof the code still fires, which pushed toward
+  // deleting the explanation to satisfy the guard — the wrong repair. What
+  // makes a code live is a call site, so only code is searched.
+  const stripComments = (text) =>
+    text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
   const referenced = new Set();
   for (const { p, text } of sources) {
     if (p.endsWith('error-codes.js')) continue; // the registry lists every code by definition
+    const code_ = stripComments(text);
     for (const code of Object.keys(ERROR_CODES)) {
-      if (text.includes(code)) referenced.add(code);
+      if (code_.includes(code)) referenced.add(code);
     }
   }
 

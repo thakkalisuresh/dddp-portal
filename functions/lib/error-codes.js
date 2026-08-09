@@ -39,7 +39,11 @@ export const ERROR_CODES = {
   'DDP-BILL-008': { severity: 'error', message: 'Late fee is negative or not a number' },
   'DDP-BILL-009': { severity: 'error', message: 'Late fee cron re-applied to an already-charged bill' },
   'DDP-BILL-010': { severity: 'fatal', message: 'Rate was inherited from a previous period instead of set for this one' },
-  'DDP-BILL-011': { severity: 'warn',  message: 'Rate differs sharply from the previous period' },
+  // Retired: a rate change is normal business, not an error. The unusual-jump
+  // hint still appears in the generation preview, where the treasurer can act
+  // on it — it just no longer files itself as a failure.
+  'DDP-BILL-011': { severity: 'warn', retired: true,
+                    message: 'Rate differs sharply from the previous period (retired — a rate change is not an error)' },
 
   // ── PAY ────────────────────────────────────────────────────────────────
   'DDP-PAY-001': { severity: 'error', message: 'UPI URI requested for a bill that does not exist' },
