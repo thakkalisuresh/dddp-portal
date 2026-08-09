@@ -23,6 +23,7 @@ const TABS = [
   { id: 'readings',  label: 'Readings',  href: '/admin/readings.html' },
   { id: 'proofs',    label: 'Proofs',    href: '/admin/proofs.html' },
   { id: 'periods',   label: 'Rates',     render: periodsPanel },
+  { id: 'latefees',  label: 'Late fees', render: lateFeesPanel },
   { id: 'residents', label: 'Residents', render: residentsPanel },
   { id: 'notices',   label: 'Notices',   render: noticesPanel },
   { id: 'messages',  label: 'Messages',  render: messagesPanel },
@@ -367,4 +368,104 @@ async function errorsPanel() {
               el('div', { class: 'muted' }, `${e.count}× · last ${e.last_seen}`))))
       : [el('div', { class: 'note note--good' }, 'Nothing logged in the last week.')])
   );
+}
+
+
+/**
+ * Late fees: who is being charged, and who has been let off.
+ *
+ * One panel because they are the same question asked twice. Splitting them is
+ * how a standing exemption stops being noticed — the whole risk this feature
+ * carries is an exemption granted during one dispute and still running two
+ * years later, invisible to whoever inherited the treasurer's job.
+ */
+async function lateFeesPanel() {
+  const wrap = el('div', { class: 'stack' }, el('p', { class: 'muted' }, 'Loading…'));
+
+  const draw = async () => {
+    const d = await api.admin.lateFees();
+    const rows = [];
+
+    rows.push(el('div', { class: 'panel stack' },
+      el('h2', {}, 'Fees charged'),
+      el('p', { class: 'muted small' },
+        'A fee is added once per bill, never repeated. Waiving removes it from the '
+        + 'total and is recorded against your name.'),
+      ...(d.charged.length
+        ? d.charged.map((b) => {
+            const waive = el('button', { class: 'btn btn--ghost', type: 'button' }, 'Waive');
+            waive.addEventListener('click', async () => {
+              waive.disabled = true;
+              try { await api.admin.waiveLateFee(b.id); await draw(); }
+              catch (err) { showError(wrap, err); waive.disabled = false; }
+            });
+            return el('div', { class: 'row row--between' },
+              el('div', {},
+                el('strong', {}, `${b.flat} · ${money(b.late_fee)}`),
+                el('div', { class: 'muted small' },
+                  `${b.period} · ${b.owner_name ?? 'unassigned'} · total ${money(b.total)}`)),
+              b.status === 'paid' || b.status === 'waived'
+                ? el('span', { class: 'muted small' }, b.status)
+                : waive);
+          })
+        : [el('p', { class: 'muted small' }, 'No late fees have been charged.')])));
+
+    rows.push(el('div', { class: 'panel stack' },
+      el('h2', {}, 'Exemptions'),
+      el('p', { class: 'muted small' },
+        'Every exemption ends on a date. Renewing is a decision; forgetting is not.'),
+      ...(d.exempt.length
+        ? d.exempt.map((e) => {
+            const clear = el('button', { class: 'btn btn--ghost', type: 'button' }, 'End now');
+            clear.addEventListener('click', async () => {
+              clear.disabled = true;
+              try { await api.admin.setExemption(e.id, '', ''); await draw(); }
+              catch (err) { showError(wrap, err); clear.disabled = false; }
+            });
+            return el('div', { class: 'row row--between' },
+              el('div', {},
+                el('strong', {}, `${e.flat} · ${e.name}`),
+                el('div', { class: 'muted small' },
+                  `${e.active ? 'Until' : 'Expired'} ${e.late_fee_exempt_until} — ${e.late_fee_exempt_reason ?? ''}`)),
+              e.active ? clear : el('span', { class: 'muted small' }, 'expired'));
+          })
+        : [el('p', { class: 'muted small' }, 'Nobody is exempt.')])));
+
+    // Granting one. Deliberately below the list, so the existing exemptions are
+    // read before another is added.
+    const who = el('select', { class: 'input' },
+      el('option', { value: '' }, 'Choose a resident…'));
+    const { residents } = await api.admin.residents();
+    for (const r of residents) {
+      who.append(el('option', { value: String(r.id) }, `${r.flat} · ${r.name}`));
+    }
+    const until = el('input', { class: 'input', type: 'date' });
+    const why = el('input', { class: 'input', placeholder: 'Meter dispute, agreed at AGM' });
+    const status = el('div');
+    const save = el('button', { class: 'btn', type: 'button' }, 'Exempt');
+    save.addEventListener('click', async () => {
+      status.replaceChildren();
+      try {
+        await api.admin.setExemption(Number(who.value), until.value, why.value);
+        until.value = ''; why.value = ''; who.value = '';
+        await draw();
+      } catch (err) { showError(status, err); }
+    });
+
+    rows.push(el('div', { class: 'panel stack' },
+      el('h2', {}, 'Exempt a resident'),
+      status,
+      el('div', { class: 'field' }, el('label', {}, 'Resident'), who),
+      el('div', { class: 'field' }, el('label', {}, 'Until'), until,
+        el('span', { class: 'field__hint' }, 'Inclusive. They are charged again the day after.')),
+      el('div', { class: 'field' }, el('label', {}, 'Reason'), why,
+        el('span', { class: 'field__hint' },
+          'Required. The committee changes; a date with nothing against it is the same problem later.')),
+      save));
+
+    wrap.replaceChildren(...rows);
+  };
+
+  draw().catch((err) => showError(wrap, err));
+  return wrap;
 }

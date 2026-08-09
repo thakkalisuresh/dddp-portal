@@ -234,16 +234,32 @@ export function previewGeneration({ rows, ratePerKg, conversionFactor = DEFAULT_
 }
 
 /**
+ * Is this resident exempt on this date?
+ *
+ * Inclusive of the end date: "exempt until 30 November" means the 30th is
+ * still covered, which is how anyone reads it.
+ */
+export function isExempt(exemptUntil, today) {
+  if (!exemptUntil) return false;
+  return String(today) <= String(exemptUntil);
+}
+
+/**
  * Which bills the nightly cron should charge.
  *
  * `initiated` is deliberately HELD, not charged: someone who tapped Pay on the
  * 9th must not be penalised because approval landed on the 15th. The treasurer
  * checks the bank statement and decides.
  */
-export function lateFeeDecision(bill, { today, dueDate, graceDays = 0 }) {
+export function lateFeeDecision(bill, { today, dueDate, graceDays = 0, exemptUntil = null }) {
   if (bill.late_fee_at) return { action: 'skip', reason: 'already-applied' }; // idempotency guard
   if (bill.status === 'paid' || bill.status === 'waived') return { action: 'skip', reason: 'settled' };
   if (bill.status === 'awaiting') return { action: 'skip', reason: 'proof-under-review' };
+
+  // An exemption the committee granted, and dated so it cannot become
+  // permanent by neglect. Checked before the due date so the reason recorded
+  // is the real one — "exempt" rather than "not yet due".
+  if (isExempt(exemptUntil, today)) return { action: 'skip', reason: 'exempt' };
 
   const cutoff = new Date(dueDate);
   cutoff.setUTCDate(cutoff.getUTCDate() + graceDays);

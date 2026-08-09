@@ -12,7 +12,7 @@ import {
   readingGrid, saveReadings, generateBills, openPeriod, parseReadings,
   previousPeriod, jumpWarning,
 } from './lib/admin.js';
-import { previewGeneration, computeBill } from './lib/billing.js';
+import { previewGeneration, computeBill, isExempt } from './lib/billing.js';
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { readReceipt } from './lib/vision.js';
 import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
@@ -151,6 +151,10 @@ export default {
         }
         if (request.method === 'POST' && /^\/api\/admin\/bills\/\d+\/mark-paid$/.test(path)) {
           return markPaid(request, env, session, path);
+        }
+        if (route === 'GET /api/admin/late-fees') return lateFeePanel(env);
+        if (request.method === 'POST' && /^\/api\/admin\/residents\/\d+\/late-fee-exemption$/.test(path)) {
+          return setLateFeeExemption(request, env, session, path);
         }
         if (request.method === 'POST' && /^\/api\/admin\/bills\/\d+\/waive-late-fee$/.test(path)) {
           return waiveLateFee(env, session, path);
@@ -1594,7 +1598,8 @@ async function editBill(request, env, session, path) {
  */
 async function godDiagnostics(env, url) {
   const [owners, flats, bills, periods, readings, proofs, errors, digest] = await Promise.all([
-    env.DB.prepare('SELECT id, flat, name, mobile, email, role, active, relationship FROM owners').all(),
+    env.DB.prepare(`SELECT id, flat, name, mobile, email, role, active, relationship,
+                           late_fee_exempt_until, late_fee_exempt_reason FROM owners`).all(),
     env.DB.prepare('SELECT flat, floor, active FROM flats').all(),
     env.DB.prepare(`SELECT id, flat, period, owner_id, gas_amount, other_charges,
                            additional_charges, late_fee, total, status, manual_total,
@@ -1890,4 +1895,78 @@ async function rosterMarkSent(request, env, session, path) {
     .bind(new Date().toISOString(), id).run();
   await audit(env, session, 'roster.invited', { ownerId: id });
   return json({ ok: true });
+}
+
+/* ── late fees: exemptions, and the bills that carry one ─────────────────── */
+
+/**
+ * Every bill with a late fee on it, plus every active exemption.
+ *
+ * One screen because they are the same question asked twice: who is being
+ * charged, and who has been let off. Splitting them across two pages is how a
+ * standing exemption stops being noticed.
+ */
+async function lateFeePanel(env) {
+  const [charged, exempt] = await Promise.all([
+    env.DB.prepare(
+      `SELECT b.id, b.flat, b.period, b.total, b.late_fee, b.status, b.late_fee_at,
+              o.name AS owner_name
+         FROM bills b LEFT JOIN owners o ON o.id = b.owner_id
+        WHERE b.late_fee > 0 ORDER BY b.period DESC, b.flat`
+    ).all(),
+    env.DB.prepare(
+      `SELECT id, flat, name, relationship, late_fee_exempt_until, late_fee_exempt_reason
+         FROM owners
+        WHERE active = 1 AND late_fee_exempt_until IS NOT NULL
+        ORDER BY late_fee_exempt_until`
+    ).all(),
+  ]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  return json({
+    charged: charged.results ?? [],
+    exempt: (exempt.results ?? []).map((e) => ({
+      ...e,
+      // An expired exemption is shown rather than hidden: it explains why
+      // somebody was not charged last month and is charged this month.
+      active: isExempt(e.late_fee_exempt_until, today),
+    })),
+    today,
+  });
+}
+
+/** Grant, change or clear an exemption. */
+async function setLateFeeExemption(request, env, session, path) {
+  const id = Number(path.split('/')[4]);
+  const body = await readJson(request);
+
+  const target = await env.DB.prepare('SELECT id, flat, name FROM owners WHERE id = ?')
+    .bind(id).first();
+  if (!target) return problem(404, 'DDP-ADMIN-001', 'No such resident.');
+
+  const until = String(body?.until ?? '').trim() || null;
+  const reason = String(body?.reason ?? '').trim() || null;
+
+  if (until) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+      return problem(400, 'DDP-ADMIN-003', 'Give the end date as YYYY-MM-DD.');
+    }
+    // A reason is required precisely because the committee changes. A date
+    // with nothing against it is the same forgotten policy one step later.
+    if (!reason || reason.length < 3) {
+      return problem(400, 'DDP-ADMIN-003', 'Say why. Whoever inherits this will need to know.');
+    }
+    if (until < new Date().toISOString().slice(0, 10)) {
+      return problem(400, 'DDP-ADMIN-003', 'That date has already passed.');
+    }
+  }
+
+  await env.DB.prepare(
+    'UPDATE owners SET late_fee_exempt_until = ?, late_fee_exempt_reason = ? WHERE id = ?'
+  ).bind(until, until ? reason : null, id).run();
+
+  await audit(env, session, until ? 'late-fee.exempt' : 'late-fee.exempt.clear',
+              { ownerId: id, flat: target.flat, name: target.name, until, reason });
+
+  return json({ ok: true, until, reason });
 }

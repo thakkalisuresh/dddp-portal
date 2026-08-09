@@ -76,29 +76,6 @@ login only while `must_change_pw = 1` so it never touches a password the
 resident chose. An expired one should say so and point at `/forgot` rather than
 failing as "wrong password". Perhaps thirty lines and a test.
 
-## B13 — Two holes in the late-fee path
-
-Found 2026-08-09 while explaining how it works. Neither has ever fired, because
-production has no periods and no bills.
-
-**A rejected proof returns the bill to `initiated`, not `unpaid`.** That is the
-straight bug. `initiated` is the state the cron HOLDS rather than charges, so
-a resident who uploads any screenshot and has it rejected becomes permanently
-immune to late fees. Rejecting a proof means "this is not payment", so the bill
-should go back to `unpaid` and be chargeable again. One line, one test.
-
-**The hold on `initiated` has no time limit.** The intent is right — nobody
-should be penalised because the treasurer's approval landed a week after they
-tapped Pay — but unbounded, it means tapping Pay once defers the fee forever.
-`staleIntents` already surfaces these after 48 hours, so the treasurer can SEE
-them, but nothing acts and no ordinary admin action resets the status; only god
-mode can.
-
-Shape: hold only for N days after the most recent payment intent, then charge
-as normal. The 48 hours `staleIntents` already uses is a reasonable default and
-would keep the two consistent. Worth a line in the resident's bill copy so the
-grace is stated rather than discovered.
-
 ## B11 — Homepage parity with the old site
 
 The photographs were rescued, but three things on `gas.dddp.online` were never
@@ -216,6 +193,34 @@ Traps worth keeping, all of which cost time: secrets do not cross between the
 two deployments; Pages secrets bind only to a NEW deployment; "Save version"
 stages while "Deploy" publishes; and a stopped digest is indistinguishable from
 a quiet night without the watermark check.
+
+## B14 — Late fee exemptions — DONE 2026-08-09
+
+Per-resident exemption with an end date and a reason, plus the waive button
+that had been missing since phase 6b.
+
+Not a plain on/off, deliberately. A boolean gets set during a dispute, the
+dispute resolves, and nobody unsets it — two years later it is invisible policy
+and "why has 4B never paid a late fee" has no answer anybody can find. A date
+makes renewing a decision and forgetting a no-op, which is the right way round.
+The reason is required because the committee turns over at every AGM.
+
+`waiveLateFee` had existed as an audited endpoint since phase 6b with nothing
+in the interface calling it, so waiving needed god mode. Both now live on one
+Late fees panel, because "who is being charged" and "who has been let off" are
+the same question asked twice and splitting them is how a standing exemption
+stops being noticed.
+
+LATE-FEE-EXEMPT in `npm run doctor` is the third guard: the date stops an
+exemption lasting forever, and the check stops it going unnoticed while it runs.
+
+## B13 — Two holes in the late-fee path — STILL OPEN
+
+Deliberately NOT fixed alongside B14, since they are different problems. A
+rejected proof still returns a bill to `initiated`, which the cron holds rather
+than charges, so a resident who has any screenshot rejected becomes immune. And
+the hold on `initiated` still has no time limit. Neither has ever fired:
+production has no periods and no bills.
 
 ## B8 — Tenancy — DONE 2026-08-09
 

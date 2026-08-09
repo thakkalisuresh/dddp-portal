@@ -29,7 +29,11 @@ export function planLateFees(bills, { today, dueDate, graceDays = 0, lateFee }) 
   const skip = [];
 
   for (const bill of bills) {
-    const decision = lateFeeDecision(bill, { today, dueDate, graceDays });
+    // Exemptions ride on the bill row, joined from its owner, so this stays
+    // pure and the caller decides where the date came from.
+    const decision = lateFeeDecision(bill, {
+      today, dueDate, graceDays, exemptUntil: bill.late_fee_exempt_until ?? null,
+    });
     if (decision.action === 'charge') {
       charge.push({ ...bill, newTotal: applyLateFee(bill.total, lateFee), lateFee });
     } else if (decision.action === 'hold') {
@@ -39,7 +43,13 @@ export function planLateFees(bills, { today, dueDate, graceDays = 0, lateFee }) 
     }
   }
 
-  return { charge, hold, skip, lateFee, dueDate };
+  return {
+    charge, hold, skip, lateFee, dueDate,
+    // Surfaced separately from the rest of the skips: an exemption is a
+    // decision somebody made, and it belongs in the morning digest rather than
+    // buried among "already paid".
+    exempt: skip.filter((b) => b.reason === 'exempt'),
+  };
 }
 
 export async function applyLateFees(env, { today = new Date().toISOString().slice(0, 10) } = {}) {
@@ -53,7 +63,10 @@ export async function applyLateFees(env, { today = new Date().toISOString().slic
 
   for (const p of periods.results ?? []) {
     const bills = await env.DB.prepare(
-      `SELECT id, flat, status, total, late_fee_at FROM bills WHERE period = ?`
+      `SELECT b.id, b.flat, b.status, b.total, b.late_fee_at,
+              o.late_fee_exempt_until
+         FROM bills b LEFT JOIN owners o ON o.id = b.owner_id
+        WHERE b.period = ?`
     ).bind(p.period).all();
 
     const plan = planLateFees(bills.results ?? [], {
@@ -77,6 +90,7 @@ export async function applyLateFees(env, { today = new Date().toISOString().slic
       charged: plan.charge.length,
       held: plan.hold.length,
       skipped: plan.skip.length,
+      exempt: plan.exempt.length,
     });
   }
 
@@ -105,10 +119,11 @@ export async function runScheduled(env, ctx) {
     const stale = await staleIntents(env);
     const charged = fees.reduce((n, f) => n + f.charged, 0);
     const held = fees.reduce((n, f) => n + f.held, 0);
+    const exempt = fees.reduce((n, f) => n + (f.exempt ?? 0), 0);
 
-    if (charged || held || stale.length) {
+    if (charged || held || exempt || stale.length) {
       await reportError(env, 'DDP-SYS-007', {
-        charged, held, staleIntents: stale.length,
+        charged, held, exempt, staleIntents: stale.length,
       }, ctx);
     }
 

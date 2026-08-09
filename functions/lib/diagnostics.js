@@ -288,6 +288,29 @@ export function checkTenancy(owners) {
 }
 
 /**
+ * Who is currently exempt from late fees.
+ *
+ * The whole risk this feature carries is an exemption granted during one
+ * dispute and still running two years later, invisible to whoever inherited
+ * the treasurer's job. The end date makes that unlikely; listing them here
+ * makes it visible, which is the part a date alone cannot do.
+ */
+export function checkExemptions(owners, today = new Date().toISOString().slice(0, 10)) {
+  const active = owners.filter((o) =>
+    o.active && o.late_fee_exempt_until && o.late_fee_exempt_until >= today);
+  if (!active.length) return [];
+
+  return [finding('info', 'LATE-FEE-EXEMPT',
+    `${active.length} ${active.length === 1 ? 'resident is' : 'residents are'} exempt from late fees`,
+    'Granted by the committee and dated. Listed so they are noticed while they '
+    + 'are still running, rather than after somebody asks why.',
+    active.map((o) => ({
+      flat: o.flat, name: o.name, until: o.late_fee_exempt_until,
+      reason: o.late_fee_exempt_reason ?? '(none recorded)',
+    })))];
+}
+
+/**
  * Can residents reset their own password?
  *
  * Two separate ways this fails, and they need different fixes: nobody can
@@ -412,6 +435,7 @@ function runAvailable(data, have) {
     ...checkConfig(data.config ?? {}),
     ...(have('owners') ? checkResetPath(data.config ?? {}, data.owners ?? []) : []),
     ...(have('owners') ? checkTenancy(data.owners ?? []) : []),
+    ...(have('owners') ? checkExemptions(data.owners ?? []) : []),
     ...checkDigest({ ...(data.config ?? {}), lastDigestAt: data.lastDigestAt ?? null }),
   ].sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));
 }

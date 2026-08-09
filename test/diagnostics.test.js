@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   checkMobiles, checkEmails, checkSuperadmin, checkBills, checkPeriods,
   checkOwnership, checkIntegrity, checkConfig, runChecks, summarise,
-  toMarkdown, maskMobile, maskEmail, checkDigest, checkResetPath, checkTenancy,
+  toMarkdown, maskMobile, maskEmail, checkDigest, checkResetPath, checkTenancy, checkExemptions,
 } from '../functions/lib/diagnostics.js';
 
 const owner = (o) => ({ id: 1, flat: '4A', name: 'A', mobile: '+919567791515',
@@ -328,5 +328,28 @@ describe('tenancy gaps that are invisible until money is owed', () => {
     const f = checkTenancy([p('4B', 'owner', 'A'), p('4B', 'owner', 'B')]);
     expect(f[0].id).toBe('TWO-OWNERS');
     expect(f[0].severity).toBe('info');
+  });
+});
+
+describe('late fee exemptions are visible while they run', () => {
+  const o = (flat, until, reason = 'AGM', active = 1) =>
+    ({ flat, name: flat, active, late_fee_exempt_until: until, late_fee_exempt_reason: reason });
+
+  it('lists an exemption that is still running', () => {
+    const f = checkExemptions([o('4B', '2026-11-30')], '2026-08-09');
+    expect(f[0].id).toBe('LATE-FEE-EXEMPT');
+    expect(f[0].rows[0]).toMatchObject({ flat: '4B', until: '2026-11-30', reason: 'AGM' });
+  });
+
+  it('says nothing once it has expired — the date did its job', () => {
+    expect(checkExemptions([o('4B', '2026-07-01')], '2026-08-09')).toEqual([]);
+  });
+
+  it('ignores people who have left', () => {
+    expect(checkExemptions([o('4B', '2026-11-30', 'AGM', 0)], '2026-08-09')).toEqual([]);
+  });
+
+  it('is quiet when nobody is exempt', () => {
+    expect(checkExemptions([{ flat: '4A', active: 1 }], '2026-08-09')).toEqual([]);
   });
 });

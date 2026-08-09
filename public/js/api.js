@@ -94,6 +94,9 @@ export const api = {
     markPaid:      (billId, note) =>
                                request('POST', `/api/admin/bills/${billId}/mark-paid`, { note }),
     waiveLateFee:  (billId)  => request('POST', `/api/admin/bills/${billId}/waive-late-fee`),
+    lateFees:      ()        => request('GET',  '/api/admin/late-fees'),
+    setExemption:  (id, until, reason) =>
+                     request('POST', `/api/admin/residents/${id}/late-fee-exemption`, { until, reason }),
     setCommentHidden: (id, hidden) =>
                                request('POST', `/api/admin/comments/${id}/${hidden ? 'hide' : 'unhide'}`),
     runScheduled:  ()        => request('POST', '/api/admin/run-scheduled'),

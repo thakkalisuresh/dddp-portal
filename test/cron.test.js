@@ -135,3 +135,52 @@ describe('comments', () => {
     expect(out[0].flat).toBe('7C');
   });
 });
+
+describe('late fee exemptions', () => {
+  const opts = { today: '2026-08-20', dueDate: '2026-08-10', graceDays: 0, lateFee: 50 };
+  const b = (o) => ({ id: 1, flat: '4B', status: 'unpaid', total: 329,
+                      late_fee_at: null, late_fee_exempt_until: null, ...o });
+
+  it('skips a resident the committee exempted', () => {
+    const p = planLateFees([b({ late_fee_exempt_until: '2026-11-30' })], opts);
+    expect(p.charge).toHaveLength(0);
+    expect(p.skip[0].reason).toBe('exempt');
+  });
+
+  it('charges again once the exemption has run out', () => {
+    // The whole point of the end date: forgetting must be the safe direction.
+    const p = planLateFees([b({ late_fee_exempt_until: '2026-07-01' })], opts);
+    expect(p.charge).toHaveLength(1);
+  });
+
+  it('treats the last day as still exempt', () => {
+    // "Exempt until 30 November" plainly includes the 30th.
+    const p = planLateFees([b({ late_fee_exempt_until: '2026-08-20' })], opts);
+    expect(p.skip[0].reason).toBe('exempt');
+  });
+
+  it('reports exemptions separately from ordinary skips', () => {
+    // An exemption is a decision somebody made. It belongs in the morning
+    // digest, not buried among "already paid".
+    const p = planLateFees([
+      b({ id: 1, flat: '4A' }),
+      b({ id: 2, flat: '4B', late_fee_exempt_until: '2026-11-30' }),
+      b({ id: 3, flat: '5A', status: 'paid' }),
+    ], opts);
+    expect(p.charge.map((x) => x.flat)).toEqual(['4A']);
+    expect(p.exempt.map((x) => x.flat)).toEqual(['4B']);
+    expect(p.skip).toHaveLength(2);
+  });
+
+  it('says "exempt" rather than "not yet due" when both are true', () => {
+    // The reason recorded should be the real one, or the digest misleads.
+    const p = planLateFees([b({ late_fee_exempt_until: '2026-11-30' })],
+      { ...opts, today: '2026-08-01' });
+    expect(p.skip[0].reason).toBe('exempt');
+  });
+
+  it('still refuses to charge an already-charged bill, exempt or not', () => {
+    const p = planLateFees([b({ late_fee_at: '2026-08-11T03:00:00Z' })], opts);
+    expect(p.skip[0].reason).toBe('already-applied');
+  });
+});
