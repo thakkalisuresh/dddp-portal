@@ -76,6 +76,29 @@ login only while `must_change_pw = 1` so it never touches a password the
 resident chose. An expired one should say so and point at `/forgot` rather than
 failing as "wrong password". Perhaps thirty lines and a test.
 
+## B13 — Two holes in the late-fee path
+
+Found 2026-08-09 while explaining how it works. Neither has ever fired, because
+production has no periods and no bills.
+
+**A rejected proof returns the bill to `initiated`, not `unpaid`.** That is the
+straight bug. `initiated` is the state the cron HOLDS rather than charges, so
+a resident who uploads any screenshot and has it rejected becomes permanently
+immune to late fees. Rejecting a proof means "this is not payment", so the bill
+should go back to `unpaid` and be chargeable again. One line, one test.
+
+**The hold on `initiated` has no time limit.** The intent is right — nobody
+should be penalised because the treasurer's approval landed a week after they
+tapped Pay — but unbounded, it means tapping Pay once defers the fee forever.
+`staleIntents` already surfaces these after 48 hours, so the treasurer can SEE
+them, but nothing acts and no ordinary admin action resets the status; only god
+mode can.
+
+Shape: hold only for N days after the most recent payment intent, then charge
+as normal. The 48 hours `staleIntents` already uses is a reasonable default and
+would keep the two consistent. Worth a line in the resident's bill copy so the
+grace is stated rather than discovered.
+
 ## B11 — Homepage parity with the old site
 
 The photographs were rescued, but three things on `gas.dddp.online` were never
