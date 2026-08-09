@@ -234,6 +234,30 @@ export function checkIntegrity({ owners, flats, readings }) {
   return out;
 }
 
+/**
+ * Has the digest actually been running?
+ *
+ * The digest is the only thing that surfaces 22 of the warn codes, and it is
+ * silent by design when nothing happened — so "no digest arrived" is
+ * indistinguishable from "a quiet night" unless the watermark is checked.
+ * A digest that quietly stopped would take every warning down with it.
+ */
+export function checkDigest({ lastDigestAt, remote, now = new Date() }) {
+  if (!remote) return [];
+  if (!lastDigestAt) {
+    return [finding('info', 'DIGEST-NEVER', 'The daily digest has not run yet',
+      'Expected until the first nightly run after deploying it.')];
+  }
+  const hours = (now - new Date(lastDigestAt)) / 3600_000;
+  if (hours > 48) {
+    return [finding('warn', 'DIGEST-STALE', 'The daily digest has not run for over 48 hours',
+      'Warnings are accumulating unreported. Check the cron trigger and the '
+      + 'Telegram secrets — the watermark only advances on a delivery that succeeded.',
+      [{ lastRun: lastDigestAt, hoursAgo: Math.round(hours) }])];
+  }
+  return [];
+}
+
 /** Things that are only wrong in production. */
 export function checkConfig({ upiVpa, alertingConfigured, remote }) {
   const out = [];
@@ -251,16 +275,46 @@ export function checkConfig({ upiVpa, alertingConfigured, remote }) {
 
 /* ── assembling a report ─────────────────────────────────────────────────── */
 
+/**
+ * An empty table and an unreadable one are NOT the same thing.
+ *
+ * A transient failure reading `owners` once made this report SUPERADMIN-NONE —
+ * "god mode is unreachable" — against a database whose superadmin was
+ * perfectly fine. A health tool that cries wolf on a network blip teaches
+ * people to ignore it, which is worse than not having one.
+ *
+ * So a caller that could not read something says so, and the checks depending
+ * on it are skipped rather than fed an empty array.
+ */
 export function runChecks(data) {
+  const missing = new Set(data.unavailable ?? []);
+  const have = (...tables) => tables.every((t) => !missing.has(t));
+
+  if (missing.size) {
+    return [
+      finding('warn', 'DATA-UNREADABLE', 'Some tables could not be read',
+        'These checks were skipped, not passed. Re-run before drawing any '
+        + 'conclusion from what is below.',
+        [...missing].map((t) => ({ table: t }))),
+      ...runAvailable(data, have),
+    ];
+  }
+  return runAvailable(data, have);
+}
+
+function runAvailable(data, have) {
   return [
-    ...checkMobiles(data.owners ?? []),
-    ...checkEmails(data.owners ?? []),
-    ...checkSuperadmin(data.owners ?? []),
-    ...checkBills(data.bills ?? []),
-    ...checkPeriods(data.periods ?? []),
-    ...checkOwnership(data.bills ?? [], data.proofs ?? []),
-    ...checkIntegrity({ owners: data.owners ?? [], flats: data.flats ?? [], readings: data.readings ?? [] }),
+    ...(have('owners') ? checkMobiles(data.owners ?? []) : []),
+    ...(have('owners') ? checkEmails(data.owners ?? []) : []),
+    ...(have('owners') ? checkSuperadmin(data.owners ?? []) : []),
+    ...(have('bills') ? checkBills(data.bills ?? []) : []),
+    ...(have('periods') ? checkPeriods(data.periods ?? []) : []),
+    ...(have('bills', 'payment_proofs') ? checkOwnership(data.bills ?? [], data.proofs ?? []) : []),
+    ...(have('owners', 'flats', 'readings')
+      ? checkIntegrity({ owners: data.owners ?? [], flats: data.flats ?? [], readings: data.readings ?? [] })
+      : []),
     ...checkConfig(data.config ?? {}),
+    ...checkDigest({ ...(data.config ?? {}), lastDigestAt: data.lastDigestAt ?? null }),
   ].sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));
 }
 

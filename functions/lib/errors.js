@@ -85,10 +85,58 @@ export function shouldAlert(now = Date.now()) {
   return true;
 }
 
-async function sendTelegram(env, code, severity, message, detail, at) {
+/**
+ * Write to error_log WITHOUT attempting to notify.
+ *
+ * This exists solely to break a loop: a failed Telegram send needs recording,
+ * but recording it through reportError would try to send again, fail again,
+ * and recurse until the request died.
+ */
+async function logOnly(env, code, detail) {
+  const entry = ERROR_CODES[code];
+  try {
+    await env.DB.prepare(
+      'INSERT INTO error_log (code, severity, message, detail, at) VALUES (?, ?, ?, ?, ?)'
+    ).bind(code, entry?.severity ?? 'error', entry?.message ?? code,
+           serialise(detail), new Date().toISOString()).run();
+  } catch {
+    // D1 is also gone. There is genuinely nowhere left to put this.
+  }
+}
+
+/**
+ * The one place anything is sent to Telegram. Alerts and the daily digest both
+ * go through here so delivery behaves identically for both.
+ *
+ * Returns true only on a delivery Telegram acknowledged. A non-2xx reply is a
+ * failure as much as a thrown fetch is: a revoked token answers 401 politely,
+ * and treating that as success is exactly how alerting dies quietly.
+ */
+export async function postToTelegram(env, text) {
   const token = env.TELEGRAM_BOT_TOKEN;
   const chat = env.TELEGRAM_CHAT_ID;
-  if (!token || !chat) return; // DDP-SYS-005 is raised by assertAlerting at boot
+  if (!token || !chat) return false; // DDP-SYS-005 is raised by assertAlerting
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: chat, text, disable_web_page_preview: true }),
+    });
+    if (!res.ok) {
+      // Deliberately not the response body: it can echo the bot token back.
+      await logOnly(env, 'DDP-SYS-004', `Telegram replied ${res.status}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    await logOnly(env, 'DDP-SYS-004', err);
+    return false;
+  }
+}
+
+async function sendTelegram(env, code, severity, message, detail, at) {
+  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return;
 
   const gate = shouldAlert();
   if (gate === false) return;
@@ -101,15 +149,7 @@ async function sendTelegram(env, code, severity, message, detail, at) {
         `\n${at}`,
       ].join('\n');
 
-  try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chat_id: chat, text: body, disable_web_page_preview: true }),
-    });
-  } catch {
-    // Nothing useful to do; the row is already in error_log.
-  }
+  await postToTelegram(env, body);
 }
 
 /**

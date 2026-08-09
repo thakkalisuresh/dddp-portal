@@ -8,7 +8,8 @@
  */
 
 import { lateFeeDecision, applyLateFee } from './billing.js';
-import { reportError, fail } from './errors.js';
+import { reportError, fail, postToTelegram } from './errors.js';
+import { runDigest } from './digest.js';
 
 /**
  * Decide what to do with a month's bills. Pure — the interesting logic is the
@@ -110,9 +111,25 @@ export async function runScheduled(env, ctx) {
         charged, held, staleIntents: stale.length,
       }, ctx);
     }
-    return { fees, stale: stale.length };
+
+    // Last, and in its own try. The digest is a convenience; late fees are
+    // money. A digest that throws must never cost the building its fee run,
+    // and the ordering means the digest can also report what just happened.
+    const digest = await sendDigest(env);
+
+    return { fees, stale: stale.length, digest };
   } catch (err) {
     await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);
     return null;
+  }
+}
+
+/** Separated so a failing digest cannot take the fee run down with it. */
+export async function sendDigest(env) {
+  try {
+    return await runDigest(env, { send: (text) => postToTelegram(env, text) });
+  } catch (err) {
+    await reportError(env, 'DDP-SYS-003', err);
+    return { sent: false, reason: 'digest threw' };
   }
 }

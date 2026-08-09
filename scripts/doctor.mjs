@@ -36,12 +36,21 @@ function q(statement) {
   return JSON.parse(out.slice(out.indexOf('['))).flatMap((r) => r.results ?? []);
 }
 
-/** Tables arrive over time; a missing one should not abort the whole report. */
+/**
+ * A table that cannot be read is recorded as unreadable, NOT as empty.
+ *
+ * Returning [] on failure once made this report "no active superadmin — god
+ * mode is unreachable" because a single query blipped. The checks now skip
+ * what they cannot see, and say they skipped it.
+ */
+const unavailable = [];
+
 function safe(statement, label) {
   try {
     return q(statement);
   } catch (err) {
     console.error(`${C.dim}  (could not read ${label}: ${err.message.split('\n')[0]})${C.off}`);
+    unavailable.push(label);
     return [];
   }
 }
@@ -62,9 +71,12 @@ const main = () => {
   const proofs = safe('SELECT id, bill_id, owner_id FROM payment_proofs', 'payment_proofs');
   const errors = safe(
     'SELECT code, severity, at FROM error_log ORDER BY id DESC LIMIT 25', 'error_log');
+  const [digest] = safe(
+    "SELECT value FROM settings WHERE key = 'last_digest_at'", 'settings');
 
   const findings = runChecks({
-    owners, flats, bills, periods, readings, proofs,
+    owners, flats, bills, periods, readings, proofs, unavailable,
+    lastDigestAt: digest?.value ?? null,
     config: {
       // Read from wrangler config rather than guessed: an empty VPA is a real
       // production failure and a non-issue locally.

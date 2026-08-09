@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   checkMobiles, checkEmails, checkSuperadmin, checkBills, checkPeriods,
   checkOwnership, checkIntegrity, checkConfig, runChecks, summarise,
-  toMarkdown, maskMobile, maskEmail,
+  toMarkdown, maskMobile, maskEmail, checkDigest,
 } from '../functions/lib/diagnostics.js';
 
 const owner = (o) => ({ id: 1, flat: '4A', name: 'A', mobile: '+919567791515',
@@ -180,5 +180,62 @@ describe('the report itself', () => {
   it('summarises healthy as healthy only when nothing fails or warns', () => {
     expect(summarise([{ severity: 'info' }]).healthy).toBe(true);
     expect(summarise([{ severity: 'warn' }]).healthy).toBe(false);
+  });
+});
+
+describe('the digest is itself checked', () => {
+  // The digest is silent when nothing happened, so "no message arrived" and
+  // "the digest died three weeks ago" look identical from a phone. Only the
+  // watermark can tell them apart.
+  const now = new Date('2026-08-09T03:00:00Z');
+
+  it('warns when the watermark has not moved in over 48 hours', () => {
+    const f = checkDigest({ lastDigestAt: '2026-08-05T03:00:00Z', remote: true, now });
+    expect(f[0].id).toBe('DIGEST-STALE');
+    expect(f[0].rows[0].hoursAgo).toBe(96);
+  });
+
+  it('is quiet after a normal nightly run', () => {
+    expect(checkDigest({ lastDigestAt: '2026-08-08T03:00:00Z', remote: true, now })).toEqual([]);
+  });
+
+  it('says so plainly before the first run, rather than warning', () => {
+    expect(checkDigest({ lastDigestAt: null, remote: true, now })[0].severity).toBe('info');
+  });
+
+  it('stays out of the way locally', () => {
+    expect(checkDigest({ lastDigestAt: null, remote: false, now })).toEqual([]);
+  });
+});
+
+describe('an unreadable table is not an empty one', () => {
+  // This was a live false positive: one transient failure reading `owners`
+  // made the report say "no active superadmin — god mode is unreachable"
+  // against a database whose superadmin was perfectly fine. A health tool
+  // that cries wolf on a network blip teaches people to ignore it.
+  it('does not claim there is no superadmin when owners could not be read', () => {
+    const f = runChecks({ owners: [], unavailable: ['owners'] });
+    expect(f.map((x) => x.id)).not.toContain('SUPERADMIN-NONE');
+    expect(f.map((x) => x.id)).toContain('DATA-UNREADABLE');
+  });
+
+  it('still reports SUPERADMIN-NONE when owners genuinely IS empty', () => {
+    // The guard must not become a way to hide the real condition.
+    expect(runChecks({ owners: [] }).map((x) => x.id)).toContain('SUPERADMIN-NONE');
+  });
+
+  it('names what it skipped, so "clean" cannot be misread', () => {
+    const f = runChecks({ unavailable: ['owners', 'bills'] });
+    const d = f.find((x) => x.id === 'DATA-UNREADABLE');
+    expect(d.rows.map((r) => r.table)).toEqual(['owners', 'bills']);
+    expect(d.detail).toMatch(/skipped, not passed/i);
+  });
+
+  it('keeps checking whatever it COULD read', () => {
+    const f = runChecks({
+      unavailable: ['owners'],
+      periods: [{ period: '2026-06', rate_per_kg: 75, conversion_factor: null }],
+    });
+    expect(f.map((x) => x.id)).toContain('PERIOD-NO-CONVERSION');
   });
 });

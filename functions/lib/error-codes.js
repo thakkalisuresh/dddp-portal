@@ -81,7 +81,7 @@ export const ERROR_CODES = {
   'DDP-SYS-001': { severity: 'fatal', message: 'Unhandled exception in a Worker route' },
   'DDP-SYS-002': { severity: 'fatal', message: 'D1 query failed', planned: true },
   'DDP-SYS-003': { severity: 'error', message: 'Nightly Drive backup failed' },
-  'DDP-SYS-004': { severity: 'error', message: 'Telegram alert delivery failed', planned: true },
+  'DDP-SYS-004': { severity: 'error', message: 'Telegram alert delivery failed' },
   'DDP-SYS-005': { severity: 'fatal', message: 'Telegram binding missing at startup — alerts are inert' },
   'DDP-SYS-008': { severity: 'fatal', message: 'Google refresh token rejected — the nightly backup is dead' },
   'DDP-SYS-007': { severity: 'warn',  message: 'Nightly run summary — late fees applied or payments left unconfirmed' },

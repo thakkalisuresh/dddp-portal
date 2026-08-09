@@ -1561,7 +1561,7 @@ async function editBill(request, env, session, path) {
  * eventually disagree, and the one nobody is looking at is the correct one.
  */
 async function godDiagnostics(env, url) {
-  const [owners, flats, bills, periods, readings, proofs, errors] = await Promise.all([
+  const [owners, flats, bills, periods, readings, proofs, errors, digest] = await Promise.all([
     env.DB.prepare('SELECT id, flat, name, mobile, email, role, active FROM owners').all(),
     env.DB.prepare('SELECT flat, floor, active FROM flats').all(),
     env.DB.prepare(`SELECT id, flat, period, owner_id, gas_amount, other_charges,
@@ -1571,11 +1571,13 @@ async function godDiagnostics(env, url) {
     env.DB.prepare('SELECT flat, period, reading FROM readings').all(),
     env.DB.prepare('SELECT id, bill_id, owner_id FROM payment_proofs').all(),
     env.DB.prepare('SELECT code, severity, at FROM error_log ORDER BY id DESC LIMIT 25').all(),
+    env.DB.prepare("SELECT value FROM settings WHERE key = 'last_digest_at'").first(),
   ]);
 
   const data = {
     owners: owners.results ?? [], flats: flats.results ?? [], bills: bills.results ?? [],
     periods: periods.results ?? [], readings: readings.results ?? [], proofs: proofs.results ?? [],
+    lastDigestAt: digest?.value ?? null,
     config: {
       upiVpa: env.UPI_VPA, alertingConfigured: Boolean(env.TELEGRAM_BOT_TOKEN), remote: true,
     },

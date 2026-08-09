@@ -93,7 +93,7 @@ Ask the bot a code and it will explain it.
 | `DDP-SYS-001` | **fatal** | live | Unhandled exception in a Worker route |
 | `DDP-SYS-002` | **fatal** | planned | D1 query failed |
 | `DDP-SYS-003` | error | live | Nightly Drive backup failed |
-| `DDP-SYS-004` | error | planned | Telegram alert delivery failed |
+| `DDP-SYS-004` | error | live | Telegram alert delivery failed |
 | `DDP-SYS-005` | **fatal** | live | Telegram binding missing at startup — alerts are inert |
 | `DDP-SYS-008` | **fatal** | live | Google refresh token rejected — the nightly backup is dead |
 | `DDP-SYS-007` | warn | live | Nightly run summary — late fees applied or payments left unconfirmed |
@@ -101,7 +101,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-56 codes across 7 domains — 10 fatal, 4 awaiting their call site, 2 retired.
+56 codes across 7 domains — 10 fatal, 3 awaiting their call site, 2 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

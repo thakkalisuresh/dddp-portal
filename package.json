@@ -17,7 +17,8 @@
     "deploy:pages": "npm run build:pages && cd pages && wrangler pages deploy",
     "deploy:cron": "wrangler deploy",
     "deploy:all": "npm run deploy:pages && npm run deploy:cron",
-    "doctor": "node scripts/doctor.mjs"
+    "doctor": "node scripts/doctor.mjs",
+    "telegram:test": "node scripts/telegram-test.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.1",

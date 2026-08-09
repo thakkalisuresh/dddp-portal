@@ -119,10 +119,30 @@ exists so a person makes that call and signs it.
 Both are additive to the report, not a replacement for it. If it is built, it
 reads and writes nothing but its own commentary — no credentials to any table.
 
-## B6 — Telegram alerting secrets on both deployments
+## B6 — Telegram: create the bot and set the secrets
 
-The error-code registry routes `fatal` and `error` to Telegram immediately.
-Nothing is wired up yet: the bot token and chat id need setting on *both* the
-Pages deployment and the cron Worker, since they are separate deployments over
-one database. Until then errors land in `error_log` only, visible under god
-mode but not pushed anywhere.
+**Everything in code is done** (2026-08-09): instant alerts for `fatal` and
+`error`, the daily digest for `warn`, a failed send recorded as DDP-SYS-004
+instead of swallowed, and a staleness check so a digest that quietly stops gets
+noticed. What is left needs a human with a Telegram account.
+
+1. Message `@BotFather`, `/newbot`, keep the token.
+2. Message the new bot once — a bot cannot open a conversation, so without this
+   it can never reach you. Use a group instead if the committee should see
+   alerts; add the bot to it and message there.
+3. `npm run telegram:test` — validates the token, finds the chat id for you,
+   and sends one message. Nothing is stored.
+4. Set both secrets on **both** deployments. They are separate Workers over one
+   database, so secrets on one do not reach the other:
+
+   ```
+   npx wrangler secret put TELEGRAM_BOT_TOKEN
+   npx wrangler secret put TELEGRAM_CHAT_ID
+   cd pages && npx wrangler secret put TELEGRAM_BOT_TOKEN
+   cd pages && npx wrangler secret put TELEGRAM_CHAT_ID
+   ```
+
+5. `npm run doctor` — CONFIG-NO-ALERTS should be gone.
+
+The digest rides the existing nightly cron (`0 3 * * *` UTC, 08:30 IST), so
+there is no second trigger to configure.

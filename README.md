@@ -50,6 +50,7 @@ the cron running old code, and shipping only the Worker leaves the site stale.
 | — | Mobile numbers stored in E.164, for owners settled abroad | **done** |
 | — | Admin password-reset privilege escalation closed | **done** |
 | — | Self-checks — `npm run doctor` and the god-mode Health tab | **done** |
+| — | Daily digest for warn-level codes; failed sends no longer silent | **done** |
 
 Deferred work is in [docs/BACKLOG.md](docs/BACKLOG.md) — parked deliberately, with
 the reasoning, not forgotten.
@@ -74,6 +75,7 @@ npm test          # 237 tests, no network or D1 needed
 npm run errdoc    # regenerate docs/ERROR_CODES.md after editing the registry
 npm run doctor    # check the building's invariants against production
 npm run doctor -- --local --md   # ...locally, as markdown you can paste
+npm run telegram:test            # check a bot token and chat id actually work
 ```
 
 Secrets: `npx wrangler secret put TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and
