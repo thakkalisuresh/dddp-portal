@@ -63,6 +63,53 @@ NO-EMAIL-ON-FILE.
 
 # Ready to build
 
+## B16 — Notices are resident business, not public
+
+Asked for 2026-08-09, and the reasoning is the whole of it: a notice is the
+association talking to the people who live here. Nobody outside the building
+needs to read it, and some of what a committee posts — a meeting about a
+defaulter, a security incident, a plumber's phone number — is nobody else's
+business at all.
+
+Today `publicNotices` in `functions/lib/public.js` serves the full **title and
+body** of every active notice to anyone who loads the homepage. Comments were
+already held back, because they carry names and flats; the notice text was not.
+
+**Do this before the first real notice is posted.** There are zero notices in
+production right now, so today it costs one deleted section. Afterwards it does
+not: a notice that has been served publicly has been fetched by crawlers, and
+withdrawing it from the site does not withdraw it from anybody's index. This is
+the only item here with a genuine deadline, which is why it sits at the top.
+
+Small: drop `notices` from the public payload and the section from
+`public/js/home.js`. The endpoint stays — it also carries `committee` and
+`amenities`, which are legitimately public. Residents lose nothing, because
+`/notices` is already its own tab in the bottom nav.
+
+### Does the landing page change? No — but something must ship with it
+
+Raised at the same time, and worth answering here rather than rediscovering it.
+
+Leave the landing page as the bill. That is a decision, not an accident: C3 says
+a resident who lands on an empty dashboard concludes the site is useless, and
+the reason they were sent a login in the first place is that they owe money.
+Notices are the second thing they came for, and they already have a tab.
+
+The real consequence is subtler. Today a resident sees notices on the homepage
+**without logging in** — that is where they'd notice one. Take that away and
+notices do not become private, they become invisible: nothing anywhere tells a
+resident a new one exists, so the committee posts into a room nobody enters.
+
+So the removal needs a companion, and it is small: a count or a dot on the
+Notices tab when there is something newer than that resident has seen. Perhaps
+`notices_seen_at` on `owners`, stamped when they open the tab. Without it this
+change quietly turns the notice board off.
+
+Related: **B9** proposes a `scope` column so some notices are owner-only. If
+that lands, `public` becomes a deliberate third value — an evacuation notice or
+a road closure could still be posted outward on purpose — rather than the
+default everything gets today.
+
 ## B10 — Expire admin-issued temporary passwords
 
 The reset message used to claim "expires in 24 hours" while nothing enforced
