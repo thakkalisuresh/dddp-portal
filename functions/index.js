@@ -16,8 +16,8 @@ import { previewGeneration, computeBill, isExempt } from './lib/billing.js';
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { readReceipt } from './lib/vision.js';
 import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
-import { listNotices, getNotice, addComment, setCommentHidden } from './lib/notices.js';
-import { publicNotices, submitMessage, fingerprintOf, AMENITIES, OFFICE_HOURS, MESSAGE_SUBJECTS } from './lib/public.js';
+import { listNotices, getNotice, addComment, setCommentHidden, markNoticesSeen } from './lib/notices.js';
+import { submitMessage, fingerprintOf, AMENITIES, OFFICE_HOURS, MESSAGE_SUBJECTS } from './lib/public.js';
 import {
   transferFlat, canChangeRole, canResetPassword, waLink, planHandover, outstandingFor,
   mergeTimeline, toIST, isRelationship, occupantOf, landlordOf, isTenanted,
@@ -74,8 +74,11 @@ export default {
         const committee = await env.DB.prepare(
           'SELECT role, name, flat, phone FROM committee WHERE active = 1 ORDER BY sort'
         ).all();
+        // No notices. A notice is the association talking to the people who
+        // live here, and some of what a committee posts — a meeting about a
+        // defaulter, a security incident, a plumber's number — is nobody
+        // else's business. Residents read them at /notices, behind a login.
         return json({
-          notices: await publicNotices(env),
           committee: committee.results ?? [],
           amenities: AMENITIES,
           officeHours: OFFICE_HOURS,
@@ -110,7 +113,16 @@ export default {
       }
 
       // ── notices ───────────────────────────────────────────────────────
-      if (route === 'GET /api/notices') return json({ notices: await listNotices(env) });
+      if (route === 'GET /api/notices') {
+        const notices = await listNotices(env);
+        // Stamped only for a resident reading their own board. An admin using
+        // view-as would otherwise clear a badge for somebody who has not seen
+        // anything — impersonation must not leave marks on the person being
+        // impersonated. Also stamped after the list is built, so a read that
+        // failed is not recorded as a read that happened.
+        if (!session.impersonating) await markNoticesSeen(env, session.subject.id);
+        return json({ notices });
+      }
       if (request.method === 'GET' && /^\/api\/notices\/\d+$/.test(path)) {
         const notice = await getNotice(env, Number(path.split('/')[3]),
           { isAdmin: hasRole(session, 'admin') });

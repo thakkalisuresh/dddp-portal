@@ -1,10 +1,12 @@
 /**
  * The public home page — screen 01.
  *
- * Nothing here requires a session, and nothing here may expose resident data:
- * notices are public, but comments (which carry names and flats) are not, and
- * the committee list is a deliberate hard-coded set rather than a query over
- * the resident register.
+ * Nothing here requires a session, and nothing here may expose resident data.
+ *
+ * Notices used to lead this page and are gone (B16) — they are the association
+ * talking to the people who live here, and residents read them at /notices
+ * behind a login. What is left is genuinely public: the photographs, what the
+ * building has, who to ask, where it is, and when the office is open.
  */
 
 import { el, esc, $, showError, setChildren } from './ui.js';
@@ -87,31 +89,12 @@ async function init() {
     const data = await res.json();
     render(data);
   } catch {
-    showError(main, { message: 'Could not load notices. Please try again shortly.' });
+    showError(main, { message: 'Could not load the page. Please try again shortly.' });
   }
 }
 
-function render({ notices, committee, amenities, officeHours, subjects }) {
-  const events = notices.filter((n) => n.kind === 'event');
-  const plain = notices.filter((n) => n.kind !== 'event');
-
+function render({ committee, amenities, officeHours, subjects }) {
   setChildren(main,
-    section('notices', bilingual('notices'),
-      plain.length
-        ? plain.map((n) => el('div', { class: 'notice' },
-            el('h3', {}, n.title),
-            el('p', { class: 'muted' }, n.body),
-            el('p', { class: 'small muted', style: 'margin-top:var(--s-2)' }, dayLabel(n.postedAt))))
-        : [el('p', { class: 'muted' }, 'Nothing posted yet.')]),
-
-    events.length
-      ? section('events', bilingual('events'), events.map((n) =>
-          el('div', { class: 'notice notice--event' },
-            el('h3', {}, n.title),
-            el('p', { class: 'muted' }, n.body),
-            n.eventDate ? el('p', { class: 'small muted' }, dayLabel(n.eventDate)) : null)))
-      : null,
-
     section('gallery', bilingual('gallery'), [
       el('div', { class: 'gallery' }, ...GALLERY.map(tile)),
     ]),

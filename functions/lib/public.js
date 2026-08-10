@@ -57,23 +57,19 @@ export const MESSAGE_SUBJECTS = [
   'Something else',
 ];
 
-/** Notices only — never comments, which carry residents' names and flats. */
-export async function publicNotices(env, { limit = 12 } = {}) {
-  const rows = await env.DB.prepare(
-    `SELECT id, title, body, kind, event_date, posted_at
-       FROM notices WHERE active = 1
-      ORDER BY posted_at DESC LIMIT ?`
-  ).bind(limit).all();
-
-  return (rows.results ?? []).map((n) => ({
-    id: n.id,
-    title: n.title,
-    body: n.body,
-    kind: n.kind,
-    eventDate: n.event_date,
-    postedAt: n.posted_at,
-  }));
-}
+/*
+ * publicNotices lived here and is deliberately gone (B16).
+ *
+ * It served the full title and body of every active notice to anyone who
+ * loaded the homepage. Comments were always held back because they carry names
+ * and flats; the notice text never got the same treatment, and once a notice
+ * has been served publicly it has been crawled — withdrawing it from the site
+ * does not withdraw it from anybody's index.
+ *
+ * Deleted rather than left unused behind a flag: an unused export is an
+ * invitation to wire it back up, and the reason not to is not obvious from the
+ * function itself.
+ */
 
 export function validateMessage({ name, body, email, phone, subject }) {
   const cleanName = String(name ?? '').trim();

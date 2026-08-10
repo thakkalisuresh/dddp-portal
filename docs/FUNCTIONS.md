@@ -279,6 +279,8 @@ Notices and their comments.
 | fn | `validateComment` |  |
 | fn | `shapeComments` | Hidden comments keep their row and their author, so moderation is auditable rather than a silent disappearance. |
 | fn | `listNotices` |  |
+| fn | `unreadNoticeCount` | How many active notices are newer than the last time this resident looked. |
+| fn | `markNoticesSeen` | Stamped when the resident opens the notice list, which is the only honest definition of "seen" available without tracking scroll position. |
 | fn | `getNotice` |  |
 | fn | `addComment` |  |
 | fn | `setCommentHidden` |  |
@@ -310,8 +312,7 @@ The public site's data — everything reachable without logging in.
 | const | `AMENITIES` |  |
 | const | `OFFICE_HOURS` | Carried across from the old site, which published them and which residents still go looking for. |
 | const | `MESSAGE_SUBJECTS` | Served to the contact form rather than duplicated in the browser, so the list the visitor picks from and the list the server accepts cannot drift apart. |
-| fn | `publicNotices` |  |
-| fn | `validateMessage` |  |
+| fn | `validateMessage` | Served to the contact form rather than duplicated in the browser, so the list the visitor picks from and the list the server accepts cannot drift apart. |
 | fn | `submitMessage` |  |
 | fn | `fingerprintOf` |  |
 
@@ -543,4 +544,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-270 exports. 169 have no doc comment.
+271 exports. 167 have no doc comment.

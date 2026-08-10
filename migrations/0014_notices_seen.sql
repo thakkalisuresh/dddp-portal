@@ -1,0 +1,16 @@
+-- When each resident last looked at the notice board.
+--
+-- WHY THIS IS PART OF TAKING NOTICES OFF THE PUBLIC PAGE. Until now a resident
+-- met a notice on the homepage without logging in, and that is where they
+-- noticed one existed. Remove that and notices do not become private, they
+-- become invisible: nothing anywhere tells anybody a new one was posted, and
+-- the committee ends up writing into a room nobody enters.
+--
+-- A timestamp rather than a per-notice read table. The question being asked is
+-- "is there anything since you last looked", not "which ones have you read" —
+-- one column answers it, and a join table would need a row per resident per
+-- notice for a badge that only ever shows a number.
+--
+-- NULL means never looked, which correctly reads as "everything is new". That
+-- is the right default for a resident who has just been sent their login.
+ALTER TABLE owners ADD COLUMN notices_seen_at TEXT;

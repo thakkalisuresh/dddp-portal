@@ -66,6 +66,45 @@ export async function listNotices(env) {
   }));
 }
 
+/**
+ * How many active notices are newer than the last time this resident looked.
+ *
+ * BOTH SIDES GO THROUGH datetime(), and that is not decoration. This table
+ * holds timestamps in two spellings: `postNotice` writes an ISO string from
+ * JavaScript (`2026-08-09T19:19:00.000Z`) and anything written in SQL with
+ * `datetime('now')` writes `2026-08-09 19:19:00`. Compared as raw strings the
+ * space sorts BELOW the T, so a SQLite-spelled notice posted after an
+ * ISO-spelled stamp reads as older and never counts — the badge simply stops
+ * appearing, with nothing to see in a log. This is the same failure as mobiles
+ * stored two ways, which cost this project a UNIQUE index.
+ *
+ * The fallback is 1970 rather than '', because datetime('') is NULL and the
+ * whole comparison would go NULL with it — leaving a resident who has never
+ * opened the board with no badge at all, which is precisely the person it
+ * exists for.
+ */
+export async function unreadNoticeCount(env, ownerId) {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM notices
+      WHERE active = 1
+        AND datetime(posted_at) >
+            datetime(COALESCE((SELECT notices_seen_at FROM owners WHERE id = ?), '1970-01-01'))`
+  ).bind(ownerId).first();
+  return row?.n ?? 0;
+}
+
+/**
+ * Stamped when the resident opens the notice list, which is the only honest
+ * definition of "seen" available without tracking scroll position. Deliberately
+ * not stamped by the unread count itself — that runs on every page load and
+ * would clear the badge from screens the notice board is not even on.
+ */
+export async function markNoticesSeen(env, ownerId, at = new Date().toISOString()) {
+  await env.DB.prepare('UPDATE owners SET notices_seen_at = ? WHERE id = ?')
+    .bind(at, ownerId).run();
+  return at;
+}
+
 export async function getNotice(env, noticeId, { isAdmin = false } = {}) {
   const notice = await env.DB.prepare(
     'SELECT * FROM notices WHERE id = ? AND active = 1'

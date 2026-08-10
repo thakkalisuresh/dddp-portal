@@ -9,6 +9,7 @@
 import { buildUpiLinks, payTargetFor, manualPayment } from './upi.js';
 import { computeConsumption, DEFAULT_CONVERSION } from './billing.js';
 import { billAccess, occupantOf, describeRelationship } from './tenancy.js';
+import { unreadNoticeCount } from './notices.js';
 
 const READING_HISTORY = 6;
 const BILL_HISTORY = 12;
@@ -153,6 +154,10 @@ export async function dashboardPayload(env, subject, userAgent = '') {
     readings: withConsumption(readings.results ?? [], billRow?.conversion_factor ?? DEFAULT_CONVERSION),
     bills: bills.results ?? [],
     tenancy,
+    // Carried on /api/me because every screen renders the nav from this payload
+    // — the badge has to be available on the dashboard, not only on the notice
+    // board it points at.
+    unreadNotices: await unreadNoticeCount(env, ownerId),
   };
 }
 

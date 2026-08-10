@@ -63,13 +63,27 @@ export function renderNav(me, current = location.pathname) {
     else document.body.prepend(bar);
   }
 
-  bar.replaceChildren(...items.map((item) =>
-    el('a', {
+  bar.replaceChildren(...items.map((item) => {
+    // The notice board is the one destination with state worth surfacing.
+    // Before B16 a resident met notices on the public homepage without logging
+    // in; without this badge, taking them off that page would not make them
+    // private so much as invisible.
+    const unread = item.href === '/notices' ? (me?.unreadNotices ?? 0) : 0;
+
+    return el('a', {
       class: `bottomnav__item ${active(item.href) ? 'is-current' : ''}`,
       href: item.href,
       // Current location must be announced, not merely coloured.
       'aria-current': active(item.href) ? 'page' : null,
-    }, icon(item.icon), el('span', {}, item.label))));
+      // The count goes in the accessible name too. A coloured dot says nothing
+      // to a screen reader, and "Notices" alone would hide the whole point.
+      'aria-label': unread ? `${item.label}, ${unread} new` : null,
+    }, icon(item.icon), el('span', {}, item.label),
+       unread
+         ? el('span', { class: 'bottomnav__badge', 'aria-hidden': 'true' },
+             unread > 9 ? '9+' : String(unread))
+         : null);
+  }));
 
   // The bar is fixed, so content needs room or the last row hides behind it.
   document.body.classList.add('has-bottomnav');
