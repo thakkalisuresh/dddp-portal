@@ -71,8 +71,26 @@ function tile({ src, w, h }) {
  * at all rather than pin the wrong gate.
  */
 const MAP_QUERY = 'dd diamond park kuriachira';
-const MAP_EMBED = `https://maps.google.com/maps?q=${encodeURIComponent(MAP_QUERY)}&output=embed`;
 const MAP_LINK = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(MAP_QUERY)}`;
+
+/**
+ * Keyed when the association has its own key, keyless when it does not.
+ *
+ * NO KEY IS EVER WRITTEN HERE. It arrives from `GOOGLE_MAPS_KEY` on the Pages
+ * project and reaches this file through the payload, so the repository never
+ * carries one and losing it is a config change rather than a commit.
+ *
+ * Absent is a supported state, not a broken one — the fallback is the same map
+ * with the same pin. That matters more than it sounds: it means the key can be
+ * added, rotated or removed at any time without the map ever going blank, and
+ * that a key restricted to the wrong referrer degrades instead of failing.
+ */
+function mapEmbed(mapsKey) {
+  const q = encodeURIComponent(MAP_QUERY);
+  return mapsKey
+    ? `https://www.google.com/maps/embed/v1/place?q=${q}&key=${encodeURIComponent(mapsKey)}`
+    : `https://maps.google.com/maps?q=${q}&output=embed`;
+}
 
 const main = $('#main');
 
@@ -88,7 +106,7 @@ async function init() {
   }
 }
 
-function render({ committee, amenities, officeHours, subjects }) {
+function render({ committee, amenities, officeHours, subjects, contact, mapsKey }) {
   setChildren(main,
     section('gallery', bilingual('gallery'), [
       el('div', { class: 'gallery' }, ...GALLERY.map(tile)),
@@ -117,7 +135,7 @@ function render({ committee, amenities, officeHours, subjects }) {
         // images honour it — but this is one request and a blank map is a
         // worse trade than one eager frame.
         el('iframe', {
-          class: 'map__frame', src: MAP_EMBED,
+          class: 'map__frame', src: mapEmbed(mapsKey),
           title: 'Map of DD Diamond Park, Kuriachira, Thrissur',
         })),
       // Always present, never conditional. The iframe is the one thing on this
@@ -137,7 +155,19 @@ function render({ committee, amenities, officeHours, subjects }) {
             el('td', { class: 'small muted', style: 'text-align:right' }, h.hours))))),
     ]),
 
-    section('contact', bilingual('contact'), [contactForm(subjects)])
+    section('contact', bilingual('contact'), [
+      // Above the form on purpose. Somebody with a gas smell should not have to
+      // fill in a web form and wait — the number comes first, and tel:/mailto:
+      // mean one tap on the phone this is mostly read on.
+      contact
+        ? el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+            el('p', {},
+              el('a', { href: `tel:${contact.phone.replace(/\s+/g, '')}` }, contact.phone)),
+            el('p', {}, el('a', { href: `mailto:${contact.email}` }, contact.email)))
+        : null,
+      contact ? el('hr', { class: 'rule' }) : null,
+      contactForm(subjects),
+    ])
   );
 }
 

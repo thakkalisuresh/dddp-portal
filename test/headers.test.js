@@ -38,21 +38,26 @@ describe('content security policy', () => {
     expect(csp['frame-src']).toEqual(['https://maps.google.com', 'https://www.google.com']);
   });
 
-  it('carries no Google API key, in the policy or in the page', () => {
-    // The old site's iframe hard-coded a key from a Google Cloud project nobody
-    // in the association can reach. Copying it would put this map on a
-    // stranger's billing and kill it the day they restrict the key — the same
-    // account problem as its hosting and its domain.
+  it('hard-codes no Google API key anywhere', () => {
+    // The invariant is not "no key" — the site can use one. It is that no
+    // LITERAL key is ever committed. The old site's iframe carries a key from a
+    // Cloud project nobody in the association can reach, and copying it would
+    // put this map on a stranger's billing.
     //
-    // Checked against the source, not just the header: a key would live in the
-    // iframe URL, which is where it would actually get pasted.
+    // Checked against the page source, not just the header: a pasted key would
+    // land in the iframe URL, which is where it would actually go.
     expect(SECURITY_HEADERS['content-security-policy']).not.toMatch(/AIza/);
     expect(homeJs).not.toMatch(/AIza/);
-    expect(homeJs).not.toMatch(/[?&]key=/);
-    expect(homeJs).not.toContain('maps/embed/v1');
   });
 
-  it('uses the keyless embed form', () => {
+  it('takes the key from config rather than a literal', () => {
+    expect(homeJs).toMatch(/key=\$\{encodeURIComponent\(mapsKey\)\}/);
+  });
+
+  it('still falls back to the keyless embed when no key is set', () => {
+    // Absent is a supported state, not a broken one. This is what lets the key
+    // be added, rotated or removed without the map ever going blank — and what
+    // makes a key restricted to the wrong referrer degrade instead of fail.
     expect(homeJs).toContain('output=embed');
   });
 

@@ -17,7 +17,7 @@ import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { readReceipt } from './lib/vision.js';
 import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden, markNoticesSeen, NOTICE_SCOPES } from './lib/notices.js';
-import { submitMessage, fingerprintOf, AMENITIES, OFFICE_HOURS, MESSAGE_SUBJECTS } from './lib/public.js';
+import { submitMessage, fingerprintOf, AMENITIES, OFFICE_HOURS, MESSAGE_SUBJECTS, CONTACT } from './lib/public.js';
 import {
   transferFlat, canChangeRole, canResetPassword, waLink, planHandover, outstandingFor,
   mergeTimeline, toIST, isRelationship, occupantOf, landlordOf, isTenanted,
@@ -82,7 +82,13 @@ export default {
           committee: committee.results ?? [],
           amenities: AMENITIES,
           officeHours: OFFICE_HOURS,
+          contact: CONTACT,
           subjects: MESSAGE_SUBJECTS,
+          // Public by design — a Maps key lives in the page source and is
+          // protected by an HTTP-referrer restriction, not by being hidden.
+          // Absent is the supported state: the map falls back to the keyless
+          // embed, so the site behaves identically whether or not this is set.
+          mapsKey: env.GOOGLE_MAPS_KEY || null,
         });
       }
       if (route === 'POST /api/public/contact') {

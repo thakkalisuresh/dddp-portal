@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateMessage, COMMITTEE, AMENITIES, MAX_MESSAGE, MESSAGE_SUBJECTS, OFFICE_HOURS } from '../functions/lib/public.js';
+import { validateMessage, COMMITTEE, AMENITIES, MAX_MESSAGE, MESSAGE_SUBJECTS, OFFICE_HOURS, CONTACT } from '../functions/lib/public.js';
 
 describe('contact messages', () => {
   const good = { name: 'Priya Menon', body: 'The pool gate is sticking.' };
@@ -59,6 +59,13 @@ describe('office hours and subjects', () => {
     // Short so it gets read; the catch-all last so it is not the default pick.
     expect(MESSAGE_SUBJECTS.length).toBeLessThanOrEqual(6);
     expect(MESSAGE_SUBJECTS.at(-1)).toBe('Something else');
+  });
+
+  it('publishes a general phone and email, not just the treasurer', () => {
+    // Before this the only number on the site was one committee member's
+    // mobile, which makes a person's phone the association's switchboard.
+    expect(CONTACT.phone).toMatch(/^\+91[\d ]+$/);
+    expect(CONTACT.email).toContain('@');
   });
 
   it('never tells a resident there is nobody to call on Sunday', () => {

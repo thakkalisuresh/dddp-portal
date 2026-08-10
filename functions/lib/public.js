@@ -30,6 +30,22 @@ export const AMENITIES = [
 ];
 
 /**
+ * The association's general contact details, as published on the old site.
+ *
+ * PROVISIONAL, and knowingly so. The email is on `dddp.online` — the domain
+ * nobody can renew, which is the whole reason this portal exists. It works
+ * today and dies with that domain, so it is one constant to change rather than
+ * a string scattered through the pages. B3 is where it stops being temporary.
+ *
+ * Without these, the only number on the site is the treasurer's, in the
+ * committee table. That is a person's mobile being used as a switchboard.
+ */
+export const CONTACT = {
+  phone: '+91 98466 86885',
+  email: 'contact@dddp.online',
+};
+
+/**
  * Carried across from the old site, which published them and which residents
  * still go looking for. Sunday is deliberately worded as a restriction rather
  * than a closure: somebody with a gas smell on a Sunday should not read this

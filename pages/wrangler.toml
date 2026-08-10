@@ -24,3 +24,21 @@ bucket_name = "dddp-proofs"
 UPI_VPA = "qr.ddwelfare@sib"
 UPI_PAYEE = "DD Diamond Park RWA"
 PBKDF2_ITERATIONS = "100000"
+
+# GOOGLE_MAPS_KEY — optional, and the map works without it.
+#
+# Unset, the homepage uses Google's keyless `output=embed` form: same map, same
+# pin, no account. Set, it uses the documented Maps Embed API, which is free
+# with unlimited requests but wants a Cloud project behind it.
+#
+# A Maps key is PUBLIC — it is served in the page source, so it is a var here
+# and not a secret. What protects it is the restriction, not the hiding, and
+# both halves are required:
+#   * Application restriction  → HTTP referrers: diamondpark.pages.dev/*
+#   * API restriction          → Maps Embed API, and nothing else
+# Without the second, a lifted key can be spent on APIs that do bill.
+#
+# Put it on an account the ASSOCIATION owns. The old site's map is keyed to a
+# Cloud project nobody can reach, which is how it became unfixable.
+#
+GOOGLE_MAPS_KEY = "AIzaSyCpEURTEHHTSKK5SOM2EXuTJkv6WtHvSSY"

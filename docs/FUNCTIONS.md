@@ -313,6 +313,7 @@ The public site's data — everything reachable without logging in.
 | const | `CONTACT_RATE_PER_HOUR` |  |
 | const | `COMMITTEE` | The committee is deliberately hard-coded rather than read from `owners`. |
 | const | `AMENITIES` |  |
+| const | `CONTACT` | The association's general contact details, as published on the old site. |
 | const | `OFFICE_HOURS` | Carried across from the old site, which published them and which residents still go looking for. |
 | const | `MESSAGE_SUBJECTS` | Served to the contact form rather than duplicated in the browser, so the list the visitor picks from and the list the server accepts cannot drift apart. |
 | fn | `validateMessage` | Served to the contact form rather than duplicated in the browser, so the list the visitor picks from and the list the server accepts cannot drift apart. |
@@ -547,4 +548,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-274 exports. 168 have no doc comment.
+275 exports. 168 have no doc comment.
