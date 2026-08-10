@@ -88,6 +88,37 @@ carried across and are still missing:
 Small and self-contained. Worth doing before the demo dry-run (B4), since that
 is exactly when the committee compares old against new.
 
+## B15 — An embedded map on the homepage
+
+Asked for 2026-08-09, and it reverses the third bullet of B11, which settled on
+a plain Maps link precisely to avoid an embed. Worth reopening — a map you can
+see beats a link you have to trust — but the reason it was closed is a real
+constraint rather than a preference, so the entry keeps it.
+
+**An iframe is blocked today.** The CSP in `functions/lib/http.js` is
+`default-src 'self'` with no `frame-src`, so it falls back to `'self'` and a
+Google or OpenStreetMap iframe silently does not render. This is the one that
+will waste an afternoon: nothing errors, the box is just empty. Note that
+`frame-ancestors 'none'` is unrelated — that stops the portal being framed, not
+the portal framing something.
+
+Three ways out, cheapest first:
+
+* **A static map image, self-hosted.** A screenshot of the location saved into
+  `public/img/`, wrapped in a plain link to Maps. No CSP change, no key, no
+  third party, works offline, and is what `public/img/upi/` already does and
+  says why. Loses pan and zoom.
+* **An OpenStreetMap iframe.** Needs `frame-src https://www.openstreetmap.org`
+  added to the CSP, but no API key, no billing account and no Google. This is
+  the sensible middle.
+* **The Google Maps Embed API.** Needs a key, and a key needs a billing account
+  on somebody's card — against goal 2, and the whole reason the old site's
+  embed is unreachable is that it was keyed to a person who left.
+
+The decision is therefore not "embed or link" but **how much CSP to spend**, and
+that is worth one deliberate answer rather than a default. The static image
+needs no decision at all and could ship with B11 today.
+
 ## B9 — Owner-only notices
 
 Borrowed from ApnaComplex, which scopes some notices to owners. AGM papers,
