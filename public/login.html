@@ -21,7 +21,10 @@
 
     <div class="field">
       <label for="mobile">Mobile number <span class="ml">മൊബൈൽ നമ്പർ</span></label>
-      <input class="input num" id="mobile" name="mobile" type="tel" inputmode="numeric"
+      <!-- inputmode="tel", not "numeric": the numeric pad has no '+', so an
+           owner abroad could not type their own login on a phone. Same as
+           /forgot, which had it right. -->
+      <input class="input num" id="mobile" name="mobile" type="tel" inputmode="tel"
              autocomplete="username" required autofocus>
     </div>
 
