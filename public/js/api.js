@@ -77,7 +77,10 @@ export const api = {
   },
 
   admin: {
-    residents: ()           => request('GET',  '/api/admin/residents'),
+    // `past: true` includes moved-out residents and is superadmin-only —
+    // the server refuses it for an admin rather than quietly dropping it.
+    residents: (opts)       => request('GET',
+                               `/api/admin/residents${opts?.past ? '?include=past' : ''}`),
     resetPassword: (id)     => request('POST', `/api/admin/residents/${id}/reset`),
 
     // `period` here is always the USAGE month, never the month being walked.

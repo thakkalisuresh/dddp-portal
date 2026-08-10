@@ -20,7 +20,7 @@ import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden, markNoticesSeen, NOTICE_SCOPES } from './lib/notices.js';
 import { submitMessage, fingerprintOf, AMENITIES, OFFICE_HOURS, MESSAGE_SUBJECTS, CONTACT } from './lib/public.js';
 import {
-  transferFlat, canChangeRole, canResetPassword, waLink, planHandover, outstandingFor,
+  transferFlat, canChangeRole, canResetPassword, canEditResident, waLink, planHandover, outstandingFor,
   mergeTimeline, toIST, isRelationship, occupantOf, landlordOf, isTenanted,
   billAccess, describeRelationship,
 } from './lib/tenancy.js';
@@ -145,7 +145,7 @@ export default {
           await reportError(env, 'DDP-ADMIN-004', { path, actor: session.actor.id });
           return problem(403, 'DDP-ADMIN-004', 'Admins only.');
         }
-        if (route === 'GET /api/admin/residents') return listResidents(env);
+        if (route === 'GET /api/admin/residents') return listResidents(env, session, url);
         if (route.startsWith('POST /api/admin/residents/') && path.endsWith('/reset')) {
           return resetPassword(request, env, session, path);
         }
@@ -403,11 +403,30 @@ async function changePassword(request, env, session) {
   return json({ ok: true, signedOutElsewhere: true }, { headers: { 'set-cookie': clearCookieHeader() } });
 }
 
-async function listResidents(env) {
+/**
+ * The resident directory, keyed by flat once the client groups it.
+ *
+ * Active-only by default. Moved-out residents used to be listed here with
+ * nothing to distinguish them, which is wrong in both directions: the
+ * directory read as if they still lived here, and the late-fee exemption
+ * picker (which shares this endpoint) offered them a waiver on bills nobody
+ * was going to send. `?include=past` brings them back for history, and is
+ * superadmin-only — an admin asking for it is refused rather than quietly
+ * downgraded, so a stale client fails where somebody can see it.
+ */
+async function listResidents(env, session, url) {
+  const wantsPast = url.searchParams.get('include') === 'past';
+  if (wantsPast && !hasRole(session, 'superadmin')) {
+    await reportError(env, 'DDP-ADMIN-004', { path: url.pathname, actor: session.actor.id });
+    return problem(403, 'DDP-ADMIN-004', 'Past residents are superadmin-only.');
+  }
+
   const { results } = await env.DB.prepare(
-    `SELECT o.id, o.flat, f.floor, o.name, o.mobile, o.email, o.role, o.must_change_pw
+    `SELECT o.id, o.flat, f.floor, o.name, o.mobile, o.email, o.role,
+            o.relationship, o.active, o.moved_out_at, o.must_change_pw
        FROM owners o JOIN flats f ON f.flat = o.flat
-      ORDER BY f.floor, o.flat`
+      ${wantsPast ? '' : 'WHERE o.active = 1'}
+      ORDER BY f.floor, o.flat, o.active DESC, o.relationship`
   ).all();
   return json({ residents: results });
 }
@@ -699,14 +718,43 @@ async function postResident(request, env, session) {
 async function patchResident(request, env, session, path) {
   const id = Number(path.split('/')[4]);
   const b = await readJson(request);
+
+  const target = await env.DB.prepare('SELECT id, name, flat, role FROM owners WHERE id = ?')
+    .bind(id).first();
+  if (!target) return problem(404, 'DDP-AUTH-006', 'No such resident.');
+
+  // The directory puts mobile and email in front of every admin, and mobile IS
+  // the login id — so the same ladder that governs a password reset has to
+  // govern an edit. Without this an admin could point the superadmin's account
+  // at their own phone and then use the ordinary forgot-password flow.
+  const allowed = canEditResident({ actor: session.actor, target });
+  if (!allowed.ok) {
+    await reportError(env, 'DDP-ADMIN-014',
+                      { actor: session.actor.id, target: id, targetRole: target.role });
+    return problem(403, 'DDP-ADMIN-014', allowed.message);
+  }
+
   const fields = [];
   const values = [];
-  if (b?.name !== undefined)   { fields.push('name = ?');   values.push(String(b.name).trim()); }
-  if (b?.email !== undefined)  { fields.push('email = ?');  values.push(b.email || null); }
-  if (b?.mobile !== undefined) { fields.push('mobile = ?'); values.push(String(b.mobile).replace(/\D/g, '')); }
+  // Validated by the same helper the god-edit page uses, which normalises the
+  // mobile to E.164. This path used to store bare digits while login looked up
+  // '+91…', so an admin fixing a typo could lock the resident out entirely.
+  for (const field of ['name', 'email', 'mobile']) {
+    if (b?.[field] === undefined) continue;
+    const value = validateOwnerField(field, b[field]);
+    if (value != null && (field === 'mobile' || field === 'email')) {
+      const clash = await duplicateContact(env, id, field, value);
+      if (clash) {
+        return problem(409, 'DDP-ADMIN-013',
+          `That ${field} already belongs to ${clash.name} (${clash.flat}).`);
+      }
+    }
+    fields.push(`${field} = ?`);
+    values.push(value);
+  }
+
   // Only a superadmin may change roles — an admin must not promote themselves.
   if (b?.role !== undefined && hasRole(session, 'superadmin')) {
-    const target = await env.DB.prepare('SELECT id, role FROM owners WHERE id = ?').bind(id).first();
     const count = await env.DB.prepare(
       "SELECT COUNT(*) AS n FROM owners WHERE role = 'superadmin' AND active = 1"
     ).first();
@@ -722,6 +770,25 @@ async function patchResident(request, env, session, path) {
   await env.DB.prepare(`UPDATE owners SET ${fields.join(', ')} WHERE id = ?`).bind(...values, id).run();
   await audit(env, session, 'resident.update', { id, changed: Object.keys(b ?? {}) });
   return json({ id });
+}
+
+/**
+ * Would this mobile or email hand one person's account to another?
+ *
+ * Mobiles are compared in normalised form: the UNIQUE index cannot see that
+ * '9567791515' and '+919567791515' are the same number, and neither can a
+ * plain string comparison. Same query editOwner uses, lifted so both write
+ * paths answer identically.
+ */
+async function duplicateContact(env, id, field, value) {
+  if (field === 'mobile') {
+    return env.DB.prepare(
+      `SELECT id, name, flat FROM owners
+        WHERE id <> ? AND (mobile = ? OR mobile = ? OR '+91' || mobile = ?)`
+    ).bind(id, value, value.replace(/^\+91/, ''), value).first();
+  }
+  return env.DB.prepare('SELECT id, name, flat FROM owners WHERE email = ? AND id <> ?')
+    .bind(value, id).first();
 }
 
 /** Per-flat charges, before the period locks. */
@@ -1850,18 +1917,7 @@ async function editOwner(request, env, session, path) {
   // mobile is the login id and email will be the OTP address, so a duplicate
   // would quietly hand one person's account to another.
   if ((field === 'mobile' || field === 'email') && value != null) {
-    // Compared in normalised form. A raw string comparison here let two
-    // accounts share one number, because '9567791515' and '+919567791515' are
-    // different strings and the UNIQUE index could not see through that
-    // either. 0009 converted the stored rows; this keeps them that way.
-    const clash = field === 'mobile'
-      ? await env.DB.prepare(
-          `SELECT id, name, flat FROM owners
-            WHERE id <> ? AND (mobile = ? OR mobile = ? OR '+91' || mobile = ?)`
-        ).bind(id, value, value.replace(/^\+91/, ''), value).first()
-      : await env.DB.prepare(
-          'SELECT id, name, flat FROM owners WHERE email = ? AND id <> ?'
-        ).bind(value, id).first();
+    const clash = await duplicateContact(env, id, field, value);
     if (clash) {
       return problem(409, 'DDP-ADMIN-013',
         `That ${field} already belongs to ${clash.name} (${clash.flat}).`);

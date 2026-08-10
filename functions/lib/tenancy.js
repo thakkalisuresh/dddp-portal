@@ -201,6 +201,39 @@ export function canResetPassword({ actor, target }) {
 }
 
 /**
+ * Who may edit somebody's contact details — the same ladder as
+ * canResetPassword, and for the same reason.
+ *
+ * `mobile` IS the login identity. An admin who can rewrite the superadmin's
+ * mobile can point that account at a phone they hold and then use the ordinary
+ * forgot-password flow — which is the reset they were just refused, taken the
+ * long way round. The directory made this reachable from the main console, so
+ * the guard has to be here and not only on the reset path.
+ *
+ * Unlike a reset, a superadmin editing their OWN row is ordinary and allowed.
+ */
+export function canEditResident({ actor, target }) {
+  if (!actor || !target) return { ok: false, message: 'Unknown account.' };
+
+  if (actor.role !== 'admin' && actor.role !== 'superadmin') {
+    return { ok: false, message: 'Admins only.' };
+  }
+
+  if (actor.role === 'superadmin') return { ok: true };
+
+  if (target.role === 'superadmin' || target.role === 'admin') {
+    return {
+      ok: false,
+      message: target.id === actor.id
+        ? 'Change your own details from your profile, not the directory.'
+        : 'Only the superadmin can edit another admin.',
+    };
+  }
+
+  return { ok: true };
+}
+
+/**
  * A wa.me link needs bare digits with the country code and no '+'.
  *
  * Mobiles are stored in E.164 since 0009, so the old `wa.me/91${mobile}`

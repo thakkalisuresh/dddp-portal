@@ -427,6 +427,7 @@ Ownership changes: a flat is sold, or the builder hands one to a new buyer.
 | fn | `toIST` |  |
 | fn | `mergeTimeline` | One timeline from three tables. |
 | fn | `canResetPassword` | Who may reset whose password. |
+| fn | `canEditResident` | Who may edit somebody's contact details — the same ladder as canResetPassword, and for the same reason. |
 | fn | `waLink` | A wa.me link needs bare digits with the country code and no '+'. |
 | const | `RELATIONSHIPS` |  |
 | fn | `isRelationship` |  |
@@ -576,4 +577,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-296 exports. 179 have no doc comment.
+297 exports. 179 have no doc comment.

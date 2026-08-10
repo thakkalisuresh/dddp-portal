@@ -308,16 +308,79 @@ function impactNotice(p, plan, rate, reason, panel) {
 
 /* ── residents ─────────────────────────────────────────────────────────── */
 
+/**
+ * A directory keyed by the flat, not a list of people.
+ *
+ * The committee thinks in apartments — "who is in 7B" is the question actually
+ * asked, and the old list answered it by making somebody scan 41 rows for two
+ * that happened to share a number. A flat with an owner and a tenant now reads
+ * as one entry with two people under it, which is also the only way the
+ * tenanted case is visible at all.
+ *
+ * Rendered as <details> rather than a modal: every other disclosure in this app
+ * is a <details>, and one dialog for one screen is a second idiom to maintain.
+ */
 async function residentsPanel() {
-  const { residents } = await api.admin.residents();
   const status = el('div');
+  const list = el('div');
+  let showPast = false;
+  let groups = [];
 
   const flat = el('input', { class: 'input', placeholder: '4D', id: 'r-flat' });
   const name = el('input', { class: 'input', placeholder: 'Name', id: 'r-name' });
   const mobile = el('input', { class: 'input num', placeholder: '9XXXXXXXXX', id: 'r-mobile', inputmode: 'numeric' });
 
+  const heading = el('h2', {}, 'Residents');
+  const past = el('input', { type: 'checkbox', id: 'r-past' });
+  past.addEventListener('change', async () => {
+    showPast = past.checked;
+    await load();
+  });
+
+  // Filtered here rather than on the server: 94 flats is a small enough list to
+  // hold, and a round-trip per keystroke would make the box feel slower than
+  // scrolling — which is the thing it exists to replace.
+  const search = el('input', {
+    class: 'input', type: 'search', id: 'r-search',
+    placeholder: 'Search flat, name, mobile or email',
+    'aria-label': 'Search residents',
+  });
+  search.addEventListener('input', render);
+
+  async function load() {
+    list.replaceChildren(el('p', { class: 'muted' }, 'Loading…'));
+    try {
+      const { residents } = await api.admin.residents({ past: showPast });
+      groups = groupByFlat(residents);
+      render();
+    } catch (err) { showError(list, err); }
+  }
+
+  function render() {
+    const query = search.value.trim().toLowerCase();
+    const shown = query ? groups.filter((g) => matchesFlat(g, query)) : groups;
+    const people = shown.reduce((n, g) => n + g.people.length, 0);
+
+    heading.textContent = query
+      ? `Residents · ${people} in ${shown.length} flat${shown.length === 1 ? '' : 's'} matching “${search.value.trim()}”`
+      : `Residents · ${people} in ${shown.length} flat${shown.length === 1 ? '' : 's'}`;
+
+    if (!shown.length) {
+      list.replaceChildren(el('p', { class: 'muted' }, 'Nobody matches that.'));
+      return;
+    }
+    // Searching means looking for a person, and the answer is inside the flat.
+    // Leaving the results closed would make every search a two-step. Cards are
+    // rebuilt each keystroke, so clearing the box collapses the list again —
+    // predictable, and the alternative is leaving it expanded on whatever was
+    // last looked for.
+    list.replaceChildren(...shown.map((group) => flatCard(group, status, Boolean(query))));
+  }
+
+  await load();
+
   return el('div', { class: 'panel stack' },
-    el('h2', {}, `Residents · ${residents.length}`),
+    heading,
     status,
 
     el('details', {},
@@ -333,29 +396,151 @@ async function residentsPanel() {
               const r = await api.admin.addResident({
                 flat: flat.value, name: name.value, mobile: mobile.value });
               status.replaceChildren(otpPanel(r, name.value));
+              await load();
             } catch (err) { showError(status, err); }
           },
         }, 'Add and issue a password'))),
 
+    el('div', { class: 'field', style: 'margin-top:var(--s-3)' },
+      el('label', { for: 'r-search' }, 'Find a resident'), search),
+
+    // Who used to live here is history, and history about people who have left
+    // is not something every admin needs on screen to do the monthly job.
+    me.role === 'superadmin'
+      ? el('label', { class: 'small', style: 'display:flex;gap:var(--s-2);align-items:center' },
+          past, 'Show past residents')
+      : null,
+
     el('hr', { class: 'rule' }),
-    ...residents.map((r) =>
-      el('div', { class: 'rowitem' },
-        el('div', { class: 'rowitem__main' },
-          el('b', {}, `${r.flat} · ${r.name}`),
-          el('div', {}, `${r.mobile}${r.email ? ' · ' + r.email : ''}`)),
-        r.role !== 'owner' ? el('span', { class: 'chip chip--neutral' }, r.role) : null,
-        r.must_change_pw ? el('span', { class: 'chip chip--awaiting' }, 'Temp password') : null,
-        el('button', {
-          class: 'btn btn--sm btn--quiet', type: 'button',
-          onclick: async () => {
-            try {
-              const result = await api.admin.resetPassword(r.id);
-              status.replaceChildren(otpPanel(result, r.name));
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            } catch (err) { showError(status, err); }
-          },
-        }, 'Reset password')))
-  );
+    list);
+}
+
+/**
+ * Does this flat answer the query?
+ *
+ * Digits are compared with the punctuation removed, so '9846' finds
+ * '+91 98464 66511' — an admin reading a number off a phone screen types what
+ * they see, not what the column stores.
+ */
+function matchesFlat(group, query) {
+  const digits = query.replace(/\D/g, '');
+  if (group.flat.toLowerCase().startsWith(query)) return true;
+  return group.people.some((p) =>
+    String(p.name ?? '').toLowerCase().includes(query)
+    || String(p.email ?? '').toLowerCase().includes(query)
+    || (digits.length >= 3 && String(p.mobile ?? '').replace(/\D/g, '').includes(digits)));
+}
+
+/** [{flat, floor, people}] in the order the server sent, flats not repeated. */
+function groupByFlat(residents) {
+  const byFlat = new Map();
+  for (const r of residents) {
+    if (!byFlat.has(r.flat)) byFlat.set(r.flat, { flat: r.flat, floor: r.floor, people: [] });
+    byFlat.get(r.flat).people.push(r);
+  }
+  return [...byFlat.values()];
+}
+
+function flatCard(group, status, open = false) {
+  const current = group.people.filter((p) => p.active !== 0);
+  // Tenanted is derived, never stored — an active tenant in the flat means the
+  // tenant is billed and the owner is absent (migration 0011).
+  const tenanted = current.some((p) => p.relationship === 'tenant');
+  const names = (current.length ? current : group.people).map((p) => p.name).join(', ');
+
+  return el('details', { class: 'flat', open: open || null },
+    el('summary', {},
+      el('span', { class: 'flat__no' }, group.flat),
+      el('span', { class: 'flat__who' }, names || 'No current resident'),
+      tenanted ? el('span', { class: 'chip chip--neutral' }, 'Tenanted') : null,
+      current.some((p) => p.must_change_pw)
+        ? el('span', { class: 'chip chip--awaiting' }, 'Temp password') : null),
+    ...group.people.map((p) => personCard(p, status)));
+}
+
+function personCard(p, status) {
+  const inactive = p.active === 0;
+
+  return el('div', { class: `person ${inactive ? 'person--past' : ''}` },
+    el('div', { class: 'person__head' },
+      el('b', {}, p.name),
+      p.relationship === 'tenant' ? el('span', { class: 'chip chip--neutral' }, 'tenant') : null,
+      p.role !== 'owner' ? el('span', { class: 'chip chip--neutral' }, p.role) : null,
+      inactive
+        ? el('span', { class: 'chip chip--neutral' },
+            // With the year: a past resident can be years past, and "12 Mar"
+            // alone would not say which one.
+            p.moved_out_at
+              ? `moved out ${dayLabel(p.moved_out_at)} ${new Date(p.moved_out_at).getUTCFullYear()}`
+              : 'no longer resident')
+        : null,
+      !inactive && p.must_change_pw ? el('span', { class: 'chip chip--awaiting' }, 'Temp password') : null),
+
+    el('div', { class: 'dirgrid' },
+      el('div', { class: 'dircell' },
+        el('span', { class: 'dircell__label' }, 'Flat'),
+        el('span', { class: 'dircell__static' }, `${p.flat} · floor ${p.floor}`)),
+      // A past resident is a record, not a person to contact. Editing their
+      // number or handing them a password is never the right thing to do.
+      inactive ? el('div', { class: 'dircell' },
+                     el('span', { class: 'dircell__label' }, 'Mobile'),
+                     el('span', { class: 'dircell__static' }, p.mobile))
+               : editable(p, 'mobile', 'Mobile', status),
+      inactive ? el('div', { class: 'dircell' },
+                     el('span', { class: 'dircell__label' }, 'Email'),
+                     el('span', { class: 'dircell__static' }, p.email || '—'))
+               : editable(p, 'email', 'Email', status, { type: 'email', placeholder: 'none' })),
+
+    inactive ? null : el('div', { style: 'margin-top:var(--s-3)' },
+      el('button', {
+        class: 'btn btn--sm btn--quiet', type: 'button',
+        onclick: async () => {
+          try {
+            const result = await api.admin.resetPassword(p.id);
+            status.replaceChildren(otpPanel(result, p.name));
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          } catch (err) { showError(status, err); }
+        },
+      }, 'Reset password')));
+}
+
+/**
+ * One field, committed on blur or Enter — the same shape as the god-edit page.
+ * Per-keystroke saves would put an audit row behind every character typed, and
+ * the audit log exists to be read.
+ */
+function editable(p, field, label, status, { type = 'text', placeholder = '' } = {}) {
+  // Reassigned after each successful save, so a second edit reverts to the
+  // value the server actually holds rather than to the one it started with.
+  let original = String(p[field] ?? '');
+  const input = el('input', {
+    type, placeholder, value: original, 'aria-label': `${label} for ${p.name}, ${p.flat}`,
+  });
+  const wrap = el('div', { class: 'dircell' },
+    el('span', { class: 'dircell__label' }, label), input);
+
+  input.addEventListener('input', () => {
+    wrap.classList.toggle('dircell--dirty', input.value !== original);
+  });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
+  input.addEventListener('change', async () => {
+    if (input.value === original) return;
+    try {
+      await api.admin.updateResident(p.id, { [field]: input.value });
+      p[field] = input.value;
+      original = input.value;
+      wrap.classList.remove('dircell--dirty');
+      status.replaceChildren(
+        el('div', { class: 'note note--good' }, `${label} saved for ${p.name} (${p.flat}).`));
+    } catch (err) {
+      // Put the value back: leaving a rejected edit on screen reads as saved.
+      input.value = original;
+      wrap.classList.remove('dircell--dirty');
+      showError(status, err);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  });
+  return wrap;
 }
 
 /**

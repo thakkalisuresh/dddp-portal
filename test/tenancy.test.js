@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { outstandingFor, canChangeRole, mergeTimeline, toIST, canResetPassword, waLink } from '../functions/lib/tenancy.js';
+import {
+  outstandingFor, canChangeRole, mergeTimeline, toIST, canResetPassword,
+  canEditResident, waLink,
+} from '../functions/lib/tenancy.js';
 
 describe('what the outgoing owner leaves behind', () => {
   const bills = [
@@ -153,6 +156,56 @@ describe('canResetPassword', () => {
 
   it('refuses a resident resetting anyone', () => {
     expect(canResetPassword({ actor: resident, target: resident }).ok).toBe(false);
+  });
+});
+
+/* ── who may edit whose contact details ──────────────────────────────────── */
+
+describe('canEditResident', () => {
+  const superadmin = { id: 1, role: 'superadmin' };
+  const admin      = { id: 2, role: 'admin' };
+  const otherAdmin = { id: 3, role: 'admin' };
+  const resident   = { id: 4, role: 'owner' };
+
+  it('lets an admin edit a resident — the ordinary case', () => {
+    expect(canEditResident({ actor: admin, target: resident }).ok).toBe(true);
+  });
+
+  it('REFUSES an admin editing the superadmin', () => {
+    // mobile IS the login id. An admin who can move the superadmin's number to
+    // a phone they hold takes the account through forgot-password — the reset
+    // they were refused, arrived at sideways.
+    const v = canEditResident({ actor: admin, target: superadmin });
+    expect(v.ok).toBe(false);
+    expect(v.message).toMatch(/only the superadmin/i);
+  });
+
+  it('refuses one admin editing another', () => {
+    expect(canEditResident({ actor: admin, target: otherAdmin }).ok).toBe(false);
+  });
+
+  it('refuses an admin editing their own row from the directory', () => {
+    // Not a security boundary — a self-edit is fine — but the directory is the
+    // wrong door for it, and letting it through here means an admin can change
+    // their own login number in a screen built for other people's details.
+    const v = canEditResident({ actor: admin, target: admin });
+    expect(v.ok).toBe(false);
+    expect(v.message).toMatch(/profile/i);
+  });
+
+  it('lets the superadmin edit an admin, a resident, and themselves', () => {
+    expect(canEditResident({ actor: superadmin, target: admin }).ok).toBe(true);
+    expect(canEditResident({ actor: superadmin, target: resident }).ok).toBe(true);
+    expect(canEditResident({ actor: superadmin, target: superadmin }).ok).toBe(true);
+  });
+
+  it('refuses a resident editing anyone, including themselves', () => {
+    expect(canEditResident({ actor: resident, target: resident }).ok).toBe(false);
+  });
+
+  it('refuses when either side is missing', () => {
+    expect(canEditResident({ actor: admin, target: null }).ok).toBe(false);
+    expect(canEditResident({ actor: null, target: resident }).ok).toBe(false);
   });
 });
 
