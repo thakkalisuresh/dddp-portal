@@ -43,13 +43,39 @@ export function shapeComments(rows, { isAdmin = false } = {}) {
     }));
 }
 
-export async function listNotices(env) {
+export const NOTICE_SCOPES = ['all', 'owners'];
+
+/**
+ * Can this viewer see a notice with this scope?
+ *
+ * The ONE place the rule lives. The list query, the single-notice fetch, the
+ * comment endpoint and the unread badge all ask this function rather than
+ * repeating the condition — four copies of a visibility rule is four chances
+ * for one of them to be wrong, and the one that is wrong is the leak.
+ *
+ * Owners include ABSENT owners. A landlord living elsewhere is precisely the
+ * audience for an AGM paper, and `relationship` says nothing about presence.
+ *
+ * Admins see everything, because the admin console lists notices through the
+ * same endpoint residents do. An admin who happens to be a tenant would
+ * otherwise be unable to see — or withdraw — a notice they had just posted.
+ */
+export function canSeeNotice(scope, viewer) {
+  if (scope !== 'owners') return true;
+  if (viewer?.role === 'admin' || viewer?.role === 'superadmin') return true;
+  return viewer?.relationship !== 'tenant';
+}
+
+export async function listNotices(env, viewer) {
+  // Built from the same predicate rather than a second copy of the rule.
+  const scopeClause = canSeeNotice('owners', viewer) ? '' : " AND n.scope = 'all'";
+
   const rows = await env.DB.prepare(
-    `SELECT n.id, n.title, n.body, n.kind, n.event_date, n.allow_comments, n.posted_at,
+    `SELECT n.id, n.title, n.body, n.kind, n.event_date, n.allow_comments, n.posted_at, n.scope,
             COUNT(c.id) FILTER (WHERE c.hidden_at IS NULL) AS comment_count
        FROM notices n
        LEFT JOIN comments c ON c.notice_id = n.id
-      WHERE n.active = 1
+      WHERE n.active = 1${scopeClause}
       GROUP BY n.id
       ORDER BY n.posted_at DESC`
   ).all();
@@ -62,6 +88,7 @@ export async function listNotices(env) {
     eventDate: n.event_date,
     allowComments: Boolean(n.allow_comments),
     postedAt: n.posted_at,
+    scope: n.scope ?? 'all',
     commentCount: n.comment_count ?? 0,
   }));
 }
@@ -83,13 +110,18 @@ export async function listNotices(env) {
  * opened the board with no badge at all, which is precisely the person it
  * exists for.
  */
-export async function unreadNoticeCount(env, ownerId) {
+export async function unreadNoticeCount(env, viewer) {
+  // Scope applies to the badge as much as to the list, and forgetting it here
+  // would be worse than a leak: a tenant would carry a permanent "1" for a
+  // notice the board never shows them, and opening the tab would not clear it.
+  const scopeClause = canSeeNotice('owners', viewer) ? '' : " AND scope = 'all'";
+
   const row = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM notices
-      WHERE active = 1
+      WHERE active = 1${scopeClause}
         AND datetime(posted_at) >
             datetime(COALESCE((SELECT notices_seen_at FROM owners WHERE id = ?), '1970-01-01'))`
-  ).bind(ownerId).first();
+  ).bind(viewer.id).first();
   return row?.n ?? 0;
 }
 
@@ -105,11 +137,16 @@ export async function markNoticesSeen(env, ownerId, at = new Date().toISOString(
   return at;
 }
 
-export async function getNotice(env, noticeId, { isAdmin = false } = {}) {
+export async function getNotice(env, noticeId, { isAdmin = false, viewer = null } = {}) {
   const notice = await env.DB.prepare(
     'SELECT * FROM notices WHERE id = ? AND active = 1'
   ).bind(noticeId).first();
   if (!notice) return null;
+
+  // Checked here as well as in the list, because a notice id is a small
+  // integer and the list is not the only way to reach one. Returning null
+  // rather than a 403 also declines to confirm that the notice exists.
+  if (!canSeeNotice(notice.scope, viewer)) return null;
 
   const rows = await env.DB.prepare(
     `SELECT c.id, c.body, c.created_at, c.hidden_at, c.hidden_by,
@@ -129,15 +166,21 @@ export async function getNotice(env, noticeId, { isAdmin = false } = {}) {
     eventDate: notice.event_date,
     allowComments: Boolean(notice.allow_comments),
     postedAt: notice.posted_at,
+    scope: notice.scope ?? 'all',
     comments: shapeComments(rows.results ?? [], { isAdmin }),
   };
 }
 
-export async function addComment(env, { noticeId, ownerId, body }) {
+export async function addComment(env, { noticeId, ownerId, body, viewer = null }) {
   const notice = await env.DB.prepare(
-    'SELECT id, allow_comments FROM notices WHERE id = ? AND active = 1'
+    'SELECT id, allow_comments, scope FROM notices WHERE id = ? AND active = 1'
   ).bind(noticeId).first();
   if (!notice) fail('DDP-NOTICE-001', { noticeId });
+  // Scoped before anything else. Without this the scope leaks through replies:
+  // a tenant could post on an owners-only notice, and every owner reading the
+  // thread would see them there — which tells them the notice exists and that
+  // its audience is not what the committee chose.
+  if (!canSeeNotice(notice.scope, viewer)) fail('DDP-NOTICE-001', { noticeId });
   if (!notice.allow_comments) fail('DDP-NOTICE-002', { noticeId });
 
   const check = validateComment(body);

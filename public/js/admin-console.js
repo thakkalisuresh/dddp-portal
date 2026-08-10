@@ -207,6 +207,10 @@ async function noticesPanel() {
   const body = el('textarea', { class: 'input', id: 'n-body', style: 'min-height:100px' });
   const isEvent = el('input', { type: 'checkbox', id: 'n-event' });
   const allowComments = el('input', { type: 'checkbox', id: 'n-comments' });
+  // A checkbox rather than a dropdown, and unticked by default: 'all' is the
+  // right answer for nearly every notice, and the narrower option should be a
+  // thing somebody chooses on purpose.
+  const ownersOnly = el('input', { type: 'checkbox', id: 'n-owners' });
 
   return el('div', { class: 'panel stack' },
     el('h2', {}, 'Notices'),
@@ -217,6 +221,10 @@ async function noticesPanel() {
     el('label', { class: 'row', style: 'gap:var(--s-2)' }, allowComments, 'Allow replies'),
     el('p', { class: 'small muted' },
       'Replies carry each resident’s name and flat. Leave them off for announcements.'),
+    el('label', { class: 'row', style: 'gap:var(--s-2)' }, ownersOnly, 'Owners only'),
+    el('p', { class: 'small muted' },
+      'For AGM papers and anything with a vote attached. Owners living elsewhere '
+      + 'still see it; tenants do not, and cannot reply to it.'),
     el('button', {
       class: 'btn', type: 'button',
       onclick: async () => {
@@ -225,6 +233,7 @@ async function noticesPanel() {
             title: title.value, body: body.value,
             kind: isEvent.checked ? 'event' : 'notice',
             allowComments: allowComments.checked,
+            scope: ownersOnly.checked ? 'owners' : 'all',
           });
           await show('notices');
         } catch (err) { showError(status, err); }
@@ -236,7 +245,10 @@ async function noticesPanel() {
       el('div', { class: 'rowitem' },
         el('div', { class: 'rowitem__main' },
           el('b', {}, n.title),
-          el('div', {}, `${dayLabel(n.postedAt)} · ${n.commentCount} replies`)),
+          // Shown on the row, because a narrowed audience is invisible
+          // otherwise and "why did nobody see this" is the question it causes.
+          el('div', {}, `${dayLabel(n.postedAt)} · ${n.commentCount} replies`
+            + (n.scope === 'owners' ? ' · owners only' : ''))),
         el('button', {
           class: 'btn btn--sm btn--quiet', type: 'button',
           onclick: async () => {

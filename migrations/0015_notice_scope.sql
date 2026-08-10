@@ -1,0 +1,19 @@
+-- Who a notice is addressed to.
+--
+-- 'all'    — everybody living here, which is nearly everything.
+-- 'owners' — AGM papers, sinking-fund decisions, anything with a vote attached.
+--
+-- WHY OWNERS AND NOT TENANTS. A vote belongs to the person who owns the flat,
+-- so a tenant reading the AGM agenda is noise at best and confusing at worst —
+-- they cannot act on it. Borrowed from ApnaComplex, which scopes some notices
+-- the same way.
+--
+-- ABSENT OWNERS ARE THE AUDIENCE, NOT AN EDGE CASE. A landlord living in the
+-- Gulf is exactly who an AGM paper is for, and 0011 already stores that: they
+-- are relationship = 'owner' whether or not they sleep here. Scope reads
+-- relationship, never presence.
+--
+-- Defaults to 'all', so every notice already posted keeps meaning what it meant.
+-- No CHECK constraint, matching 0011: SQLite cannot always add one with the
+-- column, and the value is validated where it is written.
+ALTER TABLE notices ADD COLUMN scope TEXT NOT NULL DEFAULT 'all';

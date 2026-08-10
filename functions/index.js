@@ -16,7 +16,7 @@ import { previewGeneration, computeBill, isExempt } from './lib/billing.js';
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { readReceipt } from './lib/vision.js';
 import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
-import { listNotices, getNotice, addComment, setCommentHidden, markNoticesSeen } from './lib/notices.js';
+import { listNotices, getNotice, addComment, setCommentHidden, markNoticesSeen, NOTICE_SCOPES } from './lib/notices.js';
 import { submitMessage, fingerprintOf, AMENITIES, OFFICE_HOURS, MESSAGE_SUBJECTS } from './lib/public.js';
 import {
   transferFlat, canChangeRole, canResetPassword, waLink, planHandover, outstandingFor,
@@ -114,7 +114,7 @@ export default {
 
       // ── notices ───────────────────────────────────────────────────────
       if (route === 'GET /api/notices') {
-        const notices = await listNotices(env);
+        const notices = await listNotices(env, session.subject);
         // Stamped only for a resident reading their own board. An admin using
         // view-as would otherwise clear a badge for somebody who has not seen
         // anything — impersonation must not leave marks on the person being
@@ -125,7 +125,7 @@ export default {
       }
       if (request.method === 'GET' && /^\/api\/notices\/\d+$/.test(path)) {
         const notice = await getNotice(env, Number(path.split('/')[3]),
-          { isAdmin: hasRole(session, 'admin') });
+          { isAdmin: hasRole(session, 'admin'), viewer: session.subject });
         return notice ? json(notice) : problem(404, 'DDP-NOTICE-001', 'That notice could not be found.');
       }
       if (request.method === 'POST' && /^\/api\/notices\/\d+\/comments$/.test(path)) {
@@ -478,6 +478,12 @@ async function postComment(request, env, session, path) {
     noticeId: Number(path.split('/')[3]),
     ownerId: session.actor.id,
     body: body?.body,
+    // The SUBJECT, even though the comment is written by the actor.
+    // Impersonation is refused above, so they are the same person — and only
+    // subject carries `relationship`. Passing actor here leaves it undefined,
+    // canSeeNotice reads that as "not a tenant", and a tenant may comment on an
+    // owners-only notice. That is the leak this item exists to close.
+    viewer: session.subject,
   });
   await audit(env, session, 'comment.post', { noticeId: Number(path.split('/')[3]) });
   return json(result, { status: 201 });
@@ -565,13 +571,19 @@ async function postNotice(request, env, session) {
   const body = String(b?.body ?? '').trim();
   if (!title || !body) return problem(400, 'DDP-NOTICE-003', 'A notice needs a title and a body.');
 
-  const row = await env.DB.prepare(
-    `INSERT INTO notices (title, body, kind, event_date, allow_comments, active, posted_at)
-     VALUES (?, ?, ?, ?, ?, 1, ?) RETURNING id`
-  ).bind(title, body, b?.kind === 'event' ? 'event' : 'notice',
-         b?.eventDate ?? null, b?.allowComments ? 1 : 0, new Date().toISOString()).first();
+  // Anything unrecognised becomes 'all'. Defaulting the other way would let a
+  // typo quietly narrow the audience, and a notice nobody sees is a failure
+  // that looks exactly like a notice nobody replied to.
+  const scope = NOTICE_SCOPES.includes(b?.scope) ? b.scope : 'all';
 
-  await audit(env, session, 'notice.create', { id: row.id, title });
+  const row = await env.DB.prepare(
+    `INSERT INTO notices (title, body, kind, event_date, allow_comments, scope, active, posted_at)
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?) RETURNING id`
+  ).bind(title, body, b?.kind === 'event' ? 'event' : 'notice',
+         b?.eventDate ?? null, b?.allowComments ? 1 : 0, scope,
+         new Date().toISOString()).first();
+
+  await audit(env, session, 'notice.create', { id: row.id, title, scope });
   return json({ id: row.id }, { status: 201 });
 }
 
@@ -585,6 +597,13 @@ async function patchNotice(request, env, session, path) {
   }
   for (const [key, column] of [['allowComments', 'allow_comments'], ['active', 'active']]) {
     if (b?.[key] !== undefined) { fields.push(`${column} = ?`); values.push(b[key] ? 1 : 0); }
+  }
+  // Validated on the way in, like the insert. Narrowing an existing notice is
+  // allowed — the committee sometimes realises afterwards that something was
+  // owner business — and widening it back is the same operation.
+  if (b?.scope !== undefined && NOTICE_SCOPES.includes(b.scope)) {
+    fields.push('scope = ?');
+    values.push(b.scope);
   }
   if (!fields.length) return problem(400, 'DDP-NOTICE-003', 'Nothing to change.');
 

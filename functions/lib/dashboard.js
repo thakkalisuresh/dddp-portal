@@ -157,7 +157,7 @@ export async function dashboardPayload(env, subject, userAgent = '') {
     // Carried on /api/me because every screen renders the nav from this payload
     // — the badge has to be available on the dashboard, not only on the notice
     // board it points at.
-    unreadNotices: await unreadNoticeCount(env, ownerId),
+    unreadNotices: await unreadNoticeCount(env, subject),
   };
 }
 

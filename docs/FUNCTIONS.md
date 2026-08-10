@@ -278,6 +278,8 @@ Notices and their comments.
 | const | `RATE_PER_HOUR` |  |
 | fn | `validateComment` |  |
 | fn | `shapeComments` | Hidden comments keep their row and their author, so moderation is auditable rather than a silent disappearance. |
+| const | `NOTICE_SCOPES` |  |
+| fn | `canSeeNotice` | Can this viewer see a notice with this scope? The ONE place the rule lives. |
 | fn | `listNotices` |  |
 | fn | `unreadNoticeCount` | How many active notices are newer than the last time this resident looked. |
 | fn | `markNoticesSeen` | Stamped when the resident opens the notice list, which is the only honest definition of "seen" available without tracking scroll position. |
@@ -544,4 +546,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-271 exports. 167 have no doc comment.
+273 exports. 168 have no doc comment.
