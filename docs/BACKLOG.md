@@ -193,6 +193,41 @@ Walk the committee through the site on real-looking data before any resident
 sees it. There is no migration path, so this is the only rehearsal available.
 Do B11 first.
 
+## B17 — A status-first home, when there are four things to route between
+
+Raised 2026-08-09, after looking at MyGate and NoBrokerHood. Both open on a
+tile grid, and the question was whether the portal should too. Shape agreed,
+deliberately not scheduled — the trigger is below.
+
+**Why they have a hub, and we do not.** MyGate carries accounting, billing,
+visitors, facility booking, helpdesk, vendors, assets, security and forums;
+NoBrokerHood is visitors, payments, notices, forums, services and a help desk.
+A grid is what you build when there are eight to twelve destinations. This
+portal has three — Bill, Notices, Me — and they are all already visible in the
+bottom nav. A router for three doors you can see is a tap added to the one
+thing the resident came for, and C3 is explicit that the thing they came for is
+their own bill. It would also be the visual signature of the general-purpose
+society platform the PRD lists as a non-goal.
+
+**What is worth taking** is not the grid but the direction MyGate's own home
+moved in: quick actions and unified updates, so the screen answers "is there
+anything I need to do" rather than listing places to go. Concretely:
+
+* the bill stays first and largest, with Pay on it
+* one notice row beneath it, present only when there is something unread
+* two shortcuts — upload proof, past bills
+* the bottom nav is untouched at three tabs
+
+**The trigger: a fourth real destination.** Maintenance billing, a helpdesk,
+facility booking — something with its own state worth a tile. At three, this
+is the dashboard with a notice strip, which is B16's job anyway.
+
+**It overlaps B16 almost entirely, and that is the useful finding.** Taking
+notices off the public page makes them invisible unless something signals a new
+one; that signal is this design's notice row. Build it once, in B16. If that
+happens, most of B17 is already shipped and what is left is genuinely the grid
+— which is the part to keep not building.
+
 ## B5 — Residents with no email at all
 
 Self-service reset is built, so anyone with an address can recover unaided.
