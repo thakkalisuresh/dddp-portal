@@ -459,8 +459,16 @@ async function logIntent(env, session, path) {
       .bind(bill.id, new Date().toISOString()),
     // Only 'unpaid' advances. A bill already awaiting review must not regress
     // to 'initiated' because the resident tapped Pay a second time.
-    env.DB.prepare("UPDATE bills SET status = 'initiated' WHERE id = ? AND status = 'unpaid'")
-      .bind(bill.id),
+    //
+    // claimed_at is set ONLY when NULL, and that condition is the whole point:
+    // it starts the late-fee hold, so refreshing it on every tap would let
+    // anybody hold their own bill indefinitely by opening the app each night.
+    // The first claim is the honest one and the clock runs from it.
+    env.DB.prepare(
+      `UPDATE bills SET status = 'initiated',
+                        claimed_at = COALESCE(claimed_at, ?)
+        WHERE id = ? AND status = 'unpaid'`
+    ).bind(new Date().toISOString(), bill.id),
   ]);
 
   await audit(env, session, 'payment.intent', { billId: bill.id, total: bill.total });
@@ -1247,9 +1255,20 @@ async function reviewProof(env, session, path, approve) {
     ).bind(approve ? 'approved' : 'rejected', session.actor.id, now, proofId),
     approve
       ? env.DB.prepare("UPDATE bills SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, proof.bill_id)
-      // Rejection returns the bill to 'initiated', not 'unpaid': the resident
-      // did claim to have paid, and the late-fee cron must keep holding.
-      : env.DB.prepare("UPDATE bills SET status = 'initiated' WHERE id = ?").bind(proof.bill_id),
+      // Rejection returns the bill to 'unpaid' (B13). It used to return it to
+      // 'initiated', which the cron held rather than charged — so a resident
+      // whose screenshot was rejected once became permanently immune to the
+      // late fee, and the more clearly wrong the screenshot, the longer the
+      // protection lasted.
+      //
+      // A rejected proof is the treasurer saying this payment was not found.
+      // The bill is overdue and is charged like any other; where that is harsh
+      // — a genuine payment with a bad screenshot — the treasurer has the
+      // waive button that B14 put next to it.
+      //
+      // claimed_at is deliberately left alone. Their week of hold already ran;
+      // clearing it would hand out a fresh one for each rejected attempt.
+      : env.DB.prepare("UPDATE bills SET status = 'unpaid' WHERE id = ?").bind(proof.bill_id),
   ]);
 
   await audit(env, session, approve ? 'proof.approve' : 'proof.reject', { proofId, billId: proof.bill_id });

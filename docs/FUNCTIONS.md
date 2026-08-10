@@ -75,6 +75,7 @@ Pure billing arithmetic.
 | fn | `meterReconciliation` | Sub-meters never sum to the bulk meter — there are line losses and unmetered common usage. |
 | fn | `previewGeneration` | What a month's import will actually bill, computed BEFORE anything is written. |
 | fn | `isExempt` | Is this resident exempt on this date? Inclusive of the end date: "exempt until 30 November" means the 30th is still covered, which is how anyone reads it. |
+| const | `CLAIM_HOLD_DAYS` | How long a claim of payment holds off the late fee. |
 | fn | `lateFeeDecision` | Which bills the nightly cron should charge. |
 
 ### `functions/lib/building.js`
@@ -546,4 +547,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-273 exports. 168 have no doc comment.
+274 exports. 168 have no doc comment.

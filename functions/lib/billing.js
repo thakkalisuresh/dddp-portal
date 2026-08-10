@@ -245,13 +245,32 @@ export function isExempt(exemptUntil, today) {
 }
 
 /**
+ * How long a claim of payment holds off the late fee.
+ *
+ * The treasurer reconciles against a bank statement, which is a weekly job at
+ * worst. A week is long enough that an honest payer is never charged for the
+ * committee's timing, and short enough that "I tapped Pay" is not a permanent
+ * exemption nobody granted.
+ */
+export const CLAIM_HOLD_DAYS = 7;
+
+/**
  * Which bills the nightly cron should charge.
  *
- * `initiated` is deliberately HELD, not charged: someone who tapped Pay on the
- * 9th must not be penalised because approval landed on the 15th. The treasurer
+ * `initiated` is HELD rather than charged: someone who tapped Pay on the 9th
+ * must not be penalised because approval landed on the 15th. The treasurer
  * checks the bank statement and decides.
+ *
+ * THE HOLD NOW ENDS (B13). It used to be unbounded, which made `initiated` an
+ * exemption anybody could grant themselves by tapping a button — and a
+ * rejected screenshot used to put the bill back into exactly that state, so
+ * one rejection made a resident permanently immune. Both holes were the same
+ * hole: a hold with no clock. After CLAIM_HOLD_DAYS the claim has had its week
+ * and the bill is charged like any other.
  */
-export function lateFeeDecision(bill, { today, dueDate, graceDays = 0, exemptUntil = null }) {
+export function lateFeeDecision(bill, {
+  today, dueDate, graceDays = 0, exemptUntil = null, holdDays = CLAIM_HOLD_DAYS,
+}) {
   if (bill.late_fee_at) return { action: 'skip', reason: 'already-applied' }; // idempotency guard
   if (bill.status === 'paid' || bill.status === 'waived') return { action: 'skip', reason: 'settled' };
   if (bill.status === 'awaiting') return { action: 'skip', reason: 'proof-under-review' };
@@ -265,6 +284,21 @@ export function lateFeeDecision(bill, { today, dueDate, graceDays = 0, exemptUnt
   cutoff.setUTCDate(cutoff.getUTCDate() + graceDays);
   if (new Date(today) <= cutoff) return { action: 'skip', reason: 'not-yet-due' };
 
-  if (bill.status === 'initiated') return { action: 'hold', reason: 'payment-claimed' };
+  if (bill.status === 'initiated') {
+    // No claim time at all means nothing is known about when they tapped, and
+    // an unknown is not a reason to hold forever — that is the bug. Treated as
+    // expired, which is also what 0016 backfills away for existing rows.
+    if (!bill.claimed_at) return { action: 'charge', reason: 'claim-unconfirmed' };
+
+    const expires = new Date(bill.claimed_at);
+    expires.setUTCDate(expires.getUTCDate() + holdDays);
+    // Compared by date, not instant: `today` is a date and claimed_at carries a
+    // time, so an instant comparison would end the hold part-way through its
+    // last day depending on what o'clock somebody tapped Pay.
+    if (String(today) <= expires.toISOString().slice(0, 10)) {
+      return { action: 'hold', reason: 'payment-claimed' };
+    }
+    return { action: 'charge', reason: 'claim-unconfirmed' };
+  }
   return { action: 'charge', reason: 'overdue' };
 }

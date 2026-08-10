@@ -63,7 +63,12 @@ export async function applyLateFees(env, { today = new Date().toISOString().slic
 
   for (const p of periods.results ?? []) {
     const bills = await env.DB.prepare(
-      `SELECT b.id, b.flat, b.status, b.total, b.late_fee_at,
+      // claimed_at is not optional here: lateFeeDecision measures the hold on
+      // an `initiated` bill from it, and a column left out of this SELECT
+      // arrives as undefined, reads as "no claim", and charges every held bill
+      // on the first run. Unit tests would not catch it — they hand the
+      // decision a bill object directly and never go through this query.
+      `SELECT b.id, b.flat, b.status, b.total, b.late_fee_at, b.claimed_at,
               o.late_fee_exempt_until
          FROM bills b LEFT JOIN owners o ON o.id = b.owner_id
         WHERE b.period = ?`

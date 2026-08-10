@@ -23,10 +23,44 @@ describe('planning a month of late fees', () => {
   });
 
   it('HOLDS a resident who tapped Pay — approval lag is not their fault', () => {
-    const plan = planLateFees([bill({ status: 'initiated' })], opts);
+    // Claimed two days ago, well inside the week. This is the case the hold
+    // exists for and it must keep working.
+    const plan = planLateFees(
+      [bill({ status: 'initiated', claimed_at: '2026-08-10T09:00:00Z' })], opts);
     expect(plan.charge).toHaveLength(0);
     expect(plan.hold).toHaveLength(1);
     expect(plan.hold[0].reason).toBe('payment-claimed');
+  });
+
+  it('stops holding once the claim has had its week (B13)', () => {
+    // The hold used to have no end, which made `initiated` an exemption anybody
+    // could grant themselves by tapping a button.
+    const plan = planLateFees(
+      [bill({ status: 'initiated', claimed_at: '2026-08-01T09:00:00Z' })],
+      { ...opts, today: '2026-08-20' });
+    expect(plan.hold).toHaveLength(0);
+    expect(plan.charge).toHaveLength(1);
+    expect(plan.charge[0].newTotal).toBe(379);
+  });
+
+  it('holds through the last day of the window, not part of it', () => {
+    // claimed_at carries a time and `today` does not, so an instant comparison
+    // would end the hold early or late depending on what o'clock they tapped.
+    const claimed = { status: 'initiated', claimed_at: '2026-08-10T23:30:00Z' };
+    const lastDay = planLateFees([bill(claimed)], { ...opts, today: '2026-08-17' });
+    expect(lastDay.hold).toHaveLength(1);
+    const dayAfter = planLateFees([bill(claimed)], { ...opts, today: '2026-08-18' });
+    expect(dayAfter.charge).toHaveLength(1);
+  });
+
+  it('charges an initiated bill that has no claim time at all', () => {
+    // An unknown is not a reason to hold forever — that was the bug. 0016
+    // backfills existing rows so this should not occur, but the decision must
+    // not depend on the migration having run.
+    const plan = planLateFees([bill({ status: 'initiated' })], opts);
+    expect(plan.hold).toHaveLength(0);
+    expect(plan.charge[0].reason ?? 'charge').toBeDefined();
+    expect(plan.charge).toHaveLength(1);
   });
 
   it('never charges a proof already under review', () => {
@@ -87,7 +121,7 @@ describe('planning a month of late fees', () => {
   it('splits a mixed month correctly', () => {
     const plan = planLateFees([
       bill({ id: 1, status: 'unpaid' }),
-      bill({ id: 2, status: 'initiated' }),
+      bill({ id: 2, status: 'initiated', claimed_at: '2026-08-11T09:00:00Z' }),
       bill({ id: 3, status: 'awaiting' }),
       bill({ id: 4, status: 'paid' }),
       bill({ id: 5, status: 'unpaid', late_fee_at: 'x' }),
