@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   normaliseVisionResult, assessProof, validateUpload, extractUtr, shapeQueue, r2Key, MAX_BYTES,
+  referenceKind, isBankComparable,
 } from '../functions/lib/proof.js';
 import { safeJson, bytesToBase64 } from '../functions/lib/vision.js';
 
@@ -33,6 +34,54 @@ describe('reading what the model returned', () => {
   it('rejects reference numbers of the wrong length', () => {
     expect(extractUtr('12345')).toBe(null);
     expect(extractUtr('')).toBe(null);
+  });
+
+  // The references residents actually send. Before these were accepted,
+  // extractUtr returned null for PhonePe and Kiwi, the uniqueness check at
+  // upload was skipped entirely, and the same payment could be claimed twice.
+  it('reads a PhonePe transaction id', () => {
+    expect(extractUtr('T2608051827501900771902')).toBe('T2608051827501900771902');
+    expect(extractUtr('PhonePe Transaction ID T2608051827501900771902')).toBe('T2608051827501900771902');
+  });
+
+  it('reads an alphanumeric app reference', () => {
+    expect(extractUtr('AXBbc0389e4af71ea4ca1a9a1ea673e5318'))
+      .toBe('AXBBC0389E4AF71EA4CA1A9A1EA673E5318');
+  });
+
+  it('prefers the 12-digit RRN when a screenshot shows both', () => {
+    // Only the RRN reaches the bank statement, so it is the one worth keeping.
+    expect(extractUtr('UTR 621932447570 · txn T2608051827501900771902')).toBe('621932447570');
+  });
+
+  it('does not mistake the association account number for a reference', () => {
+    // 0184073000000744 is printed on every payment screenshot in the building.
+    expect(extractUtr('To A/c 0184073000000744 South Indian Bank')).toBe(null);
+  });
+
+  it('accepts a long numeric reference only when it is the whole value', () => {
+    expect(extractUtr('110369293853')).toBe('110369293853');
+    expect(extractUtr('12345678901234567')).toBe('12345678901234567');
+  });
+
+  it('ignores words that happen to be long', () => {
+    expect(extractUtr('PAYMENTSUCCESSFUL')).toBe(null);
+    expect(extractUtr('DD DIAMOND PARK RESIDENTS WELFARE ASSOCIATION')).toBe(null);
+  });
+});
+
+describe('which references can be checked against a bank statement', () => {
+  it('knows an RRN can, and an app id cannot', () => {
+    expect(isBankComparable('621932447570')).toBe(true);
+    expect(isBankComparable('T2608051827501900771902')).toBe(false);
+    expect(isBankComparable('AXBBC0389E4AF71EA4CA1A9A1EA673E5318')).toBe(false);
+    expect(isBankComparable(null)).toBe(false);
+  });
+
+  it('names the kind for display', () => {
+    expect(referenceKind('621932447570')).toBe('rrn');
+    expect(referenceKind('T2608051827501900771902')).toBe('phonepe');
+    expect(referenceKind('AXBBC0389E4AF71EA4CA1A9A1EA673E5318')).toBe('app');
   });
 
   it('survives a model returning nothing useful', () => {

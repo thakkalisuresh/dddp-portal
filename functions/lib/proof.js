@@ -11,12 +11,69 @@ import { fail } from './errors.js';
 export const MAX_BYTES = 2 * 1024 * 1024;   // after client-side compression
 export const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp'];
 
-/** UPI reference numbers are 12 digits. */
-const UTR_RE = /\b(\d{12})\b/;
+/**
+ * Payment references, in the forms the apps actually print them.
+ *
+ * The 12-digit NPCI reference (UTR/RRN) is the canonical one: it is the only
+ * form that survives the trip to the association's bank statement, so it is
+ * always preferred when a screenshot shows one. But it is not the only thing
+ * residents send us, and treating it as such cost us the duplicate guard
+ * entirely for some apps — `parsed.utr` came back null, the uniqueness check
+ * at upload was skipped, and the same payment could be claimed on two bills.
+ *
+ * Observed in the residents' group:
+ *   Google Pay / bank apps  621932447570               12 digits
+ *   NEFT "Reference (RRN)"  618622601669               12 digits
+ *   PhonePe                 T2608051827501900771902    T + 22 digits
+ *   Kiwi (UPI on card)      AXBbc0389e4af71ea4ca1a...  alphanumeric
+ *
+ * A PhonePe or Kiwi id identifies the payment within that app, not at the
+ * bank, so it will never match a statement narration — see lib/statement.js,
+ * which falls back to amount and date. It is still worth storing, because
+ * uniqueness across our own proofs is exactly what stops a double claim.
+ */
+const RRN_RE = /\b(\d{12})\b/;
+const PHONEPE_RE = /\bT\d{15,30}\b/i;
+/** Mixed letters and digits — must contain both, or it is a word or an account number. */
+const ALNUM_RE = /\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)([A-Z0-9]{12,40})\b/i;
+/** A long run of digits, accepted only when it is the whole value. */
+const LONG_DIGITS_RE = /^(\d{13,22})$/;
 
+/**
+ * @returns {string|null} the reference, uppercased, or null
+ */
 export function extractUtr(text) {
-  const match = String(text ?? '').match(UTR_RE);
-  return match ? match[1] : null;
+  const raw = String(text ?? '').trim();
+  if (!raw) return null;
+
+  const rrn = raw.match(RRN_RE);
+  if (rrn) return rrn[1];
+
+  const phonepe = raw.match(PHONEPE_RE);
+  if (phonepe) return phonepe[0].toUpperCase();
+
+  // Only when the whole field is the number. Plucking a long digit run out of
+  // surrounding prose finds the association's account number, not a reference.
+  const digits = raw.match(LONG_DIGITS_RE);
+  if (digits) return digits[1];
+
+  const alnum = raw.match(ALNUM_RE);
+  if (alnum) return alnum[1].toUpperCase();
+
+  return null;
+}
+
+/** What kind of reference this is, for display and for match strategy. */
+export function referenceKind(reference) {
+  if (!reference) return null;
+  if (RRN_RE.test(reference) && /^\d{12}$/.test(reference)) return 'rrn';
+  if (PHONEPE_RE.test(reference)) return 'phonepe';
+  return 'app';
+}
+
+/** Only an RRN is comparable against a bank statement. */
+export function isBankComparable(reference) {
+  return referenceKind(reference) === 'rrn';
 }
 
 /**
@@ -46,7 +103,12 @@ export function normaliseVisionResult(raw) {
     amount = Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
   }
 
-  const utrRaw = pick('utr', 'UTR', 'referenceNumber', 'reference', 'transactionId', 'txnId');
+  // Ordered by how comparable the value is against a bank statement: an RRN
+  // beats an app's own transaction id, so ask for the RRN keys first.
+  const utrRaw = pick(
+    'utr', 'UTR', 'rrn', 'RRN', 'referenceNumber', 'reference_number', 'referenceNo', 'reference',
+    'transactionId', 'transaction_id', 'txnId', 'upiTransactionId', 'upi_transaction_id',
+  );
   const utr = utrRaw ? extractUtr(utrRaw) : null;
 
   return {

@@ -87,6 +87,10 @@ export const api = {
     parseReadings: (text)   => request('POST', '/api/admin/readings/parse', { text }),
     preview:       (period) => request('GET',  `/api/admin/preview?period=${period}`),
     openPeriod:    (body)   => request('POST', '/api/admin/periods', body),
+    /** dryRun first, always: the caveat is built from what it returns. */
+    changeRate:    (period, ratePerKg, reason, dryRun = false) =>
+                               request('PATCH', `/api/admin/periods/${period}`,
+                                       { ratePerKg, reason, dryRun }),
     generate:      (period) => request('POST', `/api/admin/periods/${period}/generate`),
 
     proofs:        ()       => request('GET',  '/api/admin/proofs'),
@@ -117,6 +121,28 @@ export const api = {
     messages:      ()        => request('GET',  '/api/admin/messages'),
     markMessageHandled: (id) => request('POST', `/api/admin/messages/${id}/handled`),
     proofArchive:  (params = '') => request('GET', `/api/admin/proofs/archive${params}`),
+
+    /**
+     * Bank statement reconciliation. Multipart, so it bypasses the JSON helper.
+     * The file is parsed server-side and never stored; only its credit rows are
+     * held, and only until `finishStatement` or the nightly sweep.
+     */
+    async uploadStatement(file) {
+      const form = new FormData();
+      form.append('statement', file, file.name || 'statement.csv');
+      const res = await fetch('/api/admin/statement', {
+        method: 'POST', credentials: 'same-origin', body: form,
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = data?.error ?? {};
+        throw new ApiError(res.status, err.code ?? 'UNKNOWN', err.message);
+      }
+      return data;
+    },
+    statementReport:  (id) => request('GET',    `/api/admin/statement/${id}`),
+    finishStatement:  (id) => request('POST',   `/api/admin/statement/${id}/finish`),
+    discardStatement: (id) => request('DELETE', `/api/admin/statement/${id}`),
     deleteProof:   (id)      => request('DELETE', `/api/admin/proofs/${id}`),
     updateBill:    (id, b)   => request('PATCH', `/api/admin/bills/${id}`, b),
     backupHealth:  ()        => request('GET',  '/api/admin/backup-health'),

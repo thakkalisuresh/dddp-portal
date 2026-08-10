@@ -11,7 +11,7 @@ The portal is **built and deployed**. It has never billed a real month.
 
 ## Production right now
 
-**https://diamondpark.pages.dev** · 472 tests · `npm run doctor` reports 0 failing
+**https://diamondpark.pages.dev** · 547 tests · `npm run doctor` reports 0 failing
 
 | | |
 |---|---|
@@ -20,7 +20,7 @@ The portal is **built and deployed**. It has never billed a real month.
 | Bills | 880 — all demo |
 | Months | 10 — all demo |
 | Migrations applied | 13 |
-| Error codes | 61 |
+| Error codes | 69 |
 
 > ### The demo data is live
 >
@@ -45,11 +45,28 @@ The portal is **built and deployed**. It has never billed a real month.
 **Billing.** Readings grid, paste import, per-period rate, preview before
 generation, ceiling rounding, the 2.60 conversion, locked periods.
 
-**Payment.** UPI deep links per platform, dynamic QR on desktop, Android
-`intent://`, a manual fallback on every platform, payment-intent logging.
+**Payment.** UPI deep links per platform, dynamic QR on desktop, a named app row
+on both phone platforms (Android by `package=`, with `browser_fallback_url`), a
+manual fallback on every platform that the page reveals by itself when a handoff
+goes nowhere, payment-intent logging from Pay and from Copy alike.
 
 **Proof.** Client-side resize, upload to R2, duplicate detection by image hash
 and UTR, a review queue with bulk approve for exact matches, retention pruning.
+Payment references now cover what residents actually send — the 12-digit RRN,
+PhonePe's `T…` id, and card-UPI alphanumerics. Before this the reference came
+back null for those apps, the uniqueness check was skipped, and one payment
+could be claimed on two bills.
+
+**Reconciliation.** The treasurer uploads the bank statement (CSV, or PDF with a
+text layer) and the portal matches its credits against what residents claimed —
+by RRN first, then by amount and date where the app's reference cannot reach the
+bank. It reports four disagreements: claimed with no money, bank disagrees on
+amount, one reference claimed twice, and money in with no screenshot (with the
+unpaid bills that match it). On finish the verdicts are saved and the statement
+is deleted; anything left open is swept at 3am. The statement file is never
+stored, and never leaves the Worker — the PDF text layer is read locally rather
+than posted to the vision provider, because the alternative is mailing every
+member's payment history to a third party.
 
 **People.** Roster import with preview against the real 99-flat model, temp
 passwords, a send-and-chase worklist, owners and tenants, flat transfer,

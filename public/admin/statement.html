@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reconcile the statement — Diamond Park</title>
+<link rel="stylesheet" href="../css/tokens.css">
+<link rel="stylesheet" href="../css/app.css">
+<style>
+  .sect { padding: var(--s-4); border-bottom: 1px solid var(--border); background: var(--surface);
+          display: flex; align-items: center; gap: var(--s-4); flex-wrap: wrap; }
+  .drop {
+    margin: var(--s-4); padding: var(--s-6) var(--s-4); text-align: center;
+    border: 1.5px dashed var(--border); border-radius: var(--radius); background: var(--surface);
+  }
+  .drop--over { border-color: var(--accent); background: var(--accent-wash, var(--surface)); }
+  .tally { display: flex; gap: var(--s-5); flex-wrap: wrap; padding: var(--s-4);
+           font-family: var(--font-ui); font-variant-numeric: tabular-nums; }
+  .tally div { display: flex; flex-direction: column; gap: 2px; }
+  .tally b { font-size: var(--text-lg); }
+  .tally span { font-size: var(--text-sm); color: var(--ink-muted); }
+  .rrow { display: flex; gap: var(--s-4); align-items: flex-start;
+          padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--border); }
+  .rrow--bad { background: var(--overdue-wash); }
+  .rmeta { flex: 1; min-width: 0; font-family: var(--font-ui); }
+  .rmeta b { display: block; }
+  .rmeta div { font-size: var(--text-sm); color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+  .rmeta .bad { color: var(--overdue); }
+  .qact { display: flex; gap: var(--s-2); flex: none; flex-wrap: wrap; justify-content: flex-end; }
+  .tag { font-size: var(--text-xs); border: 1px solid var(--border); border-radius: 999px;
+         padding: 1px var(--s-2); color: var(--ink-muted); white-space: nowrap; }
+  .privacy { margin: var(--s-4); padding: var(--s-3) var(--s-4); border-radius: var(--radius);
+             background: var(--surface); border: 1px solid var(--border);
+             font-size: var(--text-sm); color: var(--ink-muted); }
+</style>
+</head>
+<body>
+<div class="godbar" id="godbar" hidden></div>
+<header class="appbar">
+  <span class="appbar__who" id="who">Loading…</span>
+  <a class="appbar__action" href="/admin/proofs.html">Proofs</a>
+</header>
+<main class="page page--wide" id="main"><p class="muted">Loading…</p></main>
+<script type="module" src="../js/admin-statement.js"></script>
+</body>
+</html>

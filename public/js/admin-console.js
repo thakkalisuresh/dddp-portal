@@ -18,11 +18,17 @@ import { money, kg, periodLabel, dayLabel } from './i18n.js';
 const main = $('#main');
 let me = null;
 
+// Ordered by when you actually do them. Rates comes before Readings because
+// the month has to be open, with its rate set, before a reading can be entered
+// against it — saveReadings fails outright on a period that does not exist.
+// The strip used to read Roster, Readings, Proofs, …, Rates, which put the
+// first step of every month near the end.
 const TABS = [
   { id: 'roster',    label: 'Roster',    href: '/admin/roster.html' },
+  { id: 'periods',   label: 'Rates',     render: periodsPanel },
   { id: 'readings',  label: 'Readings',  href: '/admin/readings.html' },
   { id: 'proofs',    label: 'Proofs',    href: '/admin/proofs.html' },
-  { id: 'periods',   label: 'Rates',     render: periodsPanel },
+  { id: 'statement', label: 'Reconcile', href: '/admin/statement.html' },
   { id: 'latefees',  label: 'Late fees', render: lateFeesPanel },
   { id: 'residents', label: 'Residents', render: residentsPanel },
   { id: 'notices',   label: 'Notices',   render: noticesPanel },
@@ -60,7 +66,13 @@ function renderTabs() {
 }
 
 async function show(id) {
-  const tab = TABS.find((t) => t.id === id && t.render) ?? TABS.find((t) => t.render);
+  // The same role test as renderTabs, applied to the destination rather than
+  // to the tab strip. Hiding a tab only hides the button: /admin/#errors typed
+  // or bookmarked still reached the panel, which then called a god endpoint and
+  // got the 403 it deserved — correct, but an admin met a raw error where they
+  // should simply land somewhere sensible.
+  const visible = (t) => t.render && (!t.superadmin || me.role === 'superadmin');
+  const tab = TABS.find((t) => t.id === id && visible(t)) ?? TABS.find(visible);
   location.hash = tab.id;
   // Tabs change the view without a page load, so trackPage never fires for
   // them. Without this, an admin's whole session reads as one visit to /admin.
@@ -78,14 +90,64 @@ async function show(id) {
 
 /* ── rates ─────────────────────────────────────────────────────────────── */
 
+/** '2026-07' -> '2026-08' */
+function nextMonth(period) {
+  const [y, m] = String(period).split('-').map(Number);
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+}
+
+/** The building has always paid by the 10th of the month after the usage month. */
+function defaultDue(period) {
+  return `${nextMonth(period)}-10`;
+}
+
+/**
+ * The usage months worth offering: the last twelve that have ended, newest
+ * first, minus the ones already open.
+ *
+ * It starts at LAST month, not this one. A usage month cannot be billed until
+ * it has finished, because the meter that closes it is read in the month after
+ * — the same off-by-one that made this field confusing as free text, where
+ * "2026-08" typed during August meant a month that had not happened yet.
+ *
+ * Already-open months are dropped because `periods.period` is the primary key:
+ * choosing one again is not a warning, it is a failed insert.
+ */
+function selectableMonths(periods) {
+  const taken = new Set(periods.map((p) => p.period));
+  const now = new Date();
+  let year = now.getUTCFullYear();
+  let month = now.getUTCMonth();          // 1-indexed previous month; 0 in January
+  const out = [];
+  for (let i = 0; i < 12; i += 1) {
+    if (month === 0) { month = 12; year -= 1; }
+    const period = `${year}-${String(month).padStart(2, '0')}`;
+    if (!taken.has(period)) out.push(period);
+    month -= 1;
+  }
+  return out;
+}
+
 async function periodsPanel() {
   const { periods } = await api.admin.periods();
   const status = el('div');
+  const months = selectableMonths(periods);
 
-  const period = el('input', { class: 'input num', placeholder: '2026-08', id: 'p-period' });
   const rate = el('input', { class: 'input num', placeholder: '78.00', id: 'p-rate', inputmode: 'decimal' });
-  const due = el('input', { class: 'input num', placeholder: '2026-09-10', id: 'p-due' });
   const fee = el('input', { class: 'input num', value: '50', id: 'p-fee', inputmode: 'numeric' });
+  // type=date gives the platform's own calendar, and yields YYYY-MM-DD —
+  // already the format the API and the periods table expect, so nothing has to
+  // parse a typed date and guess whether 05/08 was May or August.
+  const due = el('input', { class: 'input', type: 'date', id: 'p-due' });
+
+  const period = el('select', {
+    class: 'input', id: 'p-period',
+    // The due date follows the month rather than being typed twice. Still
+    // editable — this sets a sensible default, it does not lock it.
+    onchange: () => { due.value = defaultDue(period.value); },
+  }, ...months.map((p) => el('option', { value: p }, periodLabel(p))));
+
+  if (months.length) due.value = defaultDue(months[0]);
 
   return el('div', { class: 'panel stack' },
     el('h2', {}, 'Rate per kg'),
@@ -94,39 +156,154 @@ async function periodsPanel() {
       + 'carried forward: an inherited rate would produce 52 bills that look '
       + 'normal and are all wrong.'),
 
-    el('div', { class: 'field' }, el('label', { for: 'p-period' }, 'Usage month'), period,
-      el('span', { class: 'field__hint' }, 'The month the gas was used. Meters are read the month after.')),
-    el('div', { class: 'field' }, el('label', { for: 'p-rate' }, 'Rate per kg'), rate),
-    el('div', { class: 'field' }, el('label', { for: 'p-due' }, 'Payment due'), due),
-    el('div', { class: 'field' }, el('label', { for: 'p-fee' }, 'Late fee (whole rupees)'), fee,
-      el('span', { class: 'field__hint' }, 'Whole rupees only. No paise.')),
-    status,
-    el('button', {
-      class: 'btn', type: 'button',
-      onclick: async () => {
-        try {
-          const r = await api.admin.openPeriod({
-            period: period.value.trim(), ratePerKg: Number(rate.value),
-            dueDate: due.value.trim(), lateFee: Number(fee.value),
-          });
-          status.replaceChildren(
-            el('div', { class: r.sanity.level === 'warn' ? 'note note--warn' : 'note note--good' },
-              r.sanity.level === 'warn' ? r.sanity.message : `Opened ${periodLabel(r.period)}.`));
-          await show('periods');
-        } catch (err) { showError(status, err); }
-      },
-    }, 'Open month'),
+    ...(months.length
+      ? [
+          el('div', { class: 'field' }, el('label', { for: 'p-period' }, 'Usage month'), period,
+            el('span', { class: 'field__hint' }, 'The month the gas was used. Meters are read the month after.')),
+          el('div', { class: 'field' }, el('label', { for: 'p-rate' }, 'Rate per kg'), rate),
+          el('div', { class: 'field' }, el('label', { for: 'p-due' }, 'Payment due'), due),
+          el('div', { class: 'field' }, el('label', { for: 'p-fee' }, 'Late fee (whole rupees)'), fee,
+            el('span', { class: 'field__hint' }, 'Whole rupees only. No paise.')),
+          status,
+          el('button', {
+            class: 'btn', type: 'button',
+            onclick: async () => {
+              try {
+                const r = await api.admin.openPeriod({
+                  period: period.value, ratePerKg: Number(rate.value),
+                  dueDate: due.value, lateFee: Number(fee.value),
+                });
+                status.replaceChildren(
+                  el('div', { class: r.sanity.level === 'warn' ? 'note note--warn' : 'note note--good' },
+                    r.sanity.level === 'warn' ? r.sanity.message : `Opened ${periodLabel(r.period)}.`));
+                await show('periods');
+              } catch (err) { showError(status, err); }
+            },
+          }, 'Open month'),
+        ]
+      : [el('p', { class: 'note' },
+          'Every month of the last year is already open. Nothing to add here.')]),
 
     el('hr', { class: 'rule' }),
     el('p', { class: 'label' }, 'Months'),
-    ...periods.map((p) =>
-      el('div', { class: 'rowitem' },
-        el('div', { class: 'rowitem__main' },
-          el('b', {}, periodLabel(p.period)),
-          el('div', {}, `₹${p.rate_per_kg}/kg · ${p.conversion_factor} kg per unit · due ${p.due_date}`)),
-        el('span', { class: `chip ${p.status === 'locked' ? 'chip--paid' : 'chip--awaiting'}` },
-          p.status === 'locked' ? 'Locked' : 'Open')))
+    ...periods.map(monthRow)
   );
+}
+
+function monthRow(p) {
+  const panel = el('div');
+  return el('div', { class: 'stack', style: 'gap:0' },
+    el('div', { class: 'rowitem' },
+      el('div', { class: 'rowitem__main' },
+        el('b', {}, periodLabel(p.period)),
+        el('div', {}, `₹${p.rate_per_kg}/kg · ${p.conversion_factor} kg per unit · due ${p.due_date}`)),
+      el('span', { class: `chip ${p.status === 'locked' ? 'chip--paid' : 'chip--awaiting'}` },
+        p.status === 'locked' ? 'Locked' : 'Open'),
+      el('button', {
+        class: 'btn btn--sm btn--quiet', type: 'button',
+        onclick: () => panel.replaceChildren(
+          p.status === 'locked' ? lockedNotice(p) : rateEditor(p, panel)),
+      }, 'Change rate')),
+    panel);
+}
+
+/**
+ * A locked month says who decides, not merely "no".
+ *
+ * The server refuses this too (DDP-BILL-012) — showing it here is so the
+ * treasurer reads the consequence before they go looking for a way around it,
+ * not because the interface is the thing enforcing it.
+ */
+function lockedNotice(p) {
+  return el('div', { class: 'note note--warn', style: 'margin:var(--s-3) 0' },
+    el('b', {}, `${periodLabel(p.period)} is locked.`),
+    el('p', { style: 'margin:var(--s-2) 0 0' },
+      'Reach out to Sabarish to change this rate. Reopening a locked month recalculates '
+      + 'every bill in it, which means residents who have already paid will need to pay '
+      + 'again, and the month has to be reconciled against the bank statement a second time.'));
+}
+
+/** An open month can be changed here — after the consequence is on screen. */
+function rateEditor(p, panel) {
+  const rate = el('input', {
+    class: 'input num', value: String(p.rate_per_kg), inputmode: 'decimal',
+    id: `edit-rate-${p.period}`,
+  });
+  const reason = el('input', {
+    class: 'input', placeholder: 'Why is the rate changing?', id: `edit-reason-${p.period}`,
+  });
+  const impact = el('div');
+
+  return el('div', { class: 'stack', style: 'margin:var(--s-3) 0' },
+    el('div', { class: 'field' },
+      el('label', { for: `edit-rate-${p.period}` }, `Rate per kg for ${periodLabel(p.period)}`), rate),
+    el('div', { class: 'field' },
+      el('label', { for: `edit-reason-${p.period}` }, 'Reason'), reason,
+      el('span', { class: 'field__hint' }, 'Recorded against your name in the activity log.')),
+    impact,
+    el('div', { class: 'row', style: 'gap:var(--s-2)' },
+      el('button', {
+        class: 'btn btn--sm', type: 'button',
+        // Never straight to the write. The caveat is not a guess — it is the
+        // server's own count of whose bill changes and who ends up owing again.
+        onclick: async () => {
+          try {
+            const plan = await api.admin.changeRate(p.period, Number(rate.value), reason.value, true);
+            impact.replaceChildren(impactNotice(p, plan, rate, reason, panel));
+          } catch (err) { showError(impact, err); }
+        },
+      }, 'Check what this changes'),
+      el('button', {
+        class: 'btn btn--sm btn--quiet', type: 'button',
+        onclick: () => panel.replaceChildren(),
+      }, 'Cancel')));
+}
+
+function impactNotice(p, plan, rate, reason, panel) {
+  const t = plan.totals;
+  const nothing = t.billsAffected === 0 && t.skipped === 0;
+
+  return el('div', { class: `note ${t.owesAgainCount ? 'note--bad' : 'note--warn'}` },
+    el('b', {}, nothing
+      ? `No bills exist for ${periodLabel(p.period)} yet — only the rate changes.`
+      : `${t.billsAffected} bill${t.billsAffected === 1 ? '' : 's'} will be recalculated.`),
+
+    t.owesAgainCount
+      ? el('p', { style: 'margin:var(--s-2) 0 0' },
+          t.owesAgainCount === 1
+            ? `One of them is already paid and gets dearer. That resident will owe `
+              + `${money(t.owesAgainTotal)} more, the bill returns to unpaid, and they will `
+              + 'have to pay again.'
+            : `${t.owesAgainCount} of them are already paid and get dearer. Those residents `
+              + `will owe ${money(t.owesAgainTotal)} more between them, their bills return to `
+              + 'unpaid, and they will have to pay again.')
+      : null,
+    t.inCreditCount
+      ? el('p', { style: 'margin:var(--s-2) 0 0' },
+          `${t.inCreditCount} already-paid bill${t.inCreditCount === 1 ? '' : 's'} get cheaper, `
+          + `leaving ${money(t.inCreditTotal)} in credit. Those stay marked paid.`)
+      : null,
+    t.skipped
+      ? el('p', { style: 'margin:var(--s-2) 0 0' },
+          `${t.skipped} manually adjusted bill${t.skipped === 1 ? '' : 's'} will be left alone.`)
+      : null,
+    plan.sanity?.level === 'notice'
+      ? el('p', { style: 'margin:var(--s-2) 0 0' }, plan.sanity.message)
+      : null,
+
+    el('button', {
+      class: 'btn btn--sm', type: 'button', style: 'margin-top:var(--s-3)',
+      onclick: async (e) => {
+        e.target.disabled = true;
+        try {
+          await api.admin.changeRate(p.period, Number(rate.value), reason.value, false);
+          panel.replaceChildren();
+          await show('periods');
+        } catch (err) { e.target.disabled = false; showError(panel, err); }
+      },
+    }, t.owesAgainCount
+         ? `Change the rate and make ${t.owesAgainCount} bill${t.owesAgainCount === 1 ? '' : 's'} payable again`
+         : 'Change the rate'));
 }
 
 /* ── residents ─────────────────────────────────────────────────────────── */

@@ -27,6 +27,8 @@ Admin billing: the reading grid, and generation.
 | fn | `jumpWarning` |  |
 | fn | `generateBills` | Generation. |
 | fn | `openPeriod` | Open a period. |
+| fn | `planRateChange` | What changing a month's rate would do to the bills already in it. |
+| fn | `changeRate` | Change the rate on a month, recalculating the bills already in it. |
 | fn | `saveReadings` |  |
 | fn | `parseReadings` | Parse pasted or uploaded readings. |
 | fn | `normaliseFlat` |  |
@@ -296,7 +298,9 @@ Payment proofs.
 |---|---|---|
 | const | `MAX_BYTES` |  |
 | const | `ACCEPTED` |  |
-| fn | `extractUtr` |  |
+| fn | `extractUtr` | @returns {string|null} the reference, uppercased, or null |
+| fn | `referenceKind` |  |
+| fn | `isBankComparable` |  |
 | fn | `normaliseVisionResult` | Normalise whatever the vision model returned into the four fields we use. |
 | fn | `assessProof` | Compare a claim against the bill. |
 | fn | `validateUpload` |  |
@@ -385,6 +389,29 @@ Sessions carry actor_id (who really logged in) and subject_id (whose data is sho
 | const | `CREDENTIAL_ACTIONS` | Credential changes are blocked while impersonating, even in write mode — they could lock the real resident out of their own account (plan §5.5). |
 | fn | `isBlockedWhileImpersonating` |  |
 
+### `functions/lib/statement.js`
+
+Bank statement reconciliation.
+
+| | Export | What it does |
+|---|---|---|
+| const | `SWEEP_AFTER_HOURS` |  |
+| fn | `sweepAbandonedStatements` | Delete the credit rows of any review nobody finished. |
+| const | `MAX_STATEMENT_BYTES` |  |
+| const | `ACCEPTED_STATEMENT` |  |
+| const | `DEFAULT_DAY_WINDOW` |  |
+| fn | `validateStatement` |  |
+| fn | `parseAmount` |  |
+| fn | `parseDate` | Indian bank exports are overwhelmingly day-first. |
+| fn | `parseCsv` |  |
+| fn | `findHeader` |  |
+| fn | `creditsFromCsv` | Credits only. |
+| fn | `extractPdfText` | Pull the text layer out of a PDF, with no library and no third party. |
+| fn | `textFromContentStream` |  |
+| fn | `creditsFromText` | Read credits out of statement text extracted from a PDF. |
+| fn | `parseStatement` |  |
+| fn | `reconcile` | Match credits to proofs, then report what is left over on both sides. |
+
 ### `functions/lib/tenancy.js`
 
 Ownership changes: a flat is sold, or the builder hands one to a new buyer.
@@ -417,6 +444,7 @@ UPI deep links.
 | | Export | What it does |
 |---|---|---|
 | const | `IOS_SCHEMES` |  |
+| const | `ANDROID_PACKAGES` | Android package names, used to address ONE app instead of asking the OS to choose. |
 | fn | `buildUpiParams` |  |
 | fn | `queryString` | Query string with spaces as %20, not '+'. |
 | fn | `stampFor` | The date stamp residents see on their bank statement: 09_08_26. |
@@ -548,4 +576,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-275 exports. 168 have no doc comment.
+296 exports. 179 have no doc comment.

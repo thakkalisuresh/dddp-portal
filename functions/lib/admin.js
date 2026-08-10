@@ -179,6 +179,131 @@ export async function openPeriod(env, { period, ratePerKg, dueDate, lateFee = 0,
   return { period, ratePerKg, sanity };
 }
 
+/**
+ * What changing a month's rate would do to the bills already in it.
+ *
+ * Pure, so the consequence can be shown before it happens and asserted in a
+ * test. `bills.rate_per_kg` is a snapshot rather than a join — a bill keeps the
+ * rate it was generated with — so nothing recalculates by itself. This is the
+ * deliberate act that rewrites them.
+ *
+ * The uncomfortable part is stated plainly rather than hidden: a resident who
+ * already paid, against a bill that just got dearer, now owes the difference.
+ * That is the caveat the screen shows before anything is written.
+ */
+export function planRateChange(bills, { ratePerKg, conversionFactor = DEFAULT_CONVERSION }) {
+  if (!Number.isFinite(ratePerKg) || ratePerKg <= 0) fail('DDP-BILL-005', { ratePerKg });
+
+  const changes = [];
+  const skipped = [];
+
+  for (const bill of bills) {
+    // A manual total was somebody's considered decision, usually a goodwill
+    // figure with a written reason attached. Recomputing would discard it
+    // silently, so it is listed instead of overwritten.
+    if (bill.manual_total) {
+      skipped.push({ flat: bill.flat, billId: bill.id, total: bill.total, why: 'manually adjusted' });
+      continue;
+    }
+
+    const consumption = bill.consumption;
+    const { gasAmount, total } = computeBill({
+      consumption,
+      ratePerKg,
+      otherCharges: bill.other_charges ?? 0,
+      additionalCharges: bill.additional_charges ?? 0,
+      lateFee: bill.late_fee ?? 0,
+    });
+    if (total === bill.total && gasAmount === bill.gas_amount) continue;
+
+    const settled = bill.status === 'paid' || bill.status === 'waived';
+    changes.push({
+      billId: bill.id, flat: bill.flat, status: bill.status,
+      was: bill.total, now: total, gasAmount,
+      difference: Math.round((total - bill.total) * 100) / 100,
+      // Only a settled bill that got DEARER creates a new debt. One that got
+      // cheaper leaves the resident in credit, which is not the same problem
+      // and must not be dressed up as one.
+      owesAgain: settled && total > bill.total,
+      inCredit: settled && total < bill.total,
+    });
+  }
+
+  const sum = (list, key) => Math.round(list.reduce((t, c) => t + c[key], 0) * 100) / 100;
+  const owesAgain = changes.filter((c) => c.owesAgain);
+  const inCredit = changes.filter((c) => c.inCredit);
+
+  return {
+    changes,
+    skipped,
+    totals: {
+      billsAffected: changes.length,
+      skipped: skipped.length,
+      owesAgainCount: owesAgain.length,
+      owesAgainTotal: sum(owesAgain, 'difference'),
+      inCreditCount: inCredit.length,
+      inCreditTotal: Math.abs(sum(inCredit, 'difference')),
+      netDifference: sum(changes, 'difference'),
+    },
+  };
+}
+
+/**
+ * Change the rate on a month, recalculating the bills already in it.
+ *
+ * A LOCKED month is refused here rather than in the interface, because the
+ * interface is not the only caller. Reopening one means every bill recalculated,
+ * residents who already paid asked to pay again, and a month that was reconciled
+ * needing to be reconciled afresh — a decision that belongs to Sabarish, not to
+ * whoever happens to be holding the treasurer's login.
+ */
+export async function changeRate(env, { period, ratePerKg, reason, actorId, dryRun = false }) {
+  const periodRow = await env.DB.prepare('SELECT * FROM periods WHERE period = ?').bind(period).first();
+  if (!periodRow) fail('DDP-BILL-005', { period });
+  if (periodRow.status === 'locked') fail('DDP-BILL-012', { period, ratePerKg });
+
+  const text = String(reason ?? '').trim();
+  if (text.length < 3) fail('DDP-ADMIN-011', { field: 'rate_per_kg' });
+
+  const rows = await env.DB.prepare(
+    `SELECT id, flat, consumption, gas_amount, other_charges, additional_charges,
+            late_fee, total, status, manual_total
+       FROM bills WHERE period = ?`
+  ).bind(period).all();
+  const bills = rows.results ?? [];
+
+  const plan = planRateChange(bills, {
+    ratePerKg, conversionFactor: periodRow.conversion_factor,
+  });
+  const sanity = rateSanity(ratePerKg, periodRow.rate_per_kg);
+
+  if (dryRun) {
+    return { period, from: periodRow.rate_per_kg, to: ratePerKg, sanity, dryRun: true, ...plan };
+  }
+
+  const now = new Date().toISOString();
+  const statements = [
+    env.DB.prepare('UPDATE periods SET rate_per_kg = ? WHERE period = ?').bind(ratePerKg, period),
+  ];
+  for (const c of plan.changes) {
+    statements.push(env.DB.prepare(
+      // A settled bill that grew is returned to 'unpaid' so it is chased like
+      // any other. `late_fee_at` is untouched on purpose: it is the late-fee
+      // cron's idempotency guard, so a bill that has already been charged one
+      // will not be charged a second time for a debt we created.
+      c.owesAgain
+        ? `UPDATE bills SET rate_per_kg = ?, gas_amount = ?, total = ?, status = 'unpaid', paid_at = NULL WHERE id = ?`
+        : `UPDATE bills SET rate_per_kg = ?, gas_amount = ?, total = ? WHERE id = ?`
+    ).bind(ratePerKg, c.gasAmount, c.now, c.billId));
+  }
+  for (let i = 0; i < statements.length; i += 50) {
+    await env.DB.batch(statements.slice(i, i + 50));
+  }
+
+  return { period, from: periodRow.rate_per_kg, to: ratePerKg, sanity,
+           reason: text, actorId, changedAt: now, dryRun: false, ...plan };
+}
+
 /** Draft saves from the grid or a bulk import. Never generates. */
 export async function saveReadings(env, period, entries, actorId) {
   const periodRow = await env.DB.prepare('SELECT status FROM periods WHERE period = ?')

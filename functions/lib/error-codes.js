@@ -49,6 +49,9 @@ export const ERROR_CODES = {
   'DDP-BILL-011': { severity: 'warn', retired: true,
                     message: 'Rate differs sharply from the previous period (retired — a rate change is not an error)' },
 
+  'DDP-BILL-012': { severity: 'warn',  message: 'Rate change refused — the month is locked' },
+  'DDP-BILL-013': { severity: 'warn',  message: 'Rate changed on a month that already has bills — totals recalculated' },
+
   // ── MAIL ───────────────────────────────────────────────────────────────
   'DDP-MAIL-001': { severity: 'error', message: 'Reset email could not be sent' },
 
@@ -67,6 +70,16 @@ export const ERROR_CODES = {
   'DDP-PROOF-005': { severity: 'error', message: 'Proof image missing from R2 but row says stored' },
   'DDP-PROOF-006': { severity: 'warn',  message: 'Uploaded amount does not match the bill' },
   'DDP-PROOF-007': { severity: 'warn',  message: 'Vision provider returned an error status' },
+
+  // ── RECON ──────────────────────────────────────────────────────────────
+  'DDP-RECON-001': { severity: 'error', message: 'Bank statement could not be parsed — no usable table' },
+  'DDP-RECON-002': { severity: 'error', message: 'Bank statement parsed but held no credit rows' },
+  'DDP-RECON-003': { severity: 'warn',  message: 'Proof claims a payment with no matching credit on the statement' },
+  'DDP-RECON-004': { severity: 'warn',  message: 'Credit on the statement with no proof uploaded' },
+  'DDP-RECON-005': { severity: 'warn',  message: 'Proof amount and bank credit disagree' },
+  'DDP-RECON-006': { severity: 'warn',  message: 'Abandoned statement session swept — rows deleted unreviewed' },
+  'DDP-RECON-007': { severity: 'warn',  message: 'PDF statement has no text layer — CSV needed' },
+  'DDP-RECON-008': { severity: 'fatal', message: 'Statement rows survived the finish step — deletion did not take' },
 
   // ── ADMIN ──────────────────────────────────────────────────────────────
   'DDP-ADMIN-001': { severity: 'error', message: 'Bulk import parsed a flat that does not exist' },
@@ -105,7 +118,7 @@ export const ERROR_CODES = {
 };
 
 /** Domains in registry order, for the generated docs. */
-export const DOMAINS = ['AUTH', 'MAIL', 'BILL', 'PAY', 'PROOF', 'NOTICE', 'ADMIN', 'SYS'];
+export const DOMAINS = ['AUTH', 'MAIL', 'BILL', 'PAY', 'PROOF', 'RECON', 'NOTICE', 'ADMIN', 'SYS'];
 
 export function domainOf(code) {
   return code.split('-')[1];

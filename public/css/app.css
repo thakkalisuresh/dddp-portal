@@ -107,6 +107,24 @@ a { color: var(--accent); }
   cursor: pointer;
 }
 .appbar__action:hover { border-color: rgb(255 255 255 / 0.6); }
+/* The way out of an admin section. Left-hand side, ahead of the title, so it
+   is not competing with the section's own action on the right. */
+.appbar__back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--surface);
+  text-decoration: none;
+  border: 1px solid rgb(255 255 255 / 0.3);
+  border-radius: var(--radius);
+  padding: var(--s-2) var(--s-3);
+  min-height: 36px;          /* same tap target as .appbar__action */
+  opacity: 0.85;
+}
+.appbar__back:hover { border-color: rgb(255 255 255 / 0.6); opacity: 1; }
+.appbar__back span { font-size: var(--text-base); line-height: 1; }
 
 /* God-mode banner. Functional, not decorative: it must be impossible to
    forget you are impersonating (plan §5.5). Never dismissible. */

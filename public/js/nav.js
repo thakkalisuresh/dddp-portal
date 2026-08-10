@@ -38,11 +38,44 @@ function icon(path) {
 }
 
 /**
+ * A section of the admin console is a dead end without this.
+ *
+ * The bottom bar has an Admin item, but on the section you are already inside
+ * it renders as the current page — so the one control that would take you back
+ * is the one that looks like where you already are. Each section had improvised
+ * its own answer: roster linked to the console, proofs linked sideways to
+ * readings, and readings offered Log out. The way out should not depend on
+ * which screen you happened to open.
+ *
+ * Placed first in the appbar, before the title, because `.appbar__action` is
+ * pushed right by `margin-left: auto` and a way back belongs on the left.
+ */
+function renderAdminBack(current) {
+  const bar = document.querySelector('.appbar');
+  if (!bar) return;
+
+  const inSection = current.startsWith('/admin')
+    && !/^\/admin\/?(index\.html)?$/.test(current);
+
+  const existing = bar.querySelector('.appbar__back');
+  if (!inSection) { existing?.remove(); return; }
+  if (existing) return;
+
+  bar.prepend(el('a', {
+    class: 'appbar__back', href: '/admin/',
+    // "Admin" alone reads as a destination among others; the chevron and the
+    // label together read as a way out.
+    'aria-label': 'Back to the admin console',
+  }, el('span', { 'aria-hidden': 'true' }, '‹'), 'Admin'));
+}
+
+/**
  * @param me      the /api/me payload
  * @param current pathname to mark as the active destination
  */
 export function renderNav(me, current = location.pathname) {
   const items = itemsFor(me);
+  renderAdminBack(current);
   const active = (href) =>
     href === '/admin/' ? current.startsWith('/admin') : current.startsWith(href);
 

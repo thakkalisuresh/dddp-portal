@@ -55,6 +55,12 @@ the cron running old code, and shipping only the Worker leaves the site stale.
 | — | Owners and tenants — who pays, who is liable, who sees what | **done** |
 | — | 99-flat ceiling removed (dead paise column dropped for real) | **done** |
 | — | Roster import — paste the building, preview, then chase who hasn't logged in | **done** |
+| — | Payment references widened — PhonePe and card-UPI ids no longer skip the duplicate guard | **done** |
+| — | Bank statement reconciliation — match, flag, then delete the statement | **done** |
+| — | Two-person flats no longer duplicate a proof, or read as one claimed twice | **done** |
+| — | Every admin section has a way back to the console | **done** |
+| — | Rate editable on an open month, with the cost stated before it is applied | **done** |
+| — | A locked month refuses the change and names who decides | **done** |
 
 ### The documents
 

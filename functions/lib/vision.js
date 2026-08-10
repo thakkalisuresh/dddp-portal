@@ -10,10 +10,17 @@
 import { normaliseVisionResult } from './proof.js';
 import { reportError, fail } from './errors.js';
 
-const PROMPT = `This is a screenshot of an Indian UPI payment confirmation.
+// Residents send whatever their bank or payment app produced: Google Pay,
+// PhonePe, slice, Kiwi, and plain NEFT/IMPS transfer summaries. Naming only
+// UPI, and asking only for a "12-digit reference", described a narrower input
+// than we actually receive and left the reference null on anything else.
+const PROMPT = `This is a screenshot of an Indian payment confirmation — UPI, IMPS or NEFT.
 Return ONLY a JSON object with these keys, using null where you cannot read a value:
-{"amount": number, "utr": "12-digit reference", "date": "YYYY-MM-DD", "payee": string}
-The amount is the rupees transferred. Do not guess; use null if unsure.`;
+{"amount": number, "utr": "12-digit UTR or RRN if shown", "reference": "the app's own transaction id", "date": "YYYY-MM-DD", "payee": string}
+The amount is the rupees transferred.
+If the screenshot shows both a 12-digit UTR/RRN and a longer app transaction id,
+put the 12-digit one in "utr" and the other in "reference".
+Do not guess; use null if unsure.`;
 
 const TIMEOUT_MS = 12_000;
 

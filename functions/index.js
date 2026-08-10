@@ -10,10 +10,11 @@ import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex } from
 import { dashboardPayload } from './lib/dashboard.js';
 import {
   readingGrid, saveReadings, generateBills, openPeriod, parseReadings,
-  previousPeriod, jumpWarning,
+  previousPeriod, jumpWarning, changeRate,
 } from './lib/admin.js';
 import { previewGeneration, computeBill, isExempt } from './lib/billing.js';
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
+import { validateStatement, parseStatement, reconcile, sweepAbandonedStatements } from './lib/statement.js';
 import { readReceipt } from './lib/vision.js';
 import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden, markNoticesSeen, NOTICE_SCOPES } from './lib/notices.js';
@@ -159,6 +160,9 @@ export default {
         if (route === 'POST /api/admin/readings/parse') return parseImport(request, env, url);
         if (route === 'GET /api/admin/preview')   return getPreview(env, url);
         if (route === 'POST /api/admin/periods')  return postPeriod(request, env, session);
+        if (request.method === 'PATCH' && /^\/api\/admin\/periods\/[\d-]+$/.test(path)) {
+          return patchPeriodRate(request, env, session, path);
+        }
         if (route.startsWith('POST /api/admin/periods/') && path.endsWith('/generate')) {
           return postGenerate(env, session, path);
         }
@@ -228,6 +232,16 @@ export default {
         if (request.method === 'PATCH' && /^\/api\/admin\/bills\/\d+$/.test(path)) {
           return patchBill(request, env, session, path);
         }
+        if (route === 'POST /api/admin/statement') return uploadStatement(request, env, session, ctx);
+        if (request.method === 'GET' && /^\/api\/admin\/statement\/\d+$/.test(path)) {
+          return statementReport(env, path);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/statement\/\d+\/finish$/.test(path)) {
+          return finishStatement(env, session, path);
+        }
+        if (request.method === 'DELETE' && /^\/api\/admin\/statement\/\d+$/.test(path)) {
+          return discardStatement(env, session, path);
+        }
         if (route === 'GET /api/admin/proofs/archive') return proofArchive(env, url);
         if (request.method === 'DELETE' && /^\/api\/admin\/proofs\/\d+$/.test(path)) {
           return deleteProof(env, session, path);
@@ -277,6 +291,9 @@ export default {
     await runScheduled(env, ctx);
     await runBackup(env, ctx);
     await pruneOldRows(env);
+    // An unfinished reconciliation is the one way a bank statement could sit in
+    // the database indefinitely. Close it before the night is out.
+    await sweepAbandonedStatements(env);
   },
 };
 
@@ -343,7 +360,11 @@ async function logout(env, session) {
 
 async function me(env, session, request) {
   // Subject comes from the session, never from the client.
-  const payload = await dashboardPayload(env, session.subject, request.headers.get('user-agent') ?? '');
+  const payload = await dashboardPayload(
+    env, session.subject,
+    request.headers.get('user-agent') ?? '',
+    new URL(request.url).origin
+  );
   return json({
     ...payload,
     impersonation: session.impersonating
@@ -1221,27 +1242,224 @@ async function proofImage(env, session, path) {
   });
 }
 
+/**
+ * Naming the person behind a bill or a proof.
+ *
+ * Never join `owners ON o.flat = b.flat` on its own. A flat with both an owner
+ * and a tenant on record matches TWICE, which silently duplicates every row it
+ * touches — in the treasurer's queue that showed one screenshot as two, and in
+ * reconciliation it read as one payment reference claimed against two bills and
+ * accused honest residents of double-claiming.
+ *
+ * Prefer whoever the row actually belongs to. `owner_id` arrived in migration
+ * 0003 and was backfilled from `bills.owner_id`, which is itself nullable, so
+ * older rows still need the flat — but taken as one owner, not as a join.
+ */
+const ownerJoin = (idColumn) => `LEFT JOIN owners o
+    ON o.id = COALESCE(${idColumn},
+                       (SELECT id FROM owners WHERE flat = b.flat ORDER BY id LIMIT 1))`;
+
 async function proofQueue(env) {
   const [proofs, claimed] = await Promise.all([
     env.DB.prepare(
       `SELECT p.*, b.flat, b.period, b.total, o.name
          FROM payment_proofs p
          JOIN bills b ON b.id = p.bill_id
-         LEFT JOIN owners o ON o.flat = b.flat
+         ${ownerJoin('p.owner_id')}
         WHERE p.status = 'pending' AND p.deleted_at IS NULL
         ORDER BY p.created_at`
     ).all(),
     env.DB.prepare(
+      // GROUP BY already collapsed the duplicate to one row here, so the count
+      // was right — but which of the two names it showed was arbitrary.
       `SELECT b.id, b.flat, b.period, b.total, o.name, MAX(i.created_at) AS last_intent
          FROM bills b
          JOIN payment_intents i ON i.bill_id = b.id
-         LEFT JOIN owners o ON o.flat = b.flat
+         ${ownerJoin('b.owner_id')}
         WHERE b.status = 'initiated'
         GROUP BY b.id ORDER BY last_intent`
     ).all(),
   ]);
 
   return json(shapeQueue({ proofs: proofs.results ?? [], claimed: claimed.results ?? [] }));
+}
+
+// ── bank statement reconciliation ───────────────────────────────────────
+//
+// The statement is working material. It is parsed on arrival, only its credit
+// rows are kept, and those rows are deleted the moment the treasurer finishes
+// — or by the 3am sweep if they walk away. The original file is never written
+// anywhere: not to R2, not to D1. See migration 0017 and lib/statement.js.
+
+/** Everything the matcher needs about the current state of the books. */
+async function reconciliationInputs(env) {
+  const [proofs, openBills] = await Promise.all([
+    env.DB.prepare(
+      // See ownerJoin: joining on the flat alone duplicates the proof, and a
+      // duplicated proof reads as one reference claimed against two bills.
+      `SELECT p.id AS proofId, p.bill_id AS billId, p.utr, p.parsed_amount AS claimedAmount,
+              p.created_at AS createdAt, b.flat, b.period, b.total AS billed, o.name
+         FROM payment_proofs p
+         JOIN bills b ON b.id = p.bill_id
+         ${ownerJoin('p.owner_id')}
+        WHERE p.status = 'pending' AND p.deleted_at IS NULL
+        ORDER BY p.created_at`
+    ).all(),
+    env.DB.prepare(
+      // Same trap on the suggestion side, where it would offer one flat twice.
+      `SELECT b.id, b.flat, b.period, b.total, o.name
+         FROM bills b
+         ${ownerJoin('b.owner_id')}
+        WHERE b.status IN ('unpaid', 'initiated', 'awaiting')`
+    ).all(),
+  ]);
+  return { proofs: proofs.results ?? [], openBills: openBills.results ?? [] };
+}
+
+async function reportFor(env, sessionId) {
+  const rows = await env.DB.prepare(
+    'SELECT txn_date AS date, amount, reference, narration FROM statement_credits WHERE session_id = ? ORDER BY txn_date, id'
+  ).bind(sessionId).all();
+  const { proofs, openBills } = await reconciliationInputs(env);
+  return reconcile({ credits: rows.results ?? [], proofs, openBills });
+}
+
+async function uploadStatement(request, env, session, ctx) {
+  const form = await request.formData().catch(() => null);
+  const file = form?.get('statement');
+  if (!file || typeof file === 'string') {
+    return problem(400, 'DDP-RECON-001', 'Attach the bank statement as CSV or PDF.');
+  }
+
+  const check = validateStatement({ type: file.type, size: file.size, name: file.name });
+  if (!check.ok) return problem(400, 'DDP-RECON-001', check.message);
+
+  let parsed;
+  try {
+    parsed = await parseStatement({
+      bytes: new Uint8Array(await file.arrayBuffer()), type: file.type, name: file.name,
+    });
+  } catch (err) {
+    await reportError(env, err?.code ?? 'DDP-RECON-001', err, ctx);
+    return problem(422, err?.code ?? 'DDP-RECON-001',
+      err?.code === 'DDP-RECON-007'
+        ? 'That PDF has no readable text — it is probably a scan. Download the statement as CSV instead.'
+        : 'That statement could not be read. Download it as CSV and try again.');
+  }
+
+  const { credits, warnings } = parsed;
+  const now = new Date().toISOString();
+  const total = Math.round(credits.reduce((t, c) => t + c.amount, 0) * 100) / 100;
+
+  const created = await env.DB.prepare(
+    `INSERT INTO statement_sessions (created_by, filename, row_count, credit_total, status, created_at)
+     VALUES (?, ?, ?, ?, 'open', ?) RETURNING id`
+  ).bind(session.actor.id, String(file.name ?? '').slice(0, 120), credits.length, total, now).first();
+
+  // Chunked: a year's statement is a few hundred rows and D1 batches are finite.
+  for (let i = 0; i < credits.length; i += 50) {
+    await env.DB.batch(credits.slice(i, i + 50).map((c) =>
+      env.DB.prepare(
+        'INSERT INTO statement_credits (session_id, txn_date, amount, reference, narration) VALUES (?, ?, ?, ?, ?)'
+      ).bind(created.id, c.date, c.amount, c.reference, String(c.narration ?? '').slice(0, 300))));
+  }
+
+  const report = await reportFor(env, created.id);
+  await audit(env, session, 'statement.upload',
+    { sessionId: created.id, rows: credits.length, discrepancies: report.discrepancies.length });
+
+  return json({ sessionId: created.id, warnings: warnings ?? [], ...report }, { status: 201 });
+}
+
+async function statementReport(env, path) {
+  const id = Number(path.split('/')[4]);
+  const row = await env.DB.prepare('SELECT id, status, filename, created_at FROM statement_sessions WHERE id = ?')
+    .bind(id).first();
+  if (!row) return problem(404, 'DDP-RECON-001', 'That reconciliation could not be found.');
+  if (row.status !== 'open') {
+    return problem(409, 'DDP-RECON-001', 'That reconciliation is closed — the statement has been deleted.');
+  }
+  return json({ sessionId: id, filename: row.filename, ...(await reportFor(env, id)) });
+}
+
+/**
+ * Save the verdicts, then delete the statement.
+ *
+ * Order matters and is the opposite of the proof upload: there, the row is
+ * written before the object so nothing is orphaned. Here the verdicts are
+ * written before the credits are deleted, so that we never destroy the
+ * statement and lose the conclusions drawn from it in the same breath.
+ */
+async function finishStatement(env, session, path) {
+  const id = Number(path.split('/')[4]);
+  const row = await env.DB.prepare('SELECT id, status FROM statement_sessions WHERE id = ?').bind(id).first();
+  if (!row) return problem(404, 'DDP-RECON-001', 'That reconciliation could not be found.');
+  if (row.status !== 'open') return problem(409, 'DDP-RECON-001', 'That reconciliation is already closed.');
+
+  const report = await reportFor(env, id);
+  const now = new Date().toISOString();
+
+  const rows = [
+    ...report.confirmed.map((c) => ({
+      proofId: c.proofId, billId: c.billId, verdict: 'confirmed',
+      reference: c.reference, amount: c.amount, txnDate: c.txnDate, matchedBy: c.how,
+    })),
+    ...report.discrepancies.map((d) => ({
+      proofId: d.proofId ?? null, billId: d.billId ?? null, verdict: d.kind,
+      // Narration is deliberately not carried across: it names other members.
+      reference: d.reference ?? null,
+      amount: d.bankAmount ?? d.amount ?? null,
+      txnDate: d.txnDate ?? null, matchedBy: null,
+    })),
+  ];
+
+  for (let i = 0; i < rows.length; i += 50) {
+    await env.DB.batch(rows.slice(i, i + 50).map((r) =>
+      env.DB.prepare(
+        `INSERT INTO reconciliations (session_id, proof_id, bill_id, verdict, reference, amount, txn_date, matched_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(id, r.proofId, r.billId, r.verdict, r.reference, r.amount, r.txnDate, r.matchedBy, now)));
+  }
+
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM statement_credits WHERE session_id = ?').bind(id),
+    env.DB.prepare("UPDATE statement_sessions SET status = 'finished', finished_at = ? WHERE id = ?").bind(now, id),
+  ]);
+
+  // The whole promise of this feature is that the statement goes away. Check it
+  // actually did rather than trusting the DELETE, and shout if it did not.
+  const left = await env.DB.prepare('SELECT COUNT(*) AS n FROM statement_credits WHERE session_id = ?')
+    .bind(id).first();
+  if ((left?.n ?? 0) > 0) {
+    await reportError(env, 'DDP-RECON-008', { sessionId: id, remaining: left.n });
+    return problem(500, 'DDP-RECON-008', 'The verdicts were saved but the statement did not delete. The treasurer has been alerted.');
+  }
+
+  for (const [kind, code] of Object.entries({
+    proof_no_credit: 'DDP-RECON-003',
+    credit_no_proof: 'DDP-RECON-004',
+    amount_mismatch: 'DDP-RECON-005',
+  })) {
+    const n = report.totals.byKind[kind];
+    if (n) await reportError(env, code, { sessionId: id, count: n });
+  }
+
+  await audit(env, session, 'statement.finish',
+    { sessionId: id, saved: rows.length, deletedRows: report.totals.creditRows });
+
+  return json({ sessionId: id, saved: rows.length, statementDeleted: true, totals: report.totals });
+}
+
+async function discardStatement(env, session, path) {
+  const id = Number(path.split('/')[4]);
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM statement_credits WHERE session_id = ?').bind(id),
+    env.DB.prepare("UPDATE statement_sessions SET status = 'discarded', finished_at = ? WHERE id = ? AND status = 'open'")
+      .bind(now, id),
+  ]);
+  await audit(env, session, 'statement.discard', { sessionId: id });
+  return json({ sessionId: id, statementDeleted: true, saved: 0 });
 }
 
 async function reviewProof(env, session, path, approve) {
@@ -1412,6 +1630,64 @@ async function postPeriod(request, env, session) {
   // which is where "what did the treasurer set, and when" belongs.
   await audit(env, session, 'period.open', result);
   return json(result, { status: 201 });
+}
+
+/**
+ * Change the rate on a month that may already have bills in it.
+ *
+ * Two different refusals, and they mean different things. A locked month is not
+ * "you may not" — it is "not from here": the message names who decides, because
+ * the consequence (every bill recalculated, paid residents asked to pay again,
+ * a reconciled month reopened) is not the treasurer's call to make alone.
+ */
+async function patchPeriodRate(request, env, session, path) {
+  const period = decodeURIComponent(path.split('/')[4] ?? '');
+  const body = await readJson(request);
+  const dryRun = body?.dryRun === true;
+
+  let result;
+  try {
+    result = await changeRate(env, {
+      period, ratePerKg: Number(body?.ratePerKg), reason: body?.reason,
+      actorId: session.actor.id, dryRun,
+    });
+  } catch (err) {
+    if (err?.code === 'DDP-BILL-012') {
+      await reportError(env, 'DDP-BILL-012', { period, actor: session.actor.id });
+      return problem(409, 'DDP-BILL-012',
+        `${periodName(period)} is locked, so the rate cannot be changed here. `
+        + 'Reach out to Sabarish to make this change. Reopening a locked month recalculates '
+        + 'every bill in it, means residents who have already paid will need to pay again, '
+        + 'and the month has to be reconciled against the bank statement a second time.');
+    }
+    if (err?.code === 'DDP-ADMIN-011') {
+      return problem(400, 'DDP-ADMIN-011', 'Give a reason for changing the rate.');
+    }
+    throw err;
+  }
+
+  if (dryRun) return json(result);
+
+  // Not an error so much as a thing that must never happen quietly.
+  if (result.totals.billsAffected > 0) {
+    await reportError(env, 'DDP-BILL-013', {
+      period, from: result.from, to: result.to,
+      affected: result.totals.billsAffected, owesAgain: result.totals.owesAgainCount,
+      actor: session.actor.id,
+    });
+  }
+  await audit(env, session, 'period.rate-change', {
+    period, from: result.from, to: result.to, reason: result.reason, totals: result.totals,
+  });
+  return json(result);
+}
+
+/** '2026-07' -> 'July 2026', for messages the treasurer reads. */
+function periodName(period) {
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+                  'August', 'September', 'October', 'November', 'December'];
+  const [y, m] = String(period).split('-');
+  return months[Number(m) - 1] ? `${months[Number(m) - 1]} ${y}` : period;
 }
 
 async function postGenerate(env, session, path) {

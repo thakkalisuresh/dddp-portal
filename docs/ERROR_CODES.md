@@ -45,6 +45,8 @@ Ask the bot a code and it will explain it.
 | `DDP-BILL-009` | error | live | Late fee cron re-applied to an already-charged bill |
 | `DDP-BILL-010` | **fatal** | live | Rate was inherited from a previous period instead of set for this one |
 | `DDP-BILL-011` | warn | retired | Rate differs sharply from the previous period (retired — a rate change is not an error) |
+| `DDP-BILL-012` | warn | live | Rate change refused — the month is locked |
+| `DDP-BILL-013` | warn | live | Rate changed on a month that already has bills — totals recalculated |
 
 ## PAY
 
@@ -67,6 +69,19 @@ Ask the bot a code and it will explain it.
 | `DDP-PROOF-005` | error | live | Proof image missing from R2 but row says stored |
 | `DDP-PROOF-006` | warn | live | Uploaded amount does not match the bill |
 | `DDP-PROOF-007` | warn | live | Vision provider returned an error status |
+
+## RECON
+
+| Code | Severity | Status | Meaning |
+|---|---|---|---|
+| `DDP-RECON-001` | error | live | Bank statement could not be parsed — no usable table |
+| `DDP-RECON-002` | error | live | Bank statement parsed but held no credit rows |
+| `DDP-RECON-003` | warn | live | Proof claims a payment with no matching credit on the statement |
+| `DDP-RECON-004` | warn | live | Credit on the statement with no proof uploaded |
+| `DDP-RECON-005` | warn | live | Proof amount and bank credit disagree |
+| `DDP-RECON-006` | warn | live | Abandoned statement session swept — rows deleted unreviewed |
+| `DDP-RECON-007` | warn | live | PDF statement has no text layer — CSV needed |
+| `DDP-RECON-008` | **fatal** | live | Statement rows survived the finish step — deletion did not take |
 
 ## NOTICE
 
@@ -111,7 +126,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-61 codes across 8 domains — 10 fatal, 3 awaiting their call site, 3 retired.
+71 codes across 9 domains — 11 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.
