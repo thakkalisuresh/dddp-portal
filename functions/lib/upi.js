@@ -16,6 +16,39 @@ export const IOS_SCHEMES = {
   bhim: 'bhim://pay',
 };
 
+/**
+ * Android package names, used to address ONE app instead of asking the OS to
+ * choose.
+ *
+ * The unaddressed `intent://` we shipped first assumed the OS chooser would
+ * appear. When it does not — no handler resolved, or an in-app WebView that
+ * refuses non-http schemes outright — the tap produces nothing at all, which is
+ * the bug that keeps being reported. A `package=` intent cannot land there: if
+ * the app is missing, Chrome opens its Play Store page instead of doing
+ * nothing.
+ */
+export const ANDROID_PACKAGES = {
+  gpay: 'com.google.android.apps.nbu.paisa.user',
+  phonepe: 'com.phonepe.app',
+  paytm: 'net.one97.paytm',
+  bhim: 'in.org.npci.upiapp',
+};
+
+/**
+ * Extras on an intent URI go in the fragment, after the scheme.
+ *
+ * `browser_fallback_url` is the documented escape hatch: without it a
+ * non-resolving intent is silent, and silence is indistinguishable from a dead
+ * button. It must be percent-encoded — the fragment is `;`-delimited and a raw
+ * query string inside it truncates the intent.
+ */
+function intentUri(qs, { pkg, fallbackUrl } = {}) {
+  const parts = ['scheme=upi', 'action=android.intent.action.VIEW'];
+  if (pkg) parts.push(`package=${pkg}`);
+  if (fallbackUrl) parts.push(`S.browser_fallback_url=${encodeURIComponent(fallbackUrl)}`);
+  return `intent://pay?${qs}#Intent;${parts.join(';')};end`;
+}
+
 export function buildUpiParams({ vpa, payee, amount, note, ref }) {
   if (!vpa) fail('DDP-PAY-004', { vpa });
   if (!Number.isFinite(amount) || amount <= 0) fail('DDP-PAY-002', { amount });
@@ -57,7 +90,7 @@ export function stampFor(date = new Date()) {
   return `${dd}_${mm}_${yy}`;
 }
 
-export function buildUpiLinks({ vpa, payee, amount, flat, period, now = new Date() }) {
+export function buildUpiLinks({ vpa, payee, amount, flat, period, now = new Date(), fallbackUrl }) {
   // (2B_09_08_26) — the flat, then the day the link was made. The reference
   // below is what actually reconciles; this is what a human reads in a
   // statement line, so it is short and shaped like a label rather than a
@@ -72,7 +105,14 @@ export function buildUpiLinks({ vpa, payee, amount, flat, period, now = new Date
     // Chrome on Android hands custom schemes to the OS unevenly. An intent URI
     // is the documented form and falls back to the Play Store rather than
     // silently doing nothing, which is the failure that got reported.
-    intent: `intent://pay?${qs}#Intent;scheme=upi;action=android.intent.action.VIEW;end`,
+    intent: intentUri(qs, { fallbackUrl }),
+    // One entry per app, each addressed by package. This is what the Android
+    // screen actually renders now: an unaddressed intent relies on a chooser
+    // that does not always appear, and "no chooser" and "no app" look the same
+    // from the resident's side — nothing happens.
+    androidApps: Object.fromEntries(
+      Object.entries(ANDROID_PACKAGES).map(([app, pkg]) => [app, intentUri(qs, { pkg, fallbackUrl })])
+    ),
   };
   for (const [app, scheme] of Object.entries(IOS_SCHEMES)) {
     links[app] = `${scheme}?${qs}`;

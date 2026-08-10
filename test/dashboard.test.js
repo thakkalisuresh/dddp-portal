@@ -36,9 +36,22 @@ describe('display status', () => {
 
 describe('the pay CTA disappears rather than disabling', () => {
   it('is offered while anything is owed', () => {
-    for (const status of ['unpaid', 'initiated', 'awaiting']) {
+    // 'initiated' means an app opened, nothing more. Someone who bounced off
+    // their UPI app still needs the button.
+    for (const status of ['unpaid', 'initiated']) {
       expect(shapeBill(bill({ status }), period).showPayButton).toBe(true);
     }
+  });
+
+  it('is withdrawn once a screenshot is in', () => {
+    // 'awaiting' is the state an upload puts the bill into: that resident has
+    // paid and proved it, and a second transfer for the same bill is more work
+    // for the treasurer than a missing one. The upload link stays — a rejected
+    // proof needs a replacement.
+    const shaped = shapeBill(bill({ status: 'awaiting' }), period);
+    expect(shaped.showPayButton).toBe(false);
+    expect(shaped.showUploadLink).toBe(true);
+    expect(shaped.settled).toBe(false);
   });
 
   it('is withdrawn once settled — a dead button is worse than no button', () => {

@@ -46,7 +46,14 @@ export function shapeBill(bill, period, today = new Date().toISOString().slice(0
     displayStatus: settled ? 'paid' : claimed ? bill.status : pastDue ? 'overdue' : 'unpaid',
 
     // A dead button is worse than no button — the CTA vanishes once settled.
-    showPayButton: !settled,
+    //
+    // It also vanishes on 'awaiting', which is the state a screenshot puts the
+    // bill into. That resident has paid and proved it; leaving Pay on screen
+    // invites a second transfer for the same bill, and a duplicate credit is
+    // far more work for the treasurer than a missing one. 'initiated' is NOT
+    // included — tapping Pay only means an app opened, so someone who bounced
+    // off their UPI app still needs the button.
+    showPayButton: !settled && bill.status !== 'awaiting',
     showUploadLink: !settled,
     settled,
 
@@ -58,7 +65,7 @@ export function shapeBill(bill, period, today = new Date().toISOString().slice(0
   };
 }
 
-export async function dashboardPayload(env, subject, userAgent = '') {
+export async function dashboardPayload(env, subject, userAgent = '', origin = '') {
   const flat = subject.flat;
   // Bills follow the PERSON, not the flat. After a sale the new owner must not
   // see the previous owner's bills, and vice versa. Readings are different —
@@ -120,6 +127,10 @@ export async function dashboardPayload(env, subject, userAgent = '') {
         amount: bill.total,
         flat,
         period: bill.period,
+        // Where Chrome goes when the intent resolves to nothing. Back to the
+        // dashboard with the manual details already open — the resident lands
+        // somewhere that explains itself instead of on a page that did not move.
+        fallbackUrl: origin ? `${origin}/dashboard#pay-help` : undefined,
       }),
       // Always sent, on every platform. A deep link that does nothing is the
       // commonest failure here — no UPI app on iOS, or Chrome declining the

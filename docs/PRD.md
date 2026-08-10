@@ -126,18 +126,37 @@ UPI deep link to the association's existing VPA, with a QR on desktop. The link
 carries `tr=DDP4A202606` — flat and period — which is what reconciliation
 actually rests on, plus a human-readable note `(4A_09_08_26)` for the statement.
 
-Three things learned the hard way:
+Four things learned the hard way, three of them from the same report — "I press
+Pay and nothing happens":
 
 - Spaces must be `%20`, never `+`. UPI apps decode strictly, and a rejected
   intent looks exactly like a button doing nothing.
 - Android needs an `intent://` URI. Chrome hands bare custom schemes to the OS
-  unevenly and fails silently when it declines.
+  unevenly and fails silently when it declines. But an *unaddressed* intent was
+  not enough: it relies on the OS chooser appearing, and when it does not — no
+  handler resolved, or an in-app WebView that blocks non-http URLs, which is how
+  a link arriving over WhatsApp is usually opened — the tap is still silent. So
+  Android now gets the same named app row as iOS, each link carrying
+  `package=`, which resolves to that app or to its Play Store page. Every intent
+  also carries `S.browser_fallback_url`, pointing at `/dashboard#pay-help`.
+- **Assume the handoff can fail, and say so.** A UPI link has no success or
+  failure callback; the only observable signal that an app took over is the page
+  losing visibility. If that never comes within 1.6s, the dashboard reveals the
+  manual route by itself rather than leaving somebody tapping a dead button.
 - **Always offer a manual route.** No deep link works everywhere. "Pay another
   way" shows the UPI ID, amount and note on every platform.
 
 Tapping Pay records an *intent*, not a payment. There is no callback; all it
-means is that someone opened their app. The late-fee cron holds those rather
-than charging, and the treasurer checks the bank statement.
+means is that someone opened their app. Copying the UPI ID from "Pay another
+way" records the same thing, for the same reason — that resident is equally
+about to send money, and without it the people who pay from their own app are
+exactly the ones the late-fee cron charges. The cron holds intents rather than
+charging, and the treasurer checks the bank statement.
+
+Once a screenshot is uploaded the bill reads `awaiting` and the Pay button is
+withdrawn: that resident has paid and proved it, and a duplicate credit is more
+work for the treasurer than a missing one. `initiated` keeps the button — an app
+opening is not a payment.
 
 ## What is deliberately manual
 

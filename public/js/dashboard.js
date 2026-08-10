@@ -115,25 +115,61 @@ function paySection(me) {
   if (!b.showPayButton || !me.pay) return el('div');
 
   const { target, links } = me.pay;
-  const block = el('section', { class: 'pay-block' });
+  // Named, because the Android intent's browser_fallback_url lands on
+  // /dashboard#pay-help — the anchor has to exist for that to mean anything.
+  const block = el('section', { class: 'pay-block', id: 'pay-help' });
 
   // Record the intent before handing off to the UPI app. Fire-and-forget: a
   // failed log must never stop someone paying their bill.
   const record = () => { api.payIntent(b.id).catch(() => {}); };
 
-  // Android gets the intent form. Chrome hands bare custom schemes to the OS
-  // unevenly, and when it declines, nothing at all happens — which is exactly
-  // what was reported. An intent URI is the documented shape and degrades to
-  // the Play Store rather than to silence.
-  const androidHref = links.intent ?? links.generic;
+  const manual = me.pay.manual ? manualBlock(me.pay.manual, record) : null;
 
-  if (target === 'ios') {
-    // iOS has no UPI app chooser, so the apps must be listed explicitly.
+  // Shown only when a tap demonstrably did nothing. See handoff().
+  const stuck = el('div', { class: 'note note--warn', hidden: true },
+    'No UPI app opened. Use ',
+    el('strong', {}, 'Pay another way'),
+    ' below — copy the UPI ID into your own app.');
+
+  /**
+   * Wrap a pay link so a tap that goes nowhere says so.
+   *
+   * A UPI handoff has no success callback and no failure callback; when the OS
+   * declines the scheme — no handler, or an in-app WebView that blocks
+   * non-http URLs — the page simply does not move. That is the whole of the
+   * reported bug: not an error, an absence. So we watch for the page LOSING
+   * focus, which is the one observable signal that an app took over, and if it
+   * never comes we surface the manual route instead of leaving a resident
+   * tapping a button that appears dead.
+   */
+  const handoff = () => {
+    record();
+    let handedOff = false;
+    const mark = () => { handedOff = true; };
+    const events = [[document, 'visibilitychange'], [window, 'pagehide'], [window, 'blur']];
+    for (const [t, e] of events) t.addEventListener(e, mark);
+
+    setTimeout(() => {
+      for (const [t, e] of events) t.removeEventListener(e, mark);
+      if (handedOff || document.visibilityState === 'hidden') return;
+      stuck.hidden = false;
+      if (manual) manual.open = true;
+      stuck.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 1600);
+  };
+
+  if (target === 'ios' || target === 'android') {
+    // Neither platform can be trusted to produce a chooser: iOS has none at
+    // all, and on Android the chooser for an unaddressed `upi://` is exactly
+    // what fails to appear. So the apps are named, and each link addresses one
+    // app directly — on Android by package, which degrades to that app's Play
+    // Store page rather than to silence.
+    const hrefFor = (key) => (target === 'ios' ? links[key] : links.androidApps?.[key]);
     block.append(
       el('p', { class: 'label' }, 'Choose your UPI app'),
       el('div', { class: 'pay-apps' },
-        ...UPI_APPS.map((app) =>
-          el('a', { class: 'pay-app', href: links[app.key], onclick: record },
+        ...UPI_APPS.filter((app) => hrefFor(app.key)).map((app) =>
+          el('a', { class: 'pay-app', href: hrefFor(app.key), onclick: handoff },
             // The official mark when it is present, the coloured dot when it
             // is not. onerror rather than a build-time check, so dropping an
             // SVG into public/img/upi/ is the whole installation step and a
@@ -141,17 +177,21 @@ function paySection(me) {
             appMark(app),
             app.label)))
     );
+    if (target === 'android') {
+      block.append(
+        el('p', { style: 'text-align:center;margin-top:var(--s-3)' },
+          el('a', { class: 'linkish', href: links.intent ?? links.generic, onclick: handoff },
+            `Pay ${money(b.total)} with another UPI app`)));
+    }
   } else {
     block.append(
-      el('a', {
-        class: 'btn btn--block btn--lg',
-        href: target === 'android' ? androidHref : links.generic,
-        onclick: record,
-      }, `Pay ${money(b.total)}`),
-      el('p', { class: 'helper' },
-        target === 'android' ? 'Your phone will ask which UPI app to use' : 'Scan with any UPI app')
+      el('a', { class: 'btn btn--block btn--lg', href: links.generic, onclick: handoff },
+        `Pay ${money(b.total)}`),
+      el('p', { class: 'helper' }, 'Scan with any UPI app')
     );
   }
+
+  block.append(stuck);
 
   if (target === 'desktop') {
     const canvas = el('canvas', {
@@ -162,7 +202,11 @@ function paySection(me) {
     drawQr(canvas, links.qr, { target: 240 });
   }
 
-  if (me.pay.manual) block.append(manualBlock(me.pay.manual));
+  if (manual) {
+    block.append(manual);
+    // Arrived here from a dead intent: open the way out without being asked.
+    if (location.hash === '#pay-help') manual.open = true;
+  }
 
   block.append(
     el('p', { class: 'helper' },
@@ -244,10 +288,15 @@ function chartReadout() {
  * did not open is already unsure what happened, and someone who simply prefers
  * their own app should not have to admit to a failure to find this.
  */
-function manualBlock(m) {
+function manualBlock(m, record = () => {}) {
   const idField = el('code', { class: 'vpa' }, m.vpa);
   const copy = el('button', { class: 'btn btn--ghost btn--sm', type: 'button' }, 'Copy');
   copy.addEventListener('click', async () => {
+    // Copying the UPI ID is the same declaration as tapping Pay: this person is
+    // about to send money. It reaches the treasurer's shortlist by the same
+    // route, and it starts the same late-fee hold — otherwise the residents who
+    // pay from their own app are precisely the ones who get charged the fee.
+    record();
     try {
       await navigator.clipboard.writeText(m.vpa);
       copy.textContent = 'Copied';

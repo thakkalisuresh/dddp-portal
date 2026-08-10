@@ -6,7 +6,7 @@ import {
 import {
   hasRole, isBlockedWhileImpersonating, cookieHeader, clearCookieHeader, readCookie, COOKIE,
 } from '../functions/lib/session.js';
-import { buildUpiLinks, manualPayment, payTargetFor, IOS_SCHEMES } from '../functions/lib/upi.js';
+import { buildUpiLinks, manualPayment, payTargetFor, IOS_SCHEMES, ANDROID_PACKAGES } from '../functions/lib/upi.js';
 
 // Keep iterations low in tests — the production value is measured separately.
 const ITER = 1000;
@@ -155,6 +155,32 @@ describe('UPI links', () => {
     expect(intent.startsWith('intent://pay?')).toBe(true);
     expect(intent).toContain('scheme=upi');
     expect(intent.endsWith(';end')).toBe(true);
+  });
+
+  it('addresses each Android app by package, so a missing app is not silence', () => {
+    // The unaddressed intent assumed an OS chooser that does not always
+    // appear, and "no chooser" is indistinguishable from "no app" — nothing
+    // happens either way. A package intent resolves to that app or to its Play
+    // Store page.
+    const { androidApps } = buildUpiLinks(args);
+    for (const [app, pkg] of Object.entries(ANDROID_PACKAGES)) {
+      expect(androidApps[app]).toContain(`package=${pkg}`);
+      expect(androidApps[app]).toContain('scheme=upi');
+      expect(androidApps[app]).toContain('am=329.04');
+    }
+  });
+
+  it('carries a browser_fallback_url, percent-encoded', () => {
+    // Without it a non-resolving intent does nothing at all. Encoded because
+    // the fragment is ';'-delimited and a raw query string truncates it.
+    const { intent } = buildUpiLinks({ ...args, fallbackUrl: 'https://x.example/dashboard#pay-help' });
+    expect(intent).toContain(
+      `S.browser_fallback_url=${encodeURIComponent('https://x.example/dashboard#pay-help')}`);
+    expect(intent.split('#Intent;')[1]).not.toContain('?');
+  });
+
+  it('omits the fallback when there is no origin to send anyone to', () => {
+    expect(buildUpiLinks(args).intent).not.toContain('browser_fallback_url');
   });
 
   it('gives the details to type in by hand', () => {
