@@ -50,7 +50,6 @@ a { color: var(--accent); }
   border-radius: 2px;
 }
 
-.ml { font-family: var(--font-ml); }
 
 /* Digits that line up in columns must not jitter. */
 .num, table td, table th, .amount, .money {

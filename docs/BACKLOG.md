@@ -170,24 +170,30 @@ always was.
 
 ## B1 — Language toggle (English ⇄ Malayalam)
 
-Replace the side-by-side bilingual labels with a real toggle. Agreed as the
-right end state; parked because the toggle itself is the small part.
+Still the agreed end state. **The half-measure is gone**: the side-by-side
+bilingual labels were removed 2026-08-10, along with the Manjari face and the
+`.ml` class, because a second word in a span was an unreviewed guess sitting
+next to every English label — a promise the app could not keep. English-only is
+honest; a toggle would be better; the thing in between was neither.
 
-28 keys in `public/js/i18n.js` at 10 call sites, against ~58 explanatory
-sentences hardcoded in English. Today a weak translation is survivable because
-the English sits beside it. Under a toggle it is the only thing on screen.
+So this now starts from nothing rather than from 28 keys, which changes less
+than it sounds: the registry was never the source of truth, and the ~58
+explanatory sentences hardcoded across the screens always were the real body of
+work. The old strings are in git if they are ever worth reviving as a starting
+draft — `git show 4bba0ab:public/js/i18n.js`.
 
-Known risk worth testing FIRST: Malayalam runs long. "Upload screenshot" is
-roughly 3x wider. If the nav cannot hold the real strings, that changes the
-labels, not the CSS.
+Known risk worth testing FIRST, unchanged: Malayalam runs long. "Upload
+screenshot" is roughly 3x wider. If the nav cannot hold the real strings, that
+changes the labels, not the CSS.
 
 Blocked by B2.
 
-## B2 — Malayalam review by a native speaker
+## B2 — Malayalam strings, from a native speaker
 
-The 28 existing strings are unreviewed. Best use of a resident who reads
-Malayalam: generate the full English list as two columns and have them fill the
-second. Better than asking them to audit guesses.
+Nothing to review any more — there are no Malayalam strings in the app. What is
+needed is the strings themselves, which was always the better shape: give a
+resident who reads Malayalam the full English list as two columns and have them
+fill the second, rather than asking them to audit somebody's guesses.
 
 Blocks B1.
 

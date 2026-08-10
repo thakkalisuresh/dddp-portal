@@ -10,7 +10,7 @@
  */
 
 import { el, esc, $, showError, setChildren } from './ui.js';
-import { dayLabel, bilingual } from './i18n.js';
+import { dayLabel } from './i18n.js';
 
 /**
  * The association's own photographs, rescued from the old portal before that
@@ -108,11 +108,11 @@ async function init() {
 
 function render({ committee, amenities, officeHours, subjects, contact, mapsKey }) {
   setChildren(main,
-    section('gallery', bilingual('gallery'), [
+    section('gallery', 'Gallery', [
       el('div', { class: 'gallery' }, ...GALLERY.map(tile)),
     ]),
 
-    section('amenities', bilingual('amenities'), [
+    section('amenities', 'Amenities', [
       el('div', { class: 'amenities' },
         ...amenities.map((a) => el('span', { class: 'amenity' }, a))),
     ]),
@@ -155,7 +155,7 @@ function render({ committee, amenities, officeHours, subjects, contact, mapsKey 
             el('td', { class: 'small muted', style: 'text-align:right' }, h.hours))))),
     ]),
 
-    section('contact', bilingual('contact'), [
+    section('contact', 'Contact', [
       // Above the form on purpose. Somebody with a gas smell should not have to
       // fill in a web form and wait — the number comes first, and tel:/mailto:
       // mean one tap on the phone this is mostly read on.

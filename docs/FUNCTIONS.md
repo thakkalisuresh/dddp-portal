@@ -516,13 +516,10 @@ Dialling codes, and what a valid national number looks like under each.
 
 ### `public/js/i18n.js`
 
-Bilingual labels — English with Malayalam alongside for the ~30 strings a resident actually reads.
+Formatting for the things a resident reads: money, weight, months, dates.
 
 | | Export | What it does |
 |---|---|---|
-| const | `L` | Bilingual labels — English with Malayalam alongside for the ~30 strings a resident actually reads. |
-| fn | `bilingual` |  |
-| fn | `en` |  |
 | fn | `money` | Indian rupee. |
 | fn | `kg` |  |
 | fn | `periodLabel` |  |
@@ -598,4 +595,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-304 exports. 181 have no doc comment.
+301 exports. 179 have no doc comment.

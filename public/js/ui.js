@@ -3,7 +3,7 @@
  * handful of pages and a virtual DOM would be more code than the app.
  */
 
-import { money, en } from './i18n.js';
+import { money } from './i18n.js';
 
 export const $  = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -47,19 +47,23 @@ export function setChildren(node, ...children) {
   node.replaceChildren(...children.flat().filter((c) => c != null));
 }
 
+// Five statuses, four words: 'initiated' and 'awaiting' are both Checking to a
+// resident — the difference between them is the treasurer's business — and a
+// waived bill reads as Paid, because that is what it means to the person who
+// owes nothing.
 const CHIP = {
-  paid:      { cls: 'chip--paid',     key: 'paid' },
-  unpaid:    { cls: 'chip--overdue',  key: 'unpaid' },
-  overdue:   { cls: 'chip--overdue',  key: 'overdue' },
-  initiated: { cls: 'chip--awaiting', key: 'checking' },
-  awaiting:  { cls: 'chip--awaiting', key: 'checking' },
-  waived:    { cls: 'chip--neutral',  key: 'paid' },
+  paid:      { cls: 'chip--paid',     label: 'Paid' },
+  unpaid:    { cls: 'chip--overdue',  label: 'Unpaid' },
+  overdue:   { cls: 'chip--overdue',  label: 'Overdue' },
+  initiated: { cls: 'chip--awaiting', label: 'Checking' },
+  awaiting:  { cls: 'chip--awaiting', label: 'Checking' },
+  waived:    { cls: 'chip--neutral',  label: 'Paid' },
 };
 
 /** Status always renders as dot + word, never colour alone. */
 export function statusChip(status) {
   const conf = CHIP[status] ?? CHIP.unpaid;
-  return el('span', { class: `chip ${conf.cls}` }, en(conf.key));
+  return el('span', { class: `chip ${conf.cls}` }, conf.label);
 }
 
 /**
