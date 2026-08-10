@@ -92,6 +92,39 @@ Walk the committee through the site on real-looking data before any resident
 sees it. There is no migration path, so this is the only rehearsal available.
 B11 is done, so this is no longer blocked.
 
+## B18 — Email as a second login identity
+
+Raised 2026-08-10, out of a worry about owners living abroad. Parked until the
+list of usernames from the old portal turns up: that says what residents already
+expect to type, which is the one input none of the analysis could supply. Until
+then login stays the mobile, taken as ten bare digits, `91…` or `+91…` — all
+three already land on the same stored number through `normaliseMobile`.
+
+**Email is not credential-grade today, and that is the real finding.** `mobile`
+is the only UNIQUE identity column; `email` is nullable and not unique, so two
+residents may share one right now. Onboarding and `PATCH /api/me` are the only
+two write paths that skip `normaliseEmail`, so an address can be stored mixed
+case and untrimmed. `npm run doctor` reports a shared address as a **warn**,
+correctly — today it means one reset inbox for two people. As a login it would
+mean one account for two people, and that severity would be wrong.
+
+Which is to say email is where the mobile was before 0009, and 0009 is the
+template if this is ever built: canonicalise the data, route every path through
+one function, then add the unique index and let it start meaning something.
+Two things would be worth doing whatever is decided about login — the index, and
+requiring the current password to change your own email, since a stolen session
+plus `/forgot` is otherwise a permanent takeover.
+
+Worth knowing before weighing it up: **2 of 107 accounts have any address at
+all** (B5 and W2 are the same fact from other angles), so this is a door almost
+nobody could use on the day it shipped.
+
+**One live bug hides in here.** The login field is `type="tel"
+inputmode="numeric"` — a digit keypad with no `+`. An owner with a foreign
+number cannot type their own login on a phone. Harmless so far because every
+stored number is `+91`; a text input fixes it in one line, and should not wait
+for the rest of this.
+
 ## B17 — A status-first home, when there are four things to route between
 
 Raised 2026-08-09, after looking at MyGate and NoBrokerHood. Both open on a
