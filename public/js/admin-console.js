@@ -693,9 +693,12 @@ function exportPanel() {
   const tables = ['bills', 'readings', 'owners', 'periods', 'payment_proofs', 'audit_log', 'messages'];
   return el('div', { class: 'panel stack' },
     el('h2', {}, 'Download the data'),
+    // The old copy promised a nightly Drive copy flatly. That has never once
+    // been true — the secrets have never been set, so runBackup returns early
+    // every night. Whether it happens is now answered below, by the watermark,
+    // rather than asserted here.
     el('p', { class: 'muted small' },
-      'CSV, openable in Excel. Passwords are never included. A copy is also sent '
-      + 'to the committee Drive folder every night.'),
+      'CSV, openable in Excel. Passwords are never included.'),
     el('a', { class: 'btn', href: '/api/admin/export', download: '' }, 'Download everything'),
     el('p', { class: 'label', style: 'margin-top:var(--s-4)' }, 'Single table'),
     el('div', { class: 'row', style: 'flex-wrap:wrap' },
@@ -706,6 +709,15 @@ function exportPanel() {
     backupHealthLine());
 }
 
+/**
+ * Two different questions, and the second is the one that matters.
+ *
+ * "Is the token valid" is a live check and answers whether tonight's run could
+ * work. "When did a file last land" is the watermark, and it is the only thing
+ * that can tell a working backup from one that stopped weeks ago — which is
+ * what actually happened here: written in phase 8, deployed, never run once,
+ * and nothing said so.
+ */
 function backupHealthLine() {
   const line = el('p', { class: 'small muted' }, 'Checking…');
   api.admin.backupHealth().then((h) => {
@@ -714,10 +726,25 @@ function backupHealthLine() {
         ? 'Google Drive is reachable and the token is valid.'
         : h.reason === 'not-configured'
           ? 'Not set up yet. Add the Google secrets to enable nightly off-site copies.'
-          : `Backup is BROKEN (${h.reason}). A refresh token issued in OAuth "Testing" mode expires after 7 days. Publish the consent screen.`);
+          : `Backup is BROKEN (${h.reason}). A refresh token issued in OAuth "Testing" mode expires after 7 days. Publish the consent screen.`,
+      el('br'),
+      lastBackupText(h));
     if (!h.ok && h.reason !== 'not-configured') line.className = 'small';
   }).catch(() => line.replaceChildren('Could not check.'));
   return line;
+}
+
+function lastBackupText(h) {
+  if (!h.lastBackupAt) {
+    return h.reason === 'not-configured'
+      ? 'No copy has ever been written.'
+      : 'No copy has been written yet — the first runs at 3am.';
+  }
+  const days = Math.floor((Date.now() - new Date(h.lastBackupAt)) / 86_400_000);
+  const when = days === 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
+  // Stated in days rather than a timestamp, because the only question anyone
+  // asks of this line is "recently enough?".
+  return `Last copy written ${when}.`;
 }
 
 async function messagesPanel() {

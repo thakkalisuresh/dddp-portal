@@ -221,11 +221,31 @@ been set, so `runBackup` returns early every night and nothing is copied
 off-site. The only backups that exist are the ones taken by hand during this
 work, sitting in a scratchpad directory that does not survive the session.
 
-Unblocked by W1 — it shares the same OAuth credentials as email.
+**Still true, and still blocked on W1** — it shares the same OAuth credentials
+as email, plus `GOOGLE_BACKUP_FOLDER_ID`.
 
-Worth adding a doctor check once it is on: a backup that silently stops looks
-exactly like a backup that is working, which is the failure the digest
-staleness check already exists for.
+**The watching half is now built (2026-08-10).** `runBackup` writes a
+`last_backup_at` watermark to `settings` on an upload that returned, mirroring
+the digest's, and `checkBackup` reads it: BACKUP-NOT-CONFIGURED while the
+secrets are missing, BACKUP-NEVER once configured but before the first 3am run,
+BACKUP-STALE past 48 hours. The Export tab shows the same fact in words a
+treasurer reads — "Last copy written 3 days ago", or "No copy has ever been
+written".
+
+That check is what makes the rest safe to switch on. `backupHealth` only ever
+answered "would the token work right now", which is the reassuring half: a
+refresh token issued in OAuth "Testing" mode expires after seven days and the
+upload then stops silently, looking exactly like a folder nobody opened. Only
+the watermark separates the two.
+
+Doctor now reports BACKUP-NOT-CONFIGURED against production, so the silence is
+at least visible while it lasts. Also removed: the Export tab used to state
+flatly that "a copy is also sent to the committee Drive folder every night",
+which has never once been true.
+
+What remains is entirely W1: set the four secrets, publish the OAuth consent
+screen to Production, then confirm the watermark advances after the first 3am
+run rather than trusting that it did.
 
 ---
 

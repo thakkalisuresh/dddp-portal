@@ -94,6 +94,22 @@ function mailSecrets() {
   }
 }
 
+/**
+ * The backup needs one secret the mail path does not — the folder to write
+ * into — so this cannot just reuse mailSecrets(). Asked of Cloudflare rather
+ * than of this shell, for the same reason as the others.
+ */
+function driveSecrets() {
+  try {
+    const out = execFileSync('npx', ['wrangler', 'pages', 'secret', 'list'],
+      { encoding: 'utf8', cwd: join(process.cwd(), 'pages'), stdio: ['ignore', 'pipe', 'pipe'] });
+    return ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN',
+            'GOOGLE_BACKUP_FOLDER_ID'].every((n) => out.includes(n));
+  } catch {
+    return false;
+  }
+}
+
 const main = () => {
   const env = local ? 'local' : 'production';
   if (!asMarkdown) console.error(`${C.dim}Reading ${env}…${C.off}`);
@@ -115,11 +131,14 @@ const main = () => {
     "SELECT value FROM settings WHERE key = 'last_digest_at'", 'settings');
   const [demo] = safe(
     "SELECT value FROM settings WHERE key = 'demo_seed_ids'", 'settings');
+  const [backup] = safe(
+    "SELECT value FROM settings WHERE key = 'last_backup_at'", 'settings');
 
   const findings = runChecks({
     owners, flats, bills, periods, readings, proofs, unavailable,
     lastDigestAt: digest?.value ?? null,
     demoMarker: demo?.value ?? null,
+    lastBackupAt: backup?.value ?? null,
     config: {
       // Read from wrangler config rather than guessed: an empty VPA is a real
       // production failure and a non-issue locally.
@@ -130,6 +149,7 @@ const main = () => {
       alerting: local ? { cron: true, pages: true } : alertingSecrets(),
       // Same reasoning as alerting: ask Cloudflare, not this shell.
       mailConfigured: local ? true : mailSecrets(),
+      driveConfigured: local ? true : driveSecrets(),
       remote: !local,
     },
   });

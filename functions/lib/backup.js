@@ -176,6 +176,9 @@ export function backupFilename(now = new Date()) {
   return `diamond-park-${now.toISOString().slice(0, 10)}.csv`;
 }
 
+/** Watermark key. Mirrors `last_digest_at`, and for the same reason. */
+export const BACKUP_SETTING = 'last_backup_at';
+
 export async function runBackup(env, ctx) {
   if (!driveConfigured(env)) {
     // Not an error worth alerting on — it simply hasn't been set up yet.
@@ -185,11 +188,22 @@ export async function runBackup(env, ctx) {
     const files = await dumpAll(env);
     const content = bundle(files, { generatedAt: new Date().toISOString() });
     const uploaded = await uploadToDrive(env, { name: backupFilename(), content });
+    // Written only after the upload returns. A watermark set before the file
+    // lands would report a backup that does not exist, which is worse than
+    // reporting none: it is the reassurance without the copy.
+    await setBackupWatermark(env, new Date().toISOString());
     return { uploaded: uploaded.name, tables: Object.keys(files).length, bytes: content.length };
   } catch (err) {
     await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);
     return { failed: true };
   }
+}
+
+async function setBackupWatermark(env, at) {
+  await env.DB.prepare(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).bind(BACKUP_SETTING, at).run();
 }
 
 /**
@@ -198,11 +212,18 @@ export async function runBackup(env, ctx) {
  * night until the day you need the data.
  */
 export async function backupHealth(env) {
-  if (!driveConfigured(env)) return { ok: false, reason: 'not-configured' };
+  // Reported whatever the token says. A valid token with no file behind it is
+  // the exact state this system has been in since phase 8, and the reassuring
+  // half of the answer was the only half being shown.
+  const mark = await env.DB.prepare('SELECT value FROM settings WHERE key = ?')
+    .bind(BACKUP_SETTING).first();
+  const lastBackupAt = mark?.value ?? null;
+
+  if (!driveConfigured(env)) return { ok: false, reason: 'not-configured', lastBackupAt };
   try {
     await refreshAccessToken(env);
-    return { ok: true };
+    return { ok: true, lastBackupAt };
   } catch (err) {
-    return { ok: false, reason: err?.code ?? 'token-refresh-failed' };
+    return { ok: false, reason: err?.code ?? 'token-refresh-failed', lastBackupAt };
   }
 }

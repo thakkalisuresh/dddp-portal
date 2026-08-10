@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   checkMobiles, checkEmails, checkSuperadmin, checkBills, checkPeriods,
   checkOwnership, checkIntegrity, checkConfig, runChecks, summarise,
-  toMarkdown, maskMobile, maskEmail, checkDigest, checkResetPath, checkTenancy, checkExemptions, checkDemoData,
+  toMarkdown, maskMobile, maskEmail, checkDigest, checkBackup, checkResetPath, checkTenancy,
+  checkExemptions, checkDemoData,
 } from '../functions/lib/diagnostics.js';
 
 const owner = (o) => ({ id: 1, flat: '4A', name: 'A', mobile: '+919567791515',
@@ -205,6 +206,43 @@ describe('the digest is itself checked', () => {
 
   it('stays out of the way locally', () => {
     expect(checkDigest({ lastDigestAt: null, remote: false, now })).toEqual([]);
+  });
+});
+
+describe('the backup is itself checked', () => {
+  // B12: written in phase 8, deployed, and never run once. Nothing said so,
+  // because a backup that has never happened and a backup that stopped both
+  // look like an empty folder nobody opens.
+  const now = new Date('2026-08-09T03:00:00Z');
+
+  it('says plainly that nothing is leaving the building', () => {
+    const f = checkBackup({ driveConfigured: false, remote: true, now });
+    expect(f[0].id).toBe('BACKUP-NOT-CONFIGURED');
+    expect(f[0].severity).toBe('warn');
+  });
+
+  it('warns when the watermark has not moved in over 48 hours', () => {
+    // The documented failure: a refresh token issued in OAuth "Testing" mode
+    // expires after seven days and the upload then fails silently.
+    const f = checkBackup({
+      lastBackupAt: '2026-08-05T03:00:00Z', driveConfigured: true, remote: true, now });
+    expect(f[0].id).toBe('BACKUP-STALE');
+    expect(f[0].rows[0].hoursAgo).toBe(96);
+  });
+
+  it('is quiet after a normal nightly run', () => {
+    expect(checkBackup({
+      lastBackupAt: '2026-08-08T03:00:00Z', driveConfigured: true, remote: true, now })).toEqual([]);
+  });
+
+  it('says so plainly before the first run, rather than warning', () => {
+    const f = checkBackup({ lastBackupAt: null, driveConfigured: true, remote: true, now });
+    expect(f[0].id).toBe('BACKUP-NEVER');
+    expect(f[0].severity).toBe('info');
+  });
+
+  it('stays out of the way locally — a laptop has no off-site folder', () => {
+    expect(checkBackup({ driveConfigured: false, remote: false, now })).toEqual([]);
   });
 });
 

@@ -41,7 +41,7 @@ import { splitMobile, NATIONAL_LENGTHS } from '../public/js/countries.js';
 import { addFlat } from './lib/flats.js';
 import { ERROR_CODES } from './lib/error-codes.js';
 import { isCaptureOn, captureWindow, validateBatch } from './lib/clicks.js';
-import { runBackup, backupHealth, pruneOldRows, dumpTable, dumpAll, bundle, toCsv, TABLES } from './lib/backup.js';
+import { runBackup, backupHealth, driveConfigured, pruneOldRows, dumpTable, dumpAll, bundle, toCsv, TABLES } from './lib/backup.js';
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole,
@@ -2047,7 +2047,7 @@ async function editBill(request, env, session, path) {
  * eventually disagree, and the one nobody is looking at is the correct one.
  */
 async function godDiagnostics(env, url) {
-  const [owners, flats, bills, periods, readings, proofs, errors, digest, demo] =
+  const [owners, flats, bills, periods, readings, proofs, errors, digest, demo, backup] =
     await Promise.all([
     env.DB.prepare(`SELECT id, flat, name, mobile, email, role, active, relationship,
                            late_fee_exempt_until, late_fee_exempt_reason FROM owners`).all(),
@@ -2061,6 +2061,7 @@ async function godDiagnostics(env, url) {
     env.DB.prepare('SELECT code, severity, at FROM error_log ORDER BY id DESC LIMIT 25').all(),
     env.DB.prepare("SELECT value FROM settings WHERE key = 'last_digest_at'").first(),
     env.DB.prepare("SELECT value FROM settings WHERE key = 'demo_seed_ids'").first(),
+    env.DB.prepare("SELECT value FROM settings WHERE key = 'last_backup_at'").first(),
   ]);
 
   const data = {
@@ -2068,9 +2069,11 @@ async function godDiagnostics(env, url) {
     periods: periods.results ?? [], readings: readings.results ?? [], proofs: proofs.results ?? [],
     lastDigestAt: digest?.value ?? null,
     demoMarker: demo?.value ?? null,
+    lastBackupAt: backup?.value ?? null,
     config: {
       upiVpa: env.UPI_VPA, alertingConfigured: Boolean(env.TELEGRAM_BOT_TOKEN),
-      mailConfigured: mailConfigured(env), remote: true,
+      mailConfigured: mailConfigured(env),
+      driveConfigured: driveConfigured(env), remote: true,
     },
   };
 
