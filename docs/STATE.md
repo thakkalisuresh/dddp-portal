@@ -100,12 +100,15 @@ is useless and does not come back.
 
 | | |
 |---|---|
-| **B13** | A rejected proof returns a bill to `initiated`, which the late-fee cron holds rather than charges — so a resident whose screenshot is rejected becomes permanently immune. The hold also has no time limit. Neither has fired; there are no real bills. |
 | **B10** | Admin-issued temporary passwords never expire. Sent over WhatsApp, which keeps them for years. |
 | **B12** | No off-site backup has ever run. |
-| — | Rejecting a proof gives the resident no reason, so they re-upload the same wrong screenshot. |
+| — | Rejecting a proof gives the resident no reason, so they re-upload the same wrong screenshot. Now that rejection also returns the bill to `unpaid` and the late fee applies (B13), this matters more than it did. |
 | — | Deleting a proof clears R2 but keeps `image_sha256`, so duplicate detection still fires against an image nobody can see. |
-| — | Notices cannot be edited, pinned, or expired. Fixing a typo means deleting and reposting, which loses the comments. |
+| — | Notices can be withdrawn and scoped, but not edited in place, pinned or expired. Fixing a typo still means withdrawing and reposting, which loses the comments — the PATCH endpoint accepts title and body, nothing in the interface sends them. |
+
+**B13 is fixed** as of 2026-08-09 and no longer belongs here: the late-fee hold
+now expires after seven days and a rejected proof returns the bill to `unpaid`
+rather than to the state the cron protects.
 
 Full list with reasoning in `docs/BACKLOG.md`.
 

@@ -59,56 +59,17 @@ Three of four accounts have no email, so they cannot reset their own passwords
 even once W1 is done. Add them from god mode. `npm run doctor` names them under
 NO-EMAIL-ON-FILE.
 
+## W3 — The building's real coordinates
+
+The map added in B15 centres on Kuriachira and carries **no marker**, because
+DD Diamond Park is not in OpenStreetMap and a confident pin on the wrong gate
+sends a visitor to the wrong road. One constant in `public/js/home.js`
+(`LOCATION`) and a `&marker=LAT,LON` on the embed URL, once somebody who lives
+there reads the real numbers off their phone.
+
 ---
 
 # Ready to build
-
-## B16 — Notices are resident business, not public
-
-Asked for 2026-08-09, and the reasoning is the whole of it: a notice is the
-association talking to the people who live here. Nobody outside the building
-needs to read it, and some of what a committee posts — a meeting about a
-defaulter, a security incident, a plumber's phone number — is nobody else's
-business at all.
-
-Today `publicNotices` in `functions/lib/public.js` serves the full **title and
-body** of every active notice to anyone who loads the homepage. Comments were
-already held back, because they carry names and flats; the notice text was not.
-
-**Do this before the first real notice is posted.** There are zero notices in
-production right now, so today it costs one deleted section. Afterwards it does
-not: a notice that has been served publicly has been fetched by crawlers, and
-withdrawing it from the site does not withdraw it from anybody's index. This is
-the only item here with a genuine deadline, which is why it sits at the top.
-
-Small: drop `notices` from the public payload and the section from
-`public/js/home.js`. The endpoint stays — it also carries `committee` and
-`amenities`, which are legitimately public. Residents lose nothing, because
-`/notices` is already its own tab in the bottom nav.
-
-### Does the landing page change? No — but something must ship with it
-
-Raised at the same time, and worth answering here rather than rediscovering it.
-
-Leave the landing page as the bill. That is a decision, not an accident: C3 says
-a resident who lands on an empty dashboard concludes the site is useless, and
-the reason they were sent a login in the first place is that they owe money.
-Notices are the second thing they came for, and they already have a tab.
-
-The real consequence is subtler. Today a resident sees notices on the homepage
-**without logging in** — that is where they'd notice one. Take that away and
-notices do not become private, they become invisible: nothing anywhere tells a
-resident a new one exists, so the committee posts into a room nobody enters.
-
-So the removal needs a companion, and it is small: a count or a dot on the
-Notices tab when there is something newer than that resident has seen. Perhaps
-`notices_seen_at` on `owners`, stamped when they open the tab. Without it this
-change quietly turns the notice board off.
-
-Related: **B9** proposes a `scope` column so some notices are owner-only. If
-that lands, `public` becomes a deliberate third value — an evacuation notice or
-a road closure could still be posted outward on purpose — rather than the
-default everything gets today.
 
 ## B10 — Expire admin-issued temporary passwords
 
@@ -122,60 +83,6 @@ Shape: `pw_expires_at` on `owners`, set when an admin issues one, checked at
 login only while `must_change_pw = 1` so it never touches a password the
 resident chose. An expired one should say so and point at `/forgot` rather than
 failing as "wrong password". Perhaps thirty lines and a test.
-
-## B11 — Homepage parity with the old site
-
-The photographs were rescued, but three things on `gas.dddp.online` were never
-carried across and are still missing:
-
-* office hours (Mon–Fri 9–18, Sat 10–16, Sun emergency only)
-* a Maps link to Kuriachira, Thrissur — a plain link, NOT their embedded API key
-* a subject dropdown on the contact form, so messages arrive sorted
-
-Small and self-contained. Worth doing before the demo dry-run (B4), since that
-is exactly when the committee compares old against new.
-
-## B15 — An embedded map on the homepage
-
-Asked for 2026-08-09, and it reverses the third bullet of B11, which settled on
-a plain Maps link precisely to avoid an embed. Worth reopening — a map you can
-see beats a link you have to trust — but the reason it was closed is a real
-constraint rather than a preference, so the entry keeps it.
-
-**An iframe is blocked today.** The CSP in `functions/lib/http.js` is
-`default-src 'self'` with no `frame-src`, so it falls back to `'self'` and a
-Google or OpenStreetMap iframe silently does not render. This is the one that
-will waste an afternoon: nothing errors, the box is just empty. Note that
-`frame-ancestors 'none'` is unrelated — that stops the portal being framed, not
-the portal framing something.
-
-Three ways out, cheapest first:
-
-* **A static map image, self-hosted.** A screenshot of the location saved into
-  `public/img/`, wrapped in a plain link to Maps. No CSP change, no key, no
-  third party, works offline, and is what `public/img/upi/` already does and
-  says why. Loses pan and zoom.
-* **An OpenStreetMap iframe.** Needs `frame-src https://www.openstreetmap.org`
-  added to the CSP, but no API key, no billing account and no Google. This is
-  the sensible middle.
-* **The Google Maps Embed API.** Needs a key, and a key needs a billing account
-  on somebody's card — against goal 2, and the whole reason the old site's
-  embed is unreachable is that it was keyed to a person who left.
-
-The decision is therefore not "embed or link" but **how much CSP to spend**, and
-that is worth one deliberate answer rather than a default. The static image
-needs no decision at all and could ship with B11 today.
-
-## B9 — Owner-only notices
-
-Borrowed from ApnaComplex, which scopes some notices to owners. AGM papers,
-sinking-fund decisions, anything with a vote attached is owner business, and a
-tenant seeing it is noise at best.
-
-Cheap now that `relationship` exists: a scope column on `notices`, filtered by
-the viewer. Decide at the same time whether an absent owner sees them (they
-should — they are the audience) and whether comments are scoped too (they must
-be, or the scope leaks through replies).
 
 ---
 
@@ -191,7 +98,7 @@ than a default. Cloudflare Pages adds no hosting cost once the domain is paid.
 
 Walk the committee through the site on real-looking data before any resident
 sees it. There is no migration path, so this is the only rehearsal available.
-Do B11 first.
+B11 is done, so this is no longer blocked.
 
 ## B17 — A status-first home, when there are four things to route between
 
@@ -219,14 +126,11 @@ anything I need to do" rather than listing places to go. Concretely:
 * the bottom nav is untouched at three tabs
 
 **The trigger: a fourth real destination.** Maintenance billing, a helpdesk,
-facility booking — something with its own state worth a tile. At three, this
-is the dashboard with a notice strip, which is B16's job anyway.
+facility booking — something with its own state worth a tile. At three, this is
+the dashboard with a notice strip.
 
-**It overlaps B16 almost entirely, and that is the useful finding.** Taking
-notices off the public page makes them invisible unless something signals a new
-one; that signal is this design's notice row. Build it once, in B16. If that
-happens, most of B17 is already shipped and what is left is genuinely the grid
-— which is the part to keep not building.
+**B16 shipped the unread signal**, which was the overlapping half. What remains
+is genuinely the grid — the part to keep not building.
 
 ## B5 — Residents with no email at all
 
@@ -296,6 +200,99 @@ staleness check already exists for.
 
 # Done
 
+## B16 — Notices are resident business — DONE 2026-08-09
+
+`publicNotices` served the full title and body of every active notice to anyone
+who loaded the homepage. Comments were always held back because they carry
+names and flats; the notice text never got the same treatment. Deleted rather
+than left behind a flag.
+
+Done when it was free: production had zero notices, so it cost one deleted
+section. After the committee starts posting it costs a crawler's memory, which
+withdrawing a notice does not reach.
+
+The badge is the other half — `notices_seen_at` on `owners`, stamped when the
+board is opened, carried on `/api/me` because every screen renders the nav from
+that payload. Without it, removing notices from the public page would not make
+them private so much as invisible. Not stamped while impersonating.
+
+**The trap, found in a browser and invisible in the source:** the table holds
+timestamps in two spellings — `postNotice` writes ISO from JavaScript, SQL
+written with `datetime('now')` writes a space where the T goes — and compared
+raw, the space sorts BELOW the T, so a later notice reads as older and the
+badge silently stops appearing. Both sides go through `datetime()` now, with a
+1970 fallback rather than `''`, because `datetime('')` is NULL and would take
+the comparison with it.
+
+## B9 — Owner-only notices — DONE 2026-08-09
+
+`scope` on `notices`, values `all` and `owners`, defaulting to `all` so every
+existing notice keeps meaning what it meant. AGM papers and sinking-fund
+decisions are owner business; a tenant cannot act on the agenda.
+
+Absent owners are the audience, not an edge case — `relationship` says nothing
+about presence, and a landlord abroad is exactly who an AGM paper is for.
+
+One predicate, `canSeeNotice`, with four callers: the list, the single notice,
+the comment endpoint and the unread badge. Four copies of a visibility rule is
+four chances for one to be wrong, and the wrong one is the leak. Comments are
+scoped or the scope leaks through replies; the badge is scoped or a tenant
+carries a permanent count for a notice they can never open. Admins are exempt,
+because the console lists notices through the resident endpoint.
+
+Caught while wiring it: `session.actor` carries no `relationship` — only
+`subject` does. Passing actor left it undefined, which read as "not a tenant".
+
+## B13 — The late-fee hold now ends — DONE 2026-08-09
+
+Two holes that turned out to be one: a hold with no clock.
+
+A rejected proof used to return the bill to `initiated`, which the cron holds
+rather than charges, so one rejected screenshot made a resident permanently
+immune. Rejection now returns it to `unpaid`; where charging is harsh, the
+treasurer has the waive button from B14.
+
+The hold on `initiated` had no end either, so tapping Pay was an exemption
+anybody could grant themselves. It now runs seven days from `claimed_at`, which
+is set only when NULL — refreshing it per tap would restore the whole hole for
+the price of opening the app each night.
+
+**The catch unit tests could not make:** the cron's own SELECT did not fetch
+`claimed_at`. It would have arrived undefined, read as "no claim", and charged
+every held bill on the first run — while every test passed, because they hand
+the decision a bill object and never go through that query.
+
+## B11 — Homepage parity — DONE 2026-08-09
+
+Office hours and a contact subject dropdown. Sunday reads "emergencies only",
+never "closed", and there is a test that says so: a gas smell does not respect
+office hours.
+
+The subject was nearly free — `messages` has had the column since 0002 and
+`submitMessage` always bound it, but no form ever sent one. Same shape as
+`waiveLateFee` before B14. Showing it in the admin console is half the change;
+a dropdown nobody can see the result of sorts nothing. Options are served from
+the constant the server validates against, and an unrecognised subject becomes
+null rather than an error — a message rejected over its dropdown is a message
+lost.
+
+The Maps link became B15.
+
+## B15 — An embedded map — DONE 2026-08-09
+
+One line of CSP: `frame-src https://www.openstreetmap.org`. OSM rather than
+Google because an embedded Google map needs an API key, a key needs a billing
+account, and the old site's map is unreachable today for exactly that reason.
+`test/headers.test.js` now pins the whole policy so the next widening is a
+decision somebody makes rather than a line somebody adds.
+
+**`loading="lazy"` left the map permanently blank** — scrolled into view,
+waited five seconds, load event never fired. The empty box this item warns
+about, caused by the guard against it. Removed for the map; the six gallery
+photographs keep it, images honour lazy.
+
+No marker, and the real coordinates are W3.
+
 ## B6 — Telegram alerting — DONE 2026-08-09
 
 Bot created, secrets on both deployments, delivery proven end to end: a
@@ -326,14 +323,6 @@ stops being noticed.
 
 LATE-FEE-EXEMPT in `npm run doctor` is the third guard: the date stops an
 exemption lasting forever, and the check stops it going unnoticed while it runs.
-
-## B13 — Two holes in the late-fee path — STILL OPEN
-
-Deliberately NOT fixed alongside B14, since they are different problems. A
-rejected proof still returns a bill to `initiated`, which the cron holds rather
-than charges, so a resident who has any screenshot rejected becomes immune. And
-the hold on `initiated` still has no time limit. Neither has ever fired:
-production has no periods and no bills.
 
 ## B8 — Tenancy — DONE 2026-08-09
 
