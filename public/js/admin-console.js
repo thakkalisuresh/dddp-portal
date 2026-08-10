@@ -302,7 +302,11 @@ async function messagesPanel() {
       ? messages.map((m) =>
           el('div', { class: 'rowitem', style: m.handled_at ? 'opacity:.55' : '' },
             el('div', { class: 'rowitem__main' },
-              el('b', {}, m.name),
+              // The subject leads, because it is what decides who deals with
+              // this. A sender who skipped the dropdown gets no chip rather
+              // than a guess — "Something else" is a choice they can make and
+              // this is not the same thing.
+              el('b', {}, m.subject ? `${m.subject} · ${m.name}` : m.name),
               el('div', {}, [m.email, m.phone].filter(Boolean).map(esc).join(' · ') || 'no contact given'),
               el('p', { style: 'margin-top:var(--s-2)' }, m.body)),
             m.handled_at

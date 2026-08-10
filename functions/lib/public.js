@@ -29,6 +29,34 @@ export const AMENITIES = [
   'Club house', 'Children\'s play area', 'Sports ground', 'Jogging park',
 ];
 
+/**
+ * Carried across from the old site, which published them and which residents
+ * still go looking for. Sunday is deliberately worded as a restriction rather
+ * than a closure: somebody with a gas smell on a Sunday should not read this
+ * and conclude there is nobody to call.
+ */
+export const OFFICE_HOURS = [
+  { days: 'Monday to Friday', hours: '9:00 – 18:00' },
+  { days: 'Saturday', hours: '10:00 – 16:00' },
+  { days: 'Sunday', hours: 'Emergencies only' },
+];
+
+/**
+ * Served to the contact form rather than duplicated in the browser, so the list
+ * the visitor picks from and the list the server accepts cannot drift apart.
+ *
+ * Deliberately short. A long dropdown gets skimmed and the first option wins,
+ * which is how every message ends up filed under whatever happens to be at the
+ * top. "Something else" is last for the same reason.
+ */
+export const MESSAGE_SUBJECTS = [
+  'Gas bill or payment',
+  'Meter reading',
+  'Maintenance',
+  'Security',
+  'Something else',
+];
+
 /** Notices only — never comments, which carry residents' names and flats. */
 export async function publicNotices(env, { limit = 12 } = {}) {
   const rows = await env.DB.prepare(
@@ -47,7 +75,7 @@ export async function publicNotices(env, { limit = 12 } = {}) {
   }));
 }
 
-export function validateMessage({ name, body, email, phone }) {
+export function validateMessage({ name, body, email, phone, subject }) {
   const cleanName = String(name ?? '').trim();
   const cleanBody = String(body ?? '').trim();
 
@@ -63,6 +91,11 @@ export function validateMessage({ name, body, email, phone }) {
     return { ok: false, message: 'That email address looks wrong. Check it, or leave it blank.' };
   }
 
+  // Anything not on the list becomes null rather than an error. The subject is
+  // a filing aid for the committee, not something the sender should be able to
+  // fail at — and a message rejected over its dropdown is a message lost.
+  const cleanSubject = String(subject ?? '').trim();
+
   return {
     ok: true,
     value: {
@@ -70,6 +103,7 @@ export function validateMessage({ name, body, email, phone }) {
       body: cleanBody,
       email: cleanEmail || null,
       phone: String(phone ?? '').trim() || null,
+      subject: MESSAGE_SUBJECTS.includes(cleanSubject) ? cleanSubject : null,
     },
   };
 }
@@ -90,7 +124,7 @@ export async function submitMessage(env, input, fingerprint) {
       `INSERT INTO messages (name, email, phone, subject, body, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`
     ).bind(check.value.name, check.value.email, check.value.phone,
-           String(input.subject ?? '').trim() || null, check.value.body, now),
+           check.value.subject, check.value.body, now),
     env.DB.prepare('INSERT INTO message_attempts (fingerprint, at) VALUES (?, ?)')
       .bind(fingerprint, now),
   ]);

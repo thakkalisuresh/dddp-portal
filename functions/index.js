@@ -17,7 +17,7 @@ import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { readReceipt } from './lib/vision.js';
 import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden } from './lib/notices.js';
-import { publicNotices, submitMessage, fingerprintOf, AMENITIES } from './lib/public.js';
+import { publicNotices, submitMessage, fingerprintOf, AMENITIES, OFFICE_HOURS, MESSAGE_SUBJECTS } from './lib/public.js';
 import {
   transferFlat, canChangeRole, canResetPassword, waLink, planHandover, outstandingFor,
   mergeTimeline, toIST, isRelationship, occupantOf, landlordOf, isTenanted,
@@ -78,6 +78,8 @@ export default {
           notices: await publicNotices(env),
           committee: committee.results ?? [],
           amenities: AMENITIES,
+          officeHours: OFFICE_HOURS,
+          subjects: MESSAGE_SUBJECTS,
         });
       }
       if (route === 'POST /api/public/contact') {

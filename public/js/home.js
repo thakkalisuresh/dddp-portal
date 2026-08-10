@@ -62,7 +62,7 @@ async function init() {
   }
 }
 
-function render({ notices, committee, amenities }) {
+function render({ notices, committee, amenities, officeHours, subjects }) {
   const events = notices.filter((n) => n.kind === 'event');
   const plain = notices.filter((n) => n.kind !== 'event');
 
@@ -101,7 +101,15 @@ function render({ notices, committee, amenities }) {
             el('td', { class: 'r small muted', style: 'text-align:right' }, c.phone ?? ''))))),
     ]),
 
-    section('contact', bilingual('contact'), [contactForm()])
+    section('hours', 'Office hours', [
+      el('table', { class: 'committee' },
+        el('tbody', {}, ...(officeHours ?? []).map((h) =>
+          el('tr', {},
+            el('td', {}, h.days),
+            el('td', { class: 'small muted', style: 'text-align:right' }, h.hours))))),
+    ]),
+
+    section('contact', bilingual('contact'), [contactForm(subjects)])
   );
 }
 
@@ -112,12 +120,22 @@ function section(id, heading, children) {
     ...(Array.isArray(children) ? children : [children]));
 }
 
-function contactForm() {
+function contactForm(subjects) {
   const status = el('div');
   const field = (label, attrs) => {
     const input = el(attrs.tag ?? 'input', { class: 'input', id: attrs.id, ...attrs });
     return { input, node: el('div', { class: 'field' }, el('label', { for: attrs.id }, label), input) };
   };
+
+  // Options come from the server, so what the visitor can pick and what the
+  // server will accept are the same list. The blank first option is selected by
+  // default on purpose: a pre-selected subject is one nobody reads, and every
+  // message would arrive filed under whatever sits at the top.
+  const subject = el('select', { class: 'input', id: 'c-subject' },
+    el('option', { value: '' }, 'What is this about?'),
+    ...(subjects ?? []).map((s) => el('option', { value: s }, s)));
+  const subjectNode = el('div', { class: 'field' },
+    el('label', { for: 'c-subject' }, 'Subject'), subject);
 
   const name = field('Your name', { id: 'c-name', autocomplete: 'name' });
   const email = field('Email (optional)', { id: 'c-email', type: 'email', autocomplete: 'email' });
@@ -127,7 +145,7 @@ function contactForm() {
   const submit = el('button', { class: 'btn', type: 'submit' }, 'Send message');
 
   const form = el('form', { class: 'stack' },
-    name.node, email.node, phone.node, body.node, status, submit);
+    name.node, email.node, phone.node, subjectNode, body.node, status, submit);
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -139,7 +157,7 @@ function contactForm() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           name: name.input.value, email: email.input.value,
-          phone: phone.input.value, body: body.input.value,
+          phone: phone.input.value, subject: subject.value, body: body.input.value,
         }),
       });
       const data = await res.json();
