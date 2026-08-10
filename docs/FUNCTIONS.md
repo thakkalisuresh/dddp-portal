@@ -238,6 +238,7 @@ God edits — the superadmin changing anything.
 | fn | `reasonRequired` |  |
 | const | `MAX_REASON` |  |
 | fn | `normaliseMobile` | Mobile numbers are the login identity, and several owners live abroad, so a bare 10-digit Indian assumption is wrong. |
+| fn | `normaliseEmail` | An address, or null if it is not one. |
 | fn | `validateOwnerField` |  |
 | fn | `validateBillField` |  |
 | fn | `lockoutCheck` | Every one of these is a lock-out, not a rule about what is proper. |
@@ -501,6 +502,18 @@ Who a resident contacts when something is wrong.
 | fn | `treasurerLine` |  |
 | fn | `dialable` |  |
 
+### `public/js/countries.js`
+
+Dialling codes, and what a valid national number looks like under each.
+
+| | Export | What it does |
+|---|---|---|
+| const | `DIAL_CODES` |  |
+| const | `COMMON_ISO` |  |
+| const | `NATIONAL_LENGTHS` | How many digits the national part has, for the codes we are confident about. |
+| fn | `splitMobile` | Split an E.164 number into its dialling code and the rest. |
+| fn | `countryName` | The country's own name for itself is not what an admin here is scanning for; the English name is. |
+
 ### `public/js/i18n.js`
 
 Bilingual labels — English with Malayalam alongside for the ~30 strings a resident actually reads.
@@ -514,6 +527,14 @@ Bilingual labels — English with Malayalam alongside for the ~30 strings a resi
 | fn | `kg` |  |
 | fn | `periodLabel` |  |
 | fn | `dayLabel` |  |
+
+### `public/js/mobile-field.js`
+
+A mobile number as two controls: the country, and the rest.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `mobileField` | Returns { node, value, focus }. |
 
 ### `public/js/nav.js`
 
@@ -577,4 +598,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-297 exports. 179 have no doc comment.
+304 exports. 181 have no doc comment.

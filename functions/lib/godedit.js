@@ -17,6 +17,9 @@
 import { fail } from './errors.js';
 import { round2, toWholeRupees } from './billing.js';
 import { canChangeRole } from './tenancy.js';
+// Served to the browser as well, which is why it lives under public/. See the
+// header there: one table, imported by both sides, rather than two that drift.
+import { NATIONAL_LENGTHS, splitMobile } from '../../public/js/countries.js';
 
 /* ── what may be edited ──────────────────────────────────────────────────── */
 
@@ -49,16 +52,83 @@ const E164 = /^\+?[1-9]\d{7,14}$/;   // ITU-T E.164: up to 15 digits, no leading
  * bare 10-digit Indian assumption is wrong. Stored in E.164 with the country
  * code; a plain 10-digit entry is read as Indian because that is what everyone
  * standing in the building will type.
+ *
+ * WHAT A NUMBER WITHOUT A '+' MAY BE. Anything else used to be treated as an
+ * international number already carrying its country code, which is how a
+ * mistyped 9-digit Kerala mobile became '+987654321' — a number in no country
+ * at all, stored without complaint, and the resident could then never log in.
+ * A bare number is now Indian or refused; if it is foreign, say so with a '+'.
  */
 export function normaliseMobile(input) {
   const raw = String(input ?? '').replace(/[\s()\-.]/g, '');
   const digits = raw.replace(/^\+/, '');
   if (!/^\d+$/.test(digits)) fail('DDP-ADMIN-009', { mobile: input });
-  const e164 = raw.startsWith('+') ? `+${digits}`
-             : digits.length === 10 ? `+91${digits}`
-             : `+${digits}`;
+
+  let e164;
+  if (raw.startsWith('+')) e164 = `+${digits}`;
+  // 09846466511 and 919846466511 are both how Indian numbers get written down;
+  // a spreadsheet column of them is where the roster import gets its data.
+  else if (digits.length === 10) e164 = `+91${digits}`;
+  else if (digits.length === 11 && digits.startsWith('0')) e164 = `+91${digits.slice(1)}`;
+  else if (digits.length === 12 && digits.startsWith('91')) e164 = `+${digits}`;
+  else fail('DDP-ADMIN-009', { mobile: input });
+
   if (!E164.test(e164)) fail('DDP-ADMIN-009', { mobile: input });
+  assertNationalLength(e164, input);
   return e164;
+}
+
+/**
+ * A country's numbers are a known length, and the wrong length is the failure
+ * that hides: it looks like a phone number, it saves, and it is discovered when
+ * somebody cannot log in or a password never arrives on WhatsApp.
+ *
+ * Only checked for the codes NATIONAL_LENGTHS knows. Refusing a real number
+ * because our table is incomplete would be worse than the looseness it fixes.
+ */
+function assertNationalLength(e164, input) {
+  const parts = splitMobile(e164);
+  if (!parts) return;
+  const allowed = NATIONAL_LENGTHS[Number(parts.dial)];
+  if (allowed && !allowed.includes(parts.national.length)) {
+    fail('DDP-ADMIN-009', {
+      mobile: input,
+      expected: `${allowed.join(' or ')} digits after +${parts.dial}`,
+      got: parts.national.length,
+    });
+  }
+}
+
+/**
+ * An address, or null if it is not one. Never throws — the caller decides
+ * whether a bad address is a 400 or a row to skip.
+ *
+ * Still deliberately loose about what a mailbox may contain, because the only
+ * test that means anything is whether a message arrives and the reset flow
+ * performs that test for real. What it does catch is the shape that cannot
+ * possibly deliver: no dot in the domain, a dot at either end of it, two dots
+ * running, a one-letter TLD. Those are typing mistakes, and an address is
+ * usually written down once and then relied on months later, at the moment
+ * somebody is locked out.
+ */
+export function normaliseEmail(value) {
+  const email = String(value ?? '').trim().toLowerCase();
+  if (!email || email.length > 120) return null;
+
+  const at = email.lastIndexOf('@');
+  if (at < 1 || at === email.length - 1) return null;
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+
+  if (/[\s@,;<>()[\]\\"]/.test(local) || local.startsWith('.') || local.endsWith('.')) return null;
+  if (!/^[a-z0-9.-]+$/.test(domain)) return null;
+  if (domain.startsWith('.') || domain.endsWith('.') || domain.startsWith('-')) return null;
+  if (email.includes('..')) return null;
+
+  const tld = domain.slice(domain.lastIndexOf('.') + 1);
+  if (!domain.includes('.') || tld.length < 2 || !/^[a-z]+$/.test(tld)) return null;
+
+  return email;
 }
 
 export function validateOwnerField(field, value) {
@@ -70,12 +140,8 @@ export function validateOwnerField(field, value) {
     }
     case 'email': {
       if (value == null || value === '') return null;      // email is optional
-      const email = String(value).trim().toLowerCase();
-      // Deliberately loose. The only test that means anything is whether a
-      // message arrives, and the OTP flow performs that test for real.
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 120) {
-        fail('DDP-ADMIN-010', { field, value });
-      }
+      const email = normaliseEmail(value);
+      if (!email) fail('DDP-ADMIN-010', { field, value });
       return email;
     }
     case 'mobile':

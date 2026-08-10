@@ -13,6 +13,7 @@ import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
 import { $, el, esc, renderGodBanner, showError } from './ui.js';
+import { mobileField } from './mobile-field.js';
 import { money, kg, periodLabel, dayLabel } from './i18n.js';
 
 const main = $('#main');
@@ -328,7 +329,14 @@ async function residentsPanel() {
 
   const flat = el('input', { class: 'input', placeholder: '4D', id: 'r-flat' });
   const name = el('input', { class: 'input', placeholder: 'Name', id: 'r-name' });
-  const mobile = el('input', { class: 'input num', placeholder: '9XXXXXXXXX', id: 'r-mobile', inputmode: 'numeric' });
+  const mobile = mobileField('', { label: 'Mobile' });
+  const email = el('input', { class: 'input', type: 'email', placeholder: 'none', id: 'r-email' });
+  // Who is liable for the gas. The endpoint has always accepted this and the
+  // form never sent it, so every tenant added from this console was recorded as
+  // an owner — the one field the billing rules actually turn on.
+  const relationship = el('select', { class: 'input', id: 'r-rel' },
+    el('option', { value: 'owner' }, 'Owner'),
+    el('option', { value: 'tenant' }, 'Tenant'));
 
   const heading = el('h2', {}, 'Residents');
   const past = el('input', { type: 'checkbox', id: 'r-past' });
@@ -388,14 +396,20 @@ async function residentsPanel() {
       el('div', { class: 'stack', style: 'margin-top:var(--s-3)' },
         el('div', { class: 'field' }, el('label', { for: 'r-flat' }, 'Flat'), flat),
         el('div', { class: 'field' }, el('label', { for: 'r-name' }, 'Name'), name),
-        el('div', { class: 'field' }, el('label', { for: 'r-mobile' }, 'Mobile'), mobile),
+        el('div', { class: 'field' }, el('label', {}, 'Mobile'), mobile.node),
+        el('div', { class: 'field' }, el('label', { for: 'r-email' }, 'Email'), email),
+        el('p', { class: 'small' },
+          'Without an address they cannot reset their own password — an admin has to.'),
+        el('div', { class: 'field' }, el('label', { for: 'r-rel' }, 'Owner or tenant'), relationship),
         el('button', {
           class: 'btn', type: 'button',
           onclick: async () => {
             try {
               const r = await api.admin.addResident({
-                flat: flat.value, name: name.value, mobile: mobile.value });
+                flat: flat.value, name: name.value, mobile: mobile.value(),
+                email: email.value || null, relationship: relationship.value });
               status.replaceChildren(otpPanel(r, name.value));
+              flat.value = ''; name.value = ''; email.value = ''; mobile.clear();
               await load();
             } catch (err) { showError(status, err); }
           },
@@ -505,41 +519,81 @@ function personCard(p, status) {
 }
 
 /**
- * One field, committed on blur or Enter — the same shape as the god-edit page.
- * Per-keystroke saves would put an audit row behind every character typed, and
- * the audit log exists to be read.
+ * One field, read-only until somebody says otherwise.
+ *
+ * These two are a login identity and the address a reset code goes to, and the
+ * directory is a screen people come to in order to LOOK something up. A live
+ * input under every number means a stray scroll over a focused field or a paste
+ * into the wrong box rewrites a credential nobody meant to touch. Edit is a
+ * decision now, and it is saved by pressing Save — no commit-on-blur, because
+ * clicking away from a field you opened by accident should cost nothing.
  */
 function editable(p, field, label, status, { type = 'text', placeholder = '' } = {}) {
-  // Reassigned after each successful save, so a second edit reverts to the
-  // value the server actually holds rather than to the one it started with.
-  let original = String(p[field] ?? '');
-  const input = el('input', {
-    type, placeholder, value: original, 'aria-label': `${label} for ${p.name}, ${p.flat}`,
-  });
-  const wrap = el('div', { class: 'dircell' },
-    el('span', { class: 'dircell__label' }, label), input);
+  const wrap = el('div', { class: 'dircell' });
 
-  input.addEventListener('input', () => {
-    wrap.classList.toggle('dircell--dirty', input.value !== original);
-  });
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
-  input.addEventListener('change', async () => {
-    if (input.value === original) return;
-    try {
-      await api.admin.updateResident(p.id, { [field]: input.value });
-      p[field] = input.value;
-      original = input.value;
-      wrap.classList.remove('dircell--dirty');
-      status.replaceChildren(
-        el('div', { class: 'note note--good' }, `${label} saved for ${p.name} (${p.flat}).`));
-    } catch (err) {
-      // Put the value back: leaving a rejected edit on screen reads as saved.
-      input.value = original;
-      wrap.classList.remove('dircell--dirty');
-      showError(status, err);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+  function show() {
+    wrap.classList.remove('dircell--dirty');
+    wrap.replaceChildren(
+      el('span', { class: 'dircell__label' }, label),
+      el('span', { class: 'dircell__static' },
+        el('span', { class: p[field] ? '' : 'dircell__none' }, p[field] || 'none'),
+        el('button', {
+          class: 'btn--pencil', type: 'button', onclick: edit,
+          'aria-label': `Edit ${label.toLowerCase()} for ${p.name}, ${p.flat}`,
+        }, 'Edit')));
+  }
+
+  function edit() {
+    // The mobile gets the country picker; the country is the half of a number
+    // that cannot be guessed from the digits, and guessing it is the bug.
+    const editor = field === 'mobile'
+      ? mobileField(p.mobile ?? '', { label: `${label} for ${p.name}, ${p.flat}` })
+      : plainEditor();
+
+    const save = el('button', { class: 'btn btn--sm', type: 'button', onclick: commit }, 'Save');
+    const cancel = el('button', { class: 'btn btn--sm btn--quiet', type: 'button', onclick: show }, 'Cancel');
+
+    async function commit() {
+      const next = editor.value();
+      if (next === String(p[field] ?? '')) { show(); return; }
+      save.disabled = true;
+      try {
+        await api.admin.updateResident(p.id, { [field]: next || null });
+        p[field] = next || null;
+        show();
+        status.replaceChildren(
+          el('div', { class: 'note note--good' }, `${label} saved for ${p.name} (${p.flat}).`));
+      } catch (err) {
+        // The editor stays open with what they typed: a rejected value is
+        // usually one keystroke away from a good one, and throwing it away
+        // makes them retype a number they just read off a phone.
+        save.disabled = false;
+        showError(status, err);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     }
-  });
+
+    function plainEditor() {
+      const input = el('input', {
+        type, placeholder, value: p[field] ?? '',
+        'aria-label': `${label} for ${p.name}, ${p.flat}`,
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') commit();
+        if (e.key === 'Escape') show();
+      });
+      return { node: input, value: () => input.value.trim(), focus: () => input.focus() };
+    }
+
+    wrap.classList.add('dircell--dirty');
+    wrap.replaceChildren(
+      el('span', { class: 'dircell__label' }, label),
+      editor.node,
+      el('div', { class: 'dircell__actions' }, save, cancel));
+    editor.focus();
+  }
+
+  show();
   return wrap;
 }
 

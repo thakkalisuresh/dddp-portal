@@ -42,7 +42,37 @@
                    background: var(--surface); color: var(--ink); min-height: var(--touch); }
   .dircell input:focus { border-color: var(--accent); outline: 2px solid var(--accent-line); }
   .dircell--dirty input { border-color: var(--accent); background: var(--accent-wash); }
-  .dircell__static { font-family: var(--font-ui); font-size: var(--text-sm); padding: var(--s-2) 0; }
+  .dircell__static { font-family: var(--font-ui); font-size: var(--text-sm); padding: var(--s-2) 0;
+                     display: flex; gap: var(--s-2); align-items: center; justify-content: space-between; }
+  .dircell__none { color: var(--ink-muted); }
+  .btn--pencil { font-family: var(--font-ui); font-size: var(--text-xs); padding: 2px var(--s-2);
+                 border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+                 color: var(--accent); cursor: pointer; min-height: 28px; }
+  .btn--pencil:hover { border-color: var(--accent-line); background: var(--accent-wash); }
+  .dircell__actions { display: flex; gap: var(--s-2); margin-top: var(--s-2); }
+
+  /* country picker */
+  .mobilefield { display: flex; gap: var(--s-2); align-items: stretch; }
+  .dial { position: relative; }
+  .dial > summary { list-style: none; cursor: pointer; font-family: var(--font-ui);
+                    font-size: var(--text-sm); padding: var(--s-2); min-height: var(--touch);
+                    border: 1px solid var(--border); border-radius: var(--radius);
+                    background: var(--surface); display: flex; align-items: center;
+                    white-space: nowrap; }
+  .dial > summary::-webkit-details-marker { display: none; }
+  .dial > summary::after { content: '▾'; margin-left: 4px; color: var(--ink-muted); }
+  .dial__pop { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; width: 280px;
+               max-width: 78vw; background: var(--surface); border: 1px solid var(--border-strong);
+               border-radius: var(--radius); padding: var(--s-2); }
+  .dial__list { max-height: 240px; overflow-y: auto; margin-top: var(--s-2); }
+  .dial__opt { display: flex; justify-content: space-between; gap: var(--s-3); width: 100%;
+               font-family: var(--font-ui); font-size: var(--text-sm); text-align: left;
+               padding: var(--s-2); border: none; background: none; color: var(--ink);
+               cursor: pointer; min-height: var(--touch); }
+  .dial__opt:hover { background: var(--accent-wash); }
+  .dial__opt--on { color: var(--accent); font-weight: 600; }
+  .dial__code { color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+  .mobilefield .input { flex: 1; min-width: 0; }
   .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: var(--s-3); }
   .pcard { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
   .pcard img { width: 100%; height: 96px; object-fit: cover; display: block; }

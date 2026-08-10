@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   normaliseMobile, validateOwnerField, validateBillField, lockoutCheck,
   applyBillEdit, computedTotal, isUnexplainedMismatch, diff, checkReason,
-  reasonRequired, BILL_COMPONENTS,
+  reasonRequired, BILL_COMPONENTS, normaliseEmail,
 } from '../functions/lib/godedit.js';
 
 const god  = { id: 1, flat: '4A', role: 'superadmin' };
@@ -153,6 +153,33 @@ describe('mobile numbers, including owners settled abroad', () => {
     expect(() => normaliseMobile('123')).toThrow(/DDP-ADMIN-009/);
     expect(() => normaliseMobile('')).toThrow(/DDP-ADMIN-009/);
   });
+
+  it('REFUSES a mistyped Indian number instead of inventing a country', () => {
+    // Nine digits used to be read as an international number already carrying
+    // its code, so a dropped digit became '+987654321' — no country dials +9,
+    // the row saved, and the resident could never log in again.
+    expect(() => normaliseMobile('987654321')).toThrow(/DDP-ADMIN-009/);
+    expect(() => normaliseMobile('98765432101')).toThrow(/DDP-ADMIN-009/);
+    expect(() => normaliseMobile('12345678')).toThrow(/DDP-ADMIN-009/);
+  });
+
+  it('accepts the other two ways an Indian number gets written down', () => {
+    // A roster spreadsheet column is full of both of these.
+    expect(normaliseMobile('09567791515')).toBe('+919567791515');
+    expect(normaliseMobile('919567791515')).toBe('+919567791515');
+  });
+
+  it('checks the national length for countries we are sure about', () => {
+    expect(() => normaliseMobile('+91 95677 9151')).toThrow(/DDP-ADMIN-009/);   // 9 digits
+    expect(() => normaliseMobile('+971 50 123 456')).toThrow(/DDP-ADMIN-009/);  // UAE is 9
+    expect(normaliseMobile('+971 50 123 4567')).toBe('+971501234567');
+  });
+
+  it('leaves a country we have no rule for to plain E.164', () => {
+    // A wrong rule refuses a real person's real number, which is worse than
+    // the looseness it replaces. Iceland is not in the table.
+    expect(normaliseMobile('+354 611 1234')).toBe('+3546111234');
+  });
 });
 
 /* ── field validation ────────────────────────────────────────────────────── */
@@ -169,6 +196,24 @@ describe('validating what god types', () => {
 
   it('rejects a malformed email', () => {
     expect(() => validateOwnerField('email', 'nope')).toThrow(/DDP-ADMIN-010/);
+  });
+
+  it('catches the typing mistakes that make an address undeliverable', () => {
+    // Not pedantry about what a mailbox may contain — these are the shapes
+    // that cannot deliver at all, and the address is relied on months later,
+    // at the moment somebody is locked out and asking for a reset code.
+    for (const bad of ['joe@example', 'joe@.com', 'joe@example.', 'joe@exam..ple.com',
+                       'joe@example.c', '@example.com', 'joe example@x.com',
+                       'joe@exam ple.com', '.joe@example.com', 'joe@-example.com']) {
+      expect(() => validateOwnerField('email', bad), bad).toThrow(/DDP-ADMIN-010/);
+    }
+  });
+
+  it('still accepts the ordinary shapes people really have', () => {
+    for (const good of ['joe@example.com', 'joe.bloggs+bills@mail.co.uk',
+                        'j_o-e@sub.domain.travel', 'nair.sabarish97@gmail.com']) {
+      expect(normaliseEmail(good), good).toBe(good);
+    }
   });
 
   it('refuses a field that is not on the list', () => {

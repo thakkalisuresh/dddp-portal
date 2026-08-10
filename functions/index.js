@@ -27,7 +27,7 @@ import {
 import {
   OWNER_FIELDS, BILL_FIELDS, validateOwnerField, validateBillField,
   lockoutCheck, applyBillEdit, computedTotal, isUnexplainedMismatch,
-  diff, checkReason, normaliseMobile,
+  diff, checkReason, normaliseMobile, normaliseEmail,
 } from './lib/godedit.js';
 import { runChecks, summarise, toMarkdown } from './lib/diagnostics.js';
 import {
@@ -36,7 +36,8 @@ import {
 } from './lib/reset.js';
 import { sendEmail, mailConfigured } from './lib/mailer.js';
 import { parseRoster, previewRoster, resolveExemptionTargets } from './lib/roster.js';
-import { floorSummary } from './lib/building.js';
+import { floorSummary, whyNot } from './lib/building.js';
+import { splitMobile, NATIONAL_LENGTHS } from '../public/js/countries.js';
 import { addFlat } from './lib/flats.js';
 import { ERROR_CODES } from './lib/error-codes.js';
 import { isCaptureOn, captureWindow, validateBatch } from './lib/clicks.js';
@@ -685,16 +686,39 @@ async function postResident(request, env, session) {
   try {
     mobile = normaliseMobile(b?.mobile);
   } catch {
-    return problem(400, 'DDP-ADMIN-009', 'That does not look like a mobile number.');
+    return problem(400, 'DDP-ADMIN-009', explainField('mobile', b?.mobile));
   }
-  if (!flat || !name || mobile.length < 10) {
-    return problem(400, 'DDP-ADMIN-003', 'A resident needs a flat, a name and a 10-digit mobile number.');
+  if (!flat || !name) {
+    return problem(400, 'DDP-ADMIN-003', 'A resident needs a flat, a name and a mobile number.');
+  }
+
+  // Validated on the way in, like every other write path. This one used to take
+  // b.email raw, so the address a locked-out resident's reset code is sent to
+  // was the one field nothing ever checked.
+  let email = null;
+  if (b?.email) {
+    email = normaliseEmail(b.email);
+    if (!email) return problem(400, 'DDP-ADMIN-010', explainField('email', b.email));
   }
 
   const known = await env.DB.prepare('SELECT flat FROM flats WHERE flat = ?').bind(flat).first();
   if (!known) {
     await reportError(env, 'DDP-ADMIN-001', { flat });
-    return problem(400, 'DDP-ADMIN-001', `Flat ${flat} is not on the register.`);
+    // whyNot knows the building's actual shape — that floor 1 is parking, that
+    // there is no I, that 10, 12 and 14 are duplexes. "Not on the register" is
+    // true but says nothing about what to type instead.
+    return problem(400, 'DDP-ADMIN-001', whyNot(flat) ?? `Flat ${flat} is not on the register.`);
+  }
+
+  // mobile is the login id and email is where a reset code goes; a duplicate of
+  // either quietly hands one person's account to another.
+  for (const [field, value] of [['mobile', mobile], ['email', email]]) {
+    if (!value) continue;
+    const clash = await duplicateContact(env, 0, field, value);
+    if (clash) {
+      return problem(409, 'DDP-ADMIN-013',
+        `That ${field} already belongs to ${clash.name} (${clash.flat}).`);
+    }
   }
 
   // Issued, not chosen: the resident replaces it on first login.
@@ -704,7 +728,7 @@ async function postResident(request, env, session) {
     `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, must_change_pw,
                          role, relationship, created_at)
      VALUES (?, ?, ?, ?, ?, ?, 1, 'owner', ?, ?) RETURNING id`
-  ).bind(flat, name, mobile, b?.email ?? null, hash, salt, relationship,
+  ).bind(flat, name, mobile, email, hash, salt, relationship,
          new Date().toISOString()).first();
 
   await audit(env, session, 'resident.create', { id: row.id, flat, relationship });
@@ -741,7 +765,12 @@ async function patchResident(request, env, session, path) {
   // '+91…', so an admin fixing a typo could lock the resident out entirely.
   for (const field of ['name', 'email', 'mobile']) {
     if (b?.[field] === undefined) continue;
-    const value = validateOwnerField(field, b[field]);
+    let value;
+    try {
+      value = validateOwnerField(field, b[field]);
+    } catch (err) {
+      return problem(400, err.code ?? 'DDP-ADMIN-010', explainField(field, b[field]));
+    }
     if (value != null && (field === 'mobile' || field === 'email')) {
       const clash = await duplicateContact(env, id, field, value);
       if (clash) {
@@ -770,6 +799,28 @@ async function patchResident(request, env, session, path) {
   await env.DB.prepare(`UPDATE owners SET ${fields.join(', ')} WHERE id = ?`).bind(...values, id).run();
   await audit(env, session, 'resident.update', { id, changed: Object.keys(b ?? {}) });
   return json({ id });
+}
+
+/**
+ * Why the value was refused, in the words of the person who typed it.
+ *
+ * The generic catalogue message ("That does not look like a mobile number.
+ * Include the country code…") is advice the directory has already taken — the
+ * country came from a picker. What is actually wrong is nearly always the
+ * length, and saying so is the difference between a fix and a shrug.
+ */
+function explainField(field, value) {
+  if (field === 'email') return 'That does not look like an email address.';
+  if (field === 'name') return 'A name needs between 2 and 80 characters.';
+
+  const parts = splitMobile(String(value ?? ''));
+  const allowed = parts && NATIONAL_LENGTHS[Number(parts.dial)];
+  if (allowed) {
+    return `A +${parts.dial} number has ${allowed.join(' or ')} digits after the country code. `
+         + `That one has ${parts.national.length}.`;
+  }
+  return 'That does not look like a mobile number. '
+       + 'An Indian number is 10 digits; anything else needs its country code.';
 }
 
 /**
