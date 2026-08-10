@@ -28,6 +28,12 @@
   .amenities { display: flex; flex-wrap: wrap; gap: var(--s-2); }
   .amenity { border: 1px solid var(--border); border-radius: var(--radius);
              padding: var(--s-2) var(--s-3); font-family: var(--font-ui); font-size: var(--text-sm); }
+  /* Aspect ratio rather than a fixed height, so the map does not become a
+     letterbox slit on a phone. The border matches the amenity chips. */
+  .map { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .map__frame { display: block; width: 100%; aspect-ratio: 16 / 10; border: 0; }
+  @media (min-width: 40rem) { .map__frame { aspect-ratio: 21 / 9; } }
+
   .committee { width: 100%; border-collapse: collapse; }
   .committee td { padding: var(--s-3) 0; border-bottom: 1px solid var(--border); }
   .committee .role { font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: .1em;

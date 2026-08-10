@@ -17,6 +17,14 @@ export const SECURITY_HEADERS = {
     "font-src 'self'",                    // fonts are self-hosted, no CDN
     "connect-src 'self'",
     "form-action 'self'",
+    // The ONE third-party origin this site permits, and only to be framed.
+    // OpenStreetMap rather than Google Maps because an embedded Google map
+    // needs an API key, a key needs a billing account on somebody's card, and
+    // the old site's map is unreachable today for exactly that reason.
+    //
+    // Without this line the map does not error — it renders an empty box, and
+    // `default-src 'self'` is what silently refuses it.
+    "frame-src https://www.openstreetmap.org",
     "frame-ancestors 'none'",
     "base-uri 'none'",
     "object-src 'none'",

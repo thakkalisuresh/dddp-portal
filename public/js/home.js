@@ -48,6 +48,35 @@ function tile({ src, w, h }) {
     }));
 }
 
+/**
+ * Kuriachira, Thrissur — the NEIGHBOURHOOD, not the building.
+ *
+ * DD Diamond Park is not in OpenStreetMap, so there is no honest way to drop a
+ * pin on it from here. These coordinates are the centre of Kuriachira as
+ * OpenStreetMap knows it, confirmed against postcode 680006 in the footer, and
+ * the map deliberately carries NO marker: a marker is a claim about where the
+ * building is, and a confident pin on the wrong gate sends a visitor to the
+ * wrong road. Replace with the building's own coordinates once somebody who
+ * lives there confirms them, and add `&marker=LAT,LON` at the same time.
+ */
+const LOCATION = { lat: 10.5036, lon: 76.2245 };
+const SPAN = { lat: 0.004, lon: 0.006 };
+
+// toFixed, because 10.5036 - 0.004 is 10.499600000000001 in binary floating
+// point and that lands verbatim in the URL. Harmless to the map, but it is the
+// kind of thing that gets copied into a bug report and wastes an hour.
+const MAP_EMBED = 'https://www.openstreetmap.org/export/embed.html?layer=mapnik&bbox='
+  + [LOCATION.lon - SPAN.lon, LOCATION.lat - SPAN.lat,
+     LOCATION.lon + SPAN.lon, LOCATION.lat + SPAN.lat]
+    .map((n) => n.toFixed(4)).join('%2C');
+
+/**
+ * Google rather than OpenStreetMap for the link, even though the embed is OSM.
+ * A plain search URL needs no API key, and directions are what somebody
+ * actually taps this for — which on nearly every phone here means Google Maps.
+ */
+const MAP_LINK = 'https://www.google.com/maps/search/?api=1&query=Kuriachira%2C+Thrissur';
+
 const main = $('#main');
 
 init();
@@ -99,6 +128,27 @@ function render({ notices, committee, amenities, officeHours, subjects }) {
             el('td', {}, el('div', { class: 'role' }, c.role),
               el('div', {}, `${c.name} · ${c.flat}`)),
             el('td', { class: 'r small muted', style: 'text-align:right' }, c.phone ?? ''))))),
+    ]),
+
+    section('location', 'Where we are', [
+      el('div', { class: 'map' },
+        // NOT loading="lazy", deliberately, and this was measured rather than
+        // assumed: with it set, scrolling the map into view and waiting five
+        // seconds never fired the load event, leaving exactly the empty box
+        // this whole item is about. The six gallery photographs keep lazy —
+        // images honour it — but this is one request and a blank map is a
+        // worse trade than one eager frame.
+        el('iframe', {
+          class: 'map__frame', src: MAP_EMBED,
+          title: 'Map of Kuriachira, Thrissur',
+        })),
+      // Always present, never conditional. The iframe is the one thing on this
+      // page that depends on a third party being up and on the CSP being right,
+      // and a blank grey box with no way out is the failure this avoids.
+      el('p', { class: 'small' },
+        el('a', { href: MAP_LINK, rel: 'noopener', target: '_blank' },
+          'Open in Google Maps')),
+      el('p', { class: 'small muted' }, 'Kuriachira, Thrissur 680006'),
     ]),
 
     section('hours', 'Office hours', [
