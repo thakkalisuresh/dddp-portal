@@ -17,14 +17,22 @@ export const SECURITY_HEADERS = {
     "font-src 'self'",                    // fonts are self-hosted, no CDN
     "connect-src 'self'",
     "form-action 'self'",
-    // The ONE third-party origin this site permits, and only to be framed.
-    // OpenStreetMap rather than Google Maps because an embedded Google map
-    // needs an API key, a key needs a billing account on somebody's card, and
-    // the old site's map is unreachable today for exactly that reason.
+    // The only third-party origins this site permits, and only to be framed.
+    //
+    // Google Maps, because that is what the old site showed and what the
+    // building expects to see — but through the KEYLESS `output=embed` form,
+    // not the Embed API. The old site's iframe carried an API key belonging to
+    // a Google Cloud project nobody in the association can reach: the same
+    // account problem as its hosting and its domain, which is what this whole
+    // portal exists to escape. A map that dies when a stranger's billing
+    // lapses is not a map we own.
+    //
+    // BOTH origins are required: maps.google.com 301s to www.google.com, and a
+    // frame navigation is checked against this list at every hop.
     //
     // Without this line the map does not error — it renders an empty box, and
     // `default-src 'self'` is what silently refuses it.
-    "frame-src https://www.openstreetmap.org",
+    "frame-src https://maps.google.com https://www.google.com",
     "frame-ancestors 'none'",
     "base-uri 'none'",
     "object-src 'none'",

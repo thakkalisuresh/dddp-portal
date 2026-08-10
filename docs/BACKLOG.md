@@ -59,14 +59,6 @@ Three of four accounts have no email, so they cannot reset their own passwords
 even once W1 is done. Add them from god mode. `npm run doctor` names them under
 NO-EMAIL-ON-FILE.
 
-## W3 — The building's real coordinates
-
-The map added in B15 centres on Kuriachira and carries **no marker**, because
-DD Diamond Park is not in OpenStreetMap and a confident pin on the wrong gate
-sends a visitor to the wrong road. One constant in `public/js/home.js`
-(`LOCATION`) and a `&marker=LAT,LON` on the embed URL, once somebody who lives
-there reads the real numbers off their phone.
-
 ---
 
 # Ready to build
@@ -280,18 +272,41 @@ The Maps link became B15.
 
 ## B15 — An embedded map — DONE 2026-08-09
 
-One line of CSP: `frame-src https://www.openstreetmap.org`. OSM rather than
-Google because an embedded Google map needs an API key, a key needs a billing
-account, and the old site's map is unreachable today for exactly that reason.
-`test/headers.test.js` now pins the whole policy so the next widening is a
-decision somebody makes rather than a line somebody adds.
+Google Maps, pinned on the building, with no API key.
+
+**Shipped as OpenStreetMap first, and that was wrong.** The entry had been
+written from B11's note — "NOT their embedded API key" — without anybody
+opening the old site. gas.dddp.online is still up, and looking at it settled
+in one minute what had been guessed at: it frames
+`google.com/maps/embed/v1/place?q=dd%20diamond%20park%20kuriachira&key=AIza…`.
+
+Two facts came out of that iframe. Google knows this building **by name**,
+which OpenStreetMap does not — so the OSM version could only centre on the
+neighbourhood with no marker, while `q=dd diamond park kuriachira` drops a pin
+that reads "DD Diamond Park". And the key is the only genuinely unusable part
+of it: it belongs to a Google Cloud project nobody in the association can
+reach, the same account problem as the old hosting and the old domain, so
+copying it would put the map on a stranger's billing and end it the day they
+restrict the key.
+
+`output=embed` is the keyless form — no key, no Cloud project, no card. It is
+undocumented rather than unsupported, so the "Open in Google Maps" link stays
+as the way out if Google ever retires it.
+
+CSP allows `https://maps.google.com` **and** `https://www.google.com`: the
+first 301s to the second, and a frame navigation is checked at every hop, so
+listing one silently blanks the map. `test/headers.test.js` pins the whole
+policy and greps the page source for `AIza` and `key=`, because a key would be
+pasted into the iframe URL rather than into the header.
 
 **`loading="lazy"` left the map permanently blank** — scrolled into view,
 waited five seconds, load event never fired. The empty box this item warns
 about, caused by the guard against it. Removed for the map; the six gallery
 photographs keep it, images honour lazy.
 
-No marker, and the real coordinates are W3.
+The lesson worth more than the map: the old site is READABLE. Anything the new
+one is supposed to match can be checked in a browser instead of remembered in
+a backlog entry.
 
 ## B6 — Telegram alerting — DONE 2026-08-09
 

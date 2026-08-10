@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { SECURITY_HEADERS } from '../functions/lib/http.js';
+
+const homeJs = readFileSync(new URL('../public/js/home.js', import.meta.url), 'utf8');
 
 /**
  * The CSP is the one security control here that fails SILENTLY. A wrong
@@ -29,8 +32,28 @@ describe('content security policy', () => {
     expect(csp['script-src']).toEqual(["'self'"]);
   });
 
-  it('frames exactly one third-party origin, and it is OpenStreetMap', () => {
-    expect(csp['frame-src']).toEqual(['https://www.openstreetmap.org']);
+  it('frames only Google Maps, and both hops of its redirect', () => {
+    // maps.google.com 301s to www.google.com; a frame navigation is checked
+    // against this list at every hop, so listing one silently blanks the map.
+    expect(csp['frame-src']).toEqual(['https://maps.google.com', 'https://www.google.com']);
+  });
+
+  it('carries no Google API key, in the policy or in the page', () => {
+    // The old site's iframe hard-coded a key from a Google Cloud project nobody
+    // in the association can reach. Copying it would put this map on a
+    // stranger's billing and kill it the day they restrict the key — the same
+    // account problem as its hosting and its domain.
+    //
+    // Checked against the source, not just the header: a key would live in the
+    // iframe URL, which is where it would actually get pasted.
+    expect(SECURITY_HEADERS['content-security-policy']).not.toMatch(/AIza/);
+    expect(homeJs).not.toMatch(/AIza/);
+    expect(homeJs).not.toMatch(/[?&]key=/);
+    expect(homeJs).not.toContain('maps/embed/v1');
+  });
+
+  it('uses the keyless embed form', () => {
+    expect(homeJs).toContain('output=embed');
   });
 
   it('permits framing only over https', () => {

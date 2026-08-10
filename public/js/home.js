@@ -51,33 +51,28 @@ function tile({ src, w, h }) {
 }
 
 /**
- * Kuriachira, Thrissur — the NEIGHBOURHOOD, not the building.
+ * The map, as a PLACE NAME rather than coordinates.
  *
- * DD Diamond Park is not in OpenStreetMap, so there is no honest way to drop a
- * pin on it from here. These coordinates are the centre of Kuriachira as
- * OpenStreetMap knows it, confirmed against postcode 680006 in the footer, and
- * the map deliberately carries NO marker: a marker is a claim about where the
- * building is, and a confident pin on the wrong gate sends a visitor to the
- * wrong road. Replace with the building's own coordinates once somebody who
- * lives there confirms them, and add `&marker=LAT,LON` at the same time.
+ * The old site framed the building with Google's Embed API, and its iframe
+ * carried an API key belonging to a Google Cloud project nobody in the
+ * association can reach — the same account problem as its hosting and its
+ * domain. Reusing that key would put the map on a stranger's billing, and it
+ * dies the day they restrict it.
+ *
+ * `output=embed` is the keyless form: no API key, no Cloud project, no card.
+ * It is undocumented rather than unsupported, which is the honest trade — so
+ * the "Open in Google Maps" link below is not decoration, it is the way out if
+ * Google ever retires it.
+ *
+ * A NAME, not a latitude. Google resolves "dd diamond park kuriachira" to the
+ * building itself, which is the same query the old site used and better than
+ * anything coordinates could give: OpenStreetMap does not know this place, so
+ * the previous version could only centre on the neighbourhood with no marker
+ * at all rather than pin the wrong gate.
  */
-const LOCATION = { lat: 10.5036, lon: 76.2245 };
-const SPAN = { lat: 0.004, lon: 0.006 };
-
-// toFixed, because 10.5036 - 0.004 is 10.499600000000001 in binary floating
-// point and that lands verbatim in the URL. Harmless to the map, but it is the
-// kind of thing that gets copied into a bug report and wastes an hour.
-const MAP_EMBED = 'https://www.openstreetmap.org/export/embed.html?layer=mapnik&bbox='
-  + [LOCATION.lon - SPAN.lon, LOCATION.lat - SPAN.lat,
-     LOCATION.lon + SPAN.lon, LOCATION.lat + SPAN.lat]
-    .map((n) => n.toFixed(4)).join('%2C');
-
-/**
- * Google rather than OpenStreetMap for the link, even though the embed is OSM.
- * A plain search URL needs no API key, and directions are what somebody
- * actually taps this for — which on nearly every phone here means Google Maps.
- */
-const MAP_LINK = 'https://www.google.com/maps/search/?api=1&query=Kuriachira%2C+Thrissur';
+const MAP_QUERY = 'dd diamond park kuriachira';
+const MAP_EMBED = `https://maps.google.com/maps?q=${encodeURIComponent(MAP_QUERY)}&output=embed`;
+const MAP_LINK = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(MAP_QUERY)}`;
 
 const main = $('#main');
 
@@ -123,7 +118,7 @@ function render({ committee, amenities, officeHours, subjects }) {
         // worse trade than one eager frame.
         el('iframe', {
           class: 'map__frame', src: MAP_EMBED,
-          title: 'Map of Kuriachira, Thrissur',
+          title: 'Map of DD Diamond Park, Kuriachira, Thrissur',
         })),
       // Always present, never conditional. The iframe is the one thing on this
       // page that depends on a third party being up and on the CSP being right,
