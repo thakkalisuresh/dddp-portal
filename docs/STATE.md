@@ -257,6 +257,23 @@ real support and the originally-failing phone becomes a separate anomaly needing
 its own explanation. If they also die, the theory is dead and the cause lies in
 the device, the OEM build or Chrome — not in onboarding.
 
+**The payload is not a suspect, and cannot be made one.** Android matches intent
+filters on action, category and data — scheme, host, path, MIME type. Query
+parameters take no part in matching, so `pa`, `pn`, `am`, `tr` and `mc` are
+opaque bytes at the moment resolution succeeds or fails. An app that never
+launches never reads them. This is why the merchant-VPA question recorded under
+"Not verified by me" does not bear on this section however it is answered: it
+can only matter once an app has opened, which is the step that is failing.
+
+The one caveat is worth carrying, because `functions/lib/upi.js` invites the
+confusion: the note there on removing `tr` claims a payload an app cannot
+classify draws a refusal that "from a browser looks like the app simply
+declining to open." Today's links carry no `tr`, so nothing current can trigger
+that. But it means restoring `tr` without a correct `mc` would create a SECOND,
+independent path to this exact symptom — one that would look like a regression
+of this bug and would not be. Knowing the MCC is how that is avoided, not how
+this is fixed.
+
 **The largest threat to this test is not the phone, it is the messenger.**
 In-app WebViews refuse custom schemes outright, so a link tapped inside WhatsApp
 dies silently and looks *identical* to the bug. That single mistake would
