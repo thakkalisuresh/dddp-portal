@@ -176,7 +176,13 @@ rather than to the state the cron protects.
 
 Full list with reasoning in `docs/BACKLOG.md`.
 
-## The Android payment failure, resolved as far as it can be
+## The Android payment failure — REOPENED, testing underway
+
+**Reopened 2026-08-11**, hours after being written up as closed. The handoff
+note said do not reopen; that is superseded. Nothing new broke — what changed is
+that a second look found the closing argument rests on two handsets, and one of
+them contradicts it. Read the section below as the leading hypothesis, not as a
+finding.
 
 Investigated 2026-08-11 on real hardware. **The links were never the problem,
 and no change to them can fix this.**
@@ -217,13 +223,93 @@ will accept a link, so the pay screen must work when it does not. Hence the
 chooser first, the QR on mobile as well as desktop, the UPI ID always copyable,
 and an honest message when a tap goes nowhere.
 
+**That design conclusion survives the reopening and should not be unpicked.** It
+does not depend on WHY the apps refuse — only on the fact that a web page cannot
+find out in advance. Every result below leaves that argument standing. What is
+back in question is the cause, and therefore whether anything can be done about
+it beyond coping.
+
+### What is being tested now
+
+The question that reopens this is the one already written down as unverified:
+**does a UPI app with a bank account actually linked keep its deep-link
+component enabled?** The onboarding-state theory predicts yes. The phone that
+originally failed predicts no, because its Google Pay works. Both cannot hold.
+
+The direct check is `adb shell dumpsys package … | grep -A10 disabledComponents`,
+and **it is not available on the handset we have access to** — a OnePlus in
+India with several UPI apps and real bank accounts linked, reachable only by
+sending its owner a link. No USB, no adb, no shell.
+
+So component state has to be inferred from tap outcome, and that inference runs
+in one direction only:
+
+* **A tap that opens the UPI app proves the component was enabled.** Nothing
+  else produces that outcome. This is the direction that settles the question.
+* **A tap that does nothing proves very little.** A disabled component, an
+  in-app WebView refusing the scheme, and an OEM browser build behaving
+  differently are indistinguishable from outside — an absence, which is what
+  made this hard the first time.
+
+Fortunately the decisive direction is the one this handset can supply, because
+its apps work. If bank-linked apps open cleanly, the onboarding theory gains
+real support and the originally-failing phone becomes a separate anomaly needing
+its own explanation. If they also die, the theory is dead and the cause lies in
+the device, the OEM build or Chrome — not in onboarding.
+
+**The largest threat to this test is not the phone, it is the messenger.**
+In-app WebViews refuse custom schemes outright, so a link tapped inside WhatsApp
+dies silently and looks *identical* to the bug. That single mistake would
+manufacture a false negative and appear to confirm the theory while proving
+nothing. The harness warns about it on screen; the tester still has to open the
+page in Chrome for any result to mean anything.
+
+### The harness
+
+`scripts/gen-upi-testpage.mjs` generates a standalone page carrying all eleven
+shapes — plain `upi://`, bare `intent://`, `intent://` addressed to each of the
+four packages, each per-app scheme, and legacy `tez://`. Its design choices are
+constraints rather than preferences, and each is argued at the top of that file:
+
+* **Generated from `buildUpiLinks`, not hand-written.** A page carrying its own
+  copy of the URI construction would prove that the copy resolves, which is
+  worth nothing. `test/upi-testpage.test.js` fails if the two drift.
+* **Deployed as its own throwaway Pages project, never under the portal.** The
+  portal's hostname carries the association's name, and so does every preview
+  beneath it. It also keeps test traffic out of production D1 — going through
+  the real pay route would write `payment_intents` rows and flip a bill to
+  `initiated`, putting a phantom "this resident is paying" in the committee's
+  queue for a payment nobody attempted.
+* **The payee is a parameter with an unresolvable default, and the amount is
+  ₹1.** The association's VPA must never appear, or a working link puts a real
+  bill payment one tap from someone who does not know what they are looking at.
+  But an unresolvable payee is not free either: an app that opens and then
+  errors is ambiguous in the tester's retelling. A VPA the tester's family owns
+  resolves that ambiguity and costs at most a rupee.
+* **`tn` carries `TEST LINK - PLEASE DO NOT PAY`.** The note is rendered on the
+  UPI app's own confirmation screen — the only channel that reaches the tester
+  after the browser has handed off. Mitigation, not a guarantee: not every app
+  displays it, which is why the ₹1 cap does the load-bearing work.
+* **Results are read off the screen and copied back by hand, not beaconed.**
+  Silent reporting would be less trouble and would collect less. The page can
+  only observe whether it lost focus; *which* app opened, whether a chooser
+  appeared, and whether the confirmation screen resolved a payee are the
+  observations that actually settle this, and only the person holding the phone
+  can make them.
+
+### Results
+
+Nothing recorded yet — no run has happened. The table below is the shape the
+findings go in, and an empty row is not a failed test, it is an untested one.
+
+| Handset | App | App version | Bank linked | Component enabled | Tap outcome |
+|---|---|---|---|---|---|
+| _(pending)_ | | | | | |
+
 ## Not verified by me
 
 Things I could not check and someone should:
 
-- Whether a UPI app with a bank account actually linked keeps its deep-link
-  component enabled. One command answers it on such a phone:
-  `adb shell dumpsys package com.google.android.apps.nbu.paisa.user | grep -A10 disabledComponents`
 - The god-mode Health tab rendering against production.
 - That an impersonated admin genuinely cannot reset the superadmin's password
   on the live site. Proven locally with a real admin session, never on prod.
@@ -236,3 +322,9 @@ Things I could not check and someone should:
 2026-08-11: Google Pay resolved it from the portal's own QR and displayed the
 payee as DD Diamond Park RWA. A UPI app only shows a payee name after the
 address resolves against the registry.
+
+**The deep-link component question has moved off this list**, also 2026-08-11 —
+not because it was answered, but because it is now being actively tested rather
+than merely noted. It lives under "The Android payment failure", along with the
+reason the `adb` command that would settle it cannot be run on the only suitable
+handset available.

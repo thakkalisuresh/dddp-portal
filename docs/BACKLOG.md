@@ -150,6 +150,13 @@ Android payment failure". Email changes nothing about resolution and usually
 makes it worse, since email links open in an in-app WebView, which refuses
 custom schemes more readily than Chrome.
 
+That second argument is now **provisional**: the resolution failure it leans on
+was reopened for testing on 2026-08-11 and is no longer settled. B19's verdict
+does not move with it, because Gmail's sanitiser kills the link before
+resolution is ever reached — the two arguments were independent, which is why
+both were written down. If resolution turns out to work everywhere, revisit this
+entry for the in-app WebView claim only.
+
 **The phishing objection was raised and is weaker than it first looks.** UPI
 resolves the payee from the registry and shows the NAME on the confirmation
 screen, so a spoofed mail pointing at a scam VPA announces itself as somebody

@@ -664,6 +664,19 @@ Run by hand. Several touch production and say so.
 |---|---|---|
 | fn | `render` |  |
 
+### `scripts/gen-upi-testpage.mjs`
+
+Generate the standalone UPI intent-resolution test page.
+
+| | Export | What it does |
+|---|---|---|
+| const | `TEST_VPA` | Deliberately unresolvable, and deliberately not a plausible-looking handle. |
+| const | `TEST_PAYEE` |  |
+| const | `TEST_AMOUNT` |  |
+| const | `TEST_NOTE` | Rendered by the UPI app on its confirmation screen, in caps because it is the last thing anyone reads before a real transfer. |
+| fn | `linkRows` | Every shape the portal can emit, each one its own row. |
+| fn | `renderPage` |  |
+
 ---
 
-351 exports. 200 have no doc comment.
+357 exports. 203 have no doc comment.
