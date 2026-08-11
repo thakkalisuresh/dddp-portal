@@ -64,22 +64,33 @@
  * 3. For `backup`, a Drive folder to write into. Its id is the last path
  *    segment of the folder URL.
  *
- * ── What it prints ──────────────────────────────────────────────────────────
+ * ── What it does at the end ─────────────────────────────────────────────────
  *
- * The refresh token, and the commands that put the secrets on BOTH
- * deployments. Both is not optional: the 3am upload runs on the cron Worker and
+ * Offers to set the four secrets on BOTH deployments itself, because it is
+ * holding all four already and the alternative is eight prompts typed by hand.
+ *
+ * Both deployments is not optional: the 3am upload runs on the cron Worker and
  * the Export tab's health line runs on Pages. Secrets on one do not reach the
  * other, and the half-configured state is the one that lies — see
- * BACKUP-CRON-UNCONFIGURED in functions/lib/diagnostics.js.
+ * BACKUP-CRON-UNCONFIGURED in functions/lib/diagnostics.js. Doing it in one
+ * pass is the point; a person copying eight commands stops after four, which is
+ * exactly the state that reports healthy while nothing is backed up.
  *
- * Nothing is written to disk. The token is printed once, for pasting into
- * `wrangler secret put`, which prompts rather than taking an argument — so it
- * never reaches shell history either.
+ * Values reach wrangler on stdin, never as arguments. An argument would be
+ * visible to `ps` for as long as the process runs, and a refresh token in
+ * another user's process listing is a refresh token given away.
+ *
+ * Nothing is written to disk, and the secrets are not echoed. Decline the offer
+ * and it prints the eight commands to run by hand instead — `wrangler secret
+ * put` prompts rather than taking an argument, so the values stay out of shell
+ * history either way.
  */
 
 import { createServer } from 'node:http';
 import { createInterface } from 'node:readline/promises';
+import { execFileSync } from 'node:child_process';
 import { stdin, stdout } from 'node:process';
+import { join } from 'node:path';
 
 /**
  * One scope each, rather than both on both.
@@ -207,6 +218,25 @@ async function writeCheckFile({ accessToken, folderId }) {
   return res.json();
 }
 
+/**
+ * Put one secret on both deployments.
+ *
+ * The value goes in on stdin. Passing it as an argument would expose it in the
+ * process list to anything running on this machine, which for a refresh token
+ * is the whole secret.
+ *
+ * A failure here is reported and NOT swallowed: a half-set pair is the state
+ * this whole exercise exists to avoid, and carrying on to the next name would
+ * bury the one line that says which surface is now wrong.
+ */
+function putSecret(name, value) {
+  const run = (args, cwd) => execFileSync('npx', ['wrangler', ...args], {
+    input: value, cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  run(['secret', 'put', name], process.cwd());
+  run(['pages', 'secret', 'put', name], join(process.cwd(), 'pages'));
+}
+
 const main = async () => {
   const which = process.argv[2];
   if (!MODES[which]) {
@@ -262,24 +292,40 @@ const main = async () => {
     }
 
     const [idName, secretName, tokenName, extraName] = mode.names;
-    console.log(`\n${C.bold}${tokenName}${C.off}\n\n${token.refresh_token}\n`);
+    const values = {
+      [idName]: clientId,
+      [secretName]: clientSecret,
+      [tokenName]: token.refresh_token,
+      [extraName]: extra,
+    };
 
-    console.log(`${C.bold}Set all four on BOTH deployments.${C.off} The 3am upload runs on the`);
-    console.log('cron Worker; the Export tab health line runs on Pages. One without the');
-    console.log('other is the state that reports healthy while nothing is written.\n');
+    console.log(`\n${C.bold}Set these four on BOTH deployments?${C.off} The 3am upload runs on`);
+    console.log('the cron Worker; the Export tab health line runs on Pages. One without');
+    console.log('the other is the state that reports healthy while nothing is written.\n');
+    for (const n of mode.names) console.log(`  ${n}`);
 
-    console.log(`${C.dim}# cron Worker — from the repo root${C.off}`);
-    for (const n of mode.names) console.log(`npx wrangler secret put ${n}`);
-    console.log(`\n${C.dim}# Pages — from the repo root${C.off}`);
-    for (const n of mode.names) {
-      console.log(`npx wrangler pages secret put ${n} --project-name diamondpark`);
+    const go = (await ask(rl, '\nSet them now, on both? [Y/n] ', 'y')).toLowerCase();
+    if (go.startsWith('y')) {
+      for (const n of mode.names) {
+        process.stdout.write(`  ${n.padEnd(28)}`);
+        putSecret(n, values[n]);
+        console.log(`${C.ok}both${C.off}`);
+      }
+      console.log(`\n${C.ok}Done.${C.off} The refresh token was not printed and is not on disk.`);
+      console.log(`${C.dim}To see it: rerun this. To revoke it: https://myaccount.google.com/permissions${C.off}`);
+    } else {
+      // Printed only when the automatic path was refused. There is no reason to
+      // put a live refresh token on someone's screen otherwise.
+      console.log(`\n${C.dim}# cron Worker — from the repo root${C.off}`);
+      for (const n of mode.names) console.log(`npx wrangler secret put ${n}`);
+      console.log(`\n${C.dim}# Pages — from the repo root${C.off}`);
+      for (const n of mode.names) {
+        console.log(`npx wrangler pages secret put ${n} --project-name diamondpark`);
+      }
+      console.log(`\n${C.dim}Values, for pasting into those prompts:${C.off}`);
+      for (const n of mode.names) console.log(`  ${n.padEnd(28)}${values[n]}`);
+      console.log(`\n${C.warn}That last one is a live refresh token. Clear your scrollback.${C.off}`);
     }
-
-    console.log(`\n${C.dim}Values, for pasting into those prompts:${C.off}`);
-    console.log(`  ${idName.padEnd(28)}${clientId}`);
-    console.log(`  ${secretName.padEnd(28)}${clientSecret}`);
-    console.log(`  ${tokenName.padEnd(28)}(printed above)`);
-    console.log(`  ${extraName.padEnd(28)}${extra}`);
 
     console.log(`\n${C.warn}Then, in this order:${C.off}`);
     console.log('  1. Confirm the OAuth consent screen is PUBLISHED, not in Testing.');
