@@ -405,7 +405,8 @@ export function checkDigest({ lastDigestAt, remote, now = new Date() }) {
  * the cron Worker that runs the upload — so the half-configured state reads as
  * healthy from inside the site while nothing at all is being written.
  */
-export function checkBackup({ lastBackupAt, driveConfigured, remote, now = new Date() }) {
+export function checkBackup({ lastBackupAt, driveConfigured, committeeShared,
+  remote, now = new Date() }) {
   if (!remote) return [];
 
   // Either shape, for the same reason as alerting: god mode can only see its
@@ -450,7 +451,9 @@ export function checkBackup({ lastBackupAt, driveConfigured, remote, now = new D
       + '`wrangler pages secret put --project-name diamondpark`.'));
   }
 
-  if (d.committeeShared === false) {
+  // Explicitly false, not merely falsy: a caller that did not ask the question
+  // must not be told the answer is no.
+  if (committeeShared === false) {
     // Sharing in Drive inherits downward. One folder shared with the committee
     // is the roster shared with the committee, and it happens the moment
     // somebody shares the parent to hand over the proof screenshots.
