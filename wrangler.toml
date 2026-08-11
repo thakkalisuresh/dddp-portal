@@ -54,7 +54,19 @@ PBKDF2_ITERATIONS = "100000"
 # days and the backup then stops silently.
 
 [triggers]
-# UTC, always — Cloudflare crons have no timezone. This is 08:30 IST, not 3am
-# local, which matters every time someone checks whether the nightly run
-# happened: at 3am IST the job is still five and a half hours away.
-crons = ["0 3 * * *"]
+# UTC, always — Cloudflare crons have no timezone, and neither expression below
+# shifts with daylight saving anywhere.
+#
+#   0 3  * * *  →  08:30 IST — late fees, the sweep, and the Telegram digest.
+#   0 22 * * *  →  03:30 IST (next day) — the Drive backup, and only that.
+#
+# Two triggers rather than one moved. The backup was asked to run at 3:30 IST;
+# the digest must not, because it is a message to a treasurer's phone and 3:30am
+# is not when anyone wants to read that a bill is overdue. Late fees stay with
+# the digest for the same reason — money moving is worth announcing at an hour
+# somebody is awake.
+#
+# The IST times are the anchor. Pacific was the other candidate and drifts by an
+# hour twice a year against it; the building is in Thrissur, so Kerala's clock
+# is the one held still.
+crons = ["0 3 * * *", "0 22 * * *"]

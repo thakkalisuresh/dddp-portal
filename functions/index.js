@@ -46,7 +46,7 @@ import { splitMobile, NATIONAL_LENGTHS } from '../public/js/countries.js';
 import { addFlat } from './lib/flats.js';
 import { ERROR_CODES } from './lib/error-codes.js';
 import { isCaptureOn, captureWindow, validateBatch } from './lib/clicks.js';
-import { runBackup, backupHealth, driveConfigured, pruneOldRows, dumpTable, dumpAll, bundle, toCsv, TABLES } from './lib/backup.js';
+import { runBackup, backupHealth, driveConfigured, isBackupCron, pruneOldRows, dumpTable, dumpAll, bundle, toCsv, TABLES } from './lib/backup.js';
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole,
@@ -326,8 +326,17 @@ export default {
 
   async scheduled(event, env, ctx) {
     await assertAlerting(env);
+
+    // Two triggers, and which one fired decides the work. The backup runs at
+    // 03:30 IST because that was asked for; the digest cannot follow it there,
+    // because a Telegram message at 3:30am is a notification somebody mutes,
+    // and muting it takes the 22 warnings only the digest reports with it.
+    if (isBackupCron(event.cron)) {
+      await runBackup(env, ctx);
+      return;
+    }
+
     await runScheduled(env, ctx);
-    await runBackup(env, ctx);
     await pruneOldRows(env);
     // An unfinished reconciliation is the one way a bank statement could sit in
     // the database indefinitely. Close it before the night is out.

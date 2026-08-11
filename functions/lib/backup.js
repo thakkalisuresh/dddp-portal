@@ -272,6 +272,24 @@ export function backupFilename(now = new Date()) {
 /** Watermark key. Mirrors `last_digest_at`, and for the same reason. */
 export const BACKUP_SETTING = 'last_backup_at';
 
+/**
+ * The backup has its own cron, and runs on nothing else.
+ *
+ * 22:00 UTC is 03:30 IST. It was moved off the 03:00 UTC job because that one
+ * also sends the Telegram digest, and a digest that arrives at 3:30 in the
+ * morning is a notification people turn off — at which point the building loses
+ * the 22 warnings that only the digest surfaces.
+ *
+ * Must match wrangler.toml exactly. A typo here means the backup silently never
+ * runs while both crons fire happily, which is this feature's signature failure
+ * and the reason it is a named constant rather than a string in an if.
+ */
+export const BACKUP_CRON = '0 22 * * *';
+
+export function isBackupCron(cron) {
+  return cron === BACKUP_CRON;
+}
+
 export async function runBackup(env, ctx) {
   if (!driveConfigured(env)) {
     // Not an error worth alerting on — it simply hasn't been set up yet.

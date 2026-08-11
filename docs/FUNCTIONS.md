@@ -80,6 +80,8 @@ Nightly backup, and retention.
 | fn | `uploadToDrive` |  |
 | fn | `backupFilename` |  |
 | const | `BACKUP_SETTING` |  |
+| const | `BACKUP_CRON` | The backup has its own cron, and runs on nothing else. |
+| fn | `isBackupCron` |  |
 | fn | `runBackup` |  |
 | fn | `backupHealth` | Confirms the backup path still works WITHOUT writing a file. |
 
@@ -644,4 +646,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-336 exports. 195 have no doc comment.
+338 exports. 196 have no doc comment.

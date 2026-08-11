@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import {
   toCsv, toCsvValue, stripSecrets, bundle, cutoffFor, backupFilename,
   driveConfigured, backupCredentials, sharedCredentials, TABLES, RETENTION_DAYS,
-  monthFolderName, ensureMonthFolder, uploadToDrive,
+  monthFolderName, ensureMonthFolder, uploadToDrive, BACKUP_CRON, isBackupCron,
 } from '../functions/lib/backup.js';
 import { mailConfigured } from '../functions/lib/mailer.js';
 
@@ -164,6 +164,28 @@ describe('drive configuration', () => {
     it('still needs a folder, whichever account is used', () => {
       expect(driveConfigured({ ...split, GOOGLE_BACKUP_FOLDER_ID: undefined })).toBe(false);
     });
+  });
+});
+
+describe('the backup has its own cron', () => {
+  // Moved off the 03:00 UTC job because that one sends the Telegram digest, and
+  // a digest arriving at 3:30am is a notification people mute.
+  it('claims 22:00 UTC, which is 03:30 IST', () => {
+    expect(BACKUP_CRON).toBe('0 22 * * *');
+  });
+
+  it('runs the backup on its own trigger and nothing else', () => {
+    expect(isBackupCron('0 22 * * *')).toBe(true);
+    expect(isBackupCron('0 3 * * *')).toBe(false);
+  });
+
+  // A scheduled event with no cron string must not be mistaken for the backup's
+  // trigger: silently backing up on the digest run would double the uploads and
+  // put the digest's own failures on the wrong watermark.
+  it('treats an unknown or absent trigger as not the backup', () => {
+    expect(isBackupCron(undefined)).toBe(false);
+    expect(isBackupCron('')).toBe(false);
+    expect(isBackupCron('0 22 * * 1')).toBe(false);
   });
 });
 
