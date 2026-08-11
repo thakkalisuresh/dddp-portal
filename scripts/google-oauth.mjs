@@ -340,7 +340,10 @@ const main = async () => {
     }
     console.log('  3. npm run deploy:all');
     console.log('  4. npm run doctor          — expect BACKUP-NEVER, not BACKUP-NOT-CONFIGURED');
-    console.log('  5. Tomorrow, after 3am IST:');
+    // 08:30 IST, not 03:00. Cloudflare cron triggers are UTC and wrangler.toml
+    // says `0 3 * * *`; checking at 3am local would report BACKUP-NEVER five
+    // and a half hours before the job was ever going to run.
+    console.log('  5. Tomorrow, after 08:30 IST (the cron is 03:00 UTC):');
     console.log('     npm run doctor          — BACKUP-NEVER must be gone');
     console.log('     A file in the Drive folder is the proof; the watermark is the record.\n');
   } catch (err) {

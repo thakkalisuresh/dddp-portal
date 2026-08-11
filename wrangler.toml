@@ -54,4 +54,7 @@ PBKDF2_ITERATIONS = "100000"
 # days and the backup then stops silently.
 
 [triggers]
+# UTC, always — Cloudflare crons have no timezone. This is 08:30 IST, not 3am
+# local, which matters every time someone checks whether the nightly run
+# happened: at 3am IST the job is still five and a half hours away.
 crons = ["0 3 * * *"]
