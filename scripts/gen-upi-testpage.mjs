@@ -148,6 +148,12 @@ export function renderPage({ vpa = TEST_VPA, payee = TEST_PAYEE, now = new Date(
   return `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- This page is served from a public URL and carries a real payee address and
+     a prefilled amount. Indexed, that is a searchable payment link pointing at
+     a private individual. The header costs nothing and the deploy is meant to
+     be short-lived anyway. It is not access control — an unguessable project
+     name is what keeps the URL private; this only keeps it out of results. -->
+<meta name="robots" content="noindex,nofollow">
 <title>Link check</title>
 <style>
   :root {

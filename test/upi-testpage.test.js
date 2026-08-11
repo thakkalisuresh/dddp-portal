@@ -70,6 +70,12 @@ describe('upi test page', () => {
     expect(html).not.toMatch(/Lexend|Source Sans/);
   });
 
+  // The deploy is public and the payee is a real person's handle, so the page
+  // must not become a searchable payment link.
+  it('asks not to be indexed', () => {
+    expect(html).toMatch(/<meta name="robots" content="noindex/);
+  });
+
   // Everything must be inline. A request to the portal for a font or stylesheet
   // would put its hostname in the network log regardless of what the page says.
   it('requests nothing from anywhere', () => {
