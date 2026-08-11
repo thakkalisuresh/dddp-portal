@@ -91,6 +91,16 @@ Ask the bot a code and it will explain it.
 | `DDP-NOTICE-002` | warn | live | Comment posted to a notice that has comments switched off |
 | `DDP-NOTICE-003` | warn | live | Comment rejected — empty or too long |
 | `DDP-NOTICE-004` | warn | live | Comment rate limit reached |
+| `DDP-NOTICE-005` | warn | live | Permanent deletion attempted on a notice still live |
+
+## ATTACH
+
+| Code | Severity | Status | Meaning |
+|---|---|---|---|
+| `DDP-ATTACH-001` | warn | live | Attachment rejected — wrong type or over the size limit |
+| `DDP-ATTACH-002` | warn | live | Attachment rejected — parent already has its maximum |
+| `DDP-ATTACH-003` | error | live | Attachment missing from R2 but row says stored |
+| `DDP-ATTACH-004` | **fatal** | live | Attachment row written but R2 upload failed |
 
 ## ADMIN
 
@@ -126,7 +136,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-71 codes across 9 domains — 11 fatal, 3 awaiting their call site, 3 retired.
+76 codes across 10 domains — 12 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

@@ -115,10 +115,17 @@ export const ERROR_CODES = {
   'DDP-NOTICE-002': { severity: 'warn',  message: 'Comment posted to a notice that has comments switched off' },
   'DDP-NOTICE-003': { severity: 'warn',  message: 'Comment rejected — empty or too long' },
   'DDP-NOTICE-004': { severity: 'warn',  message: 'Comment rate limit reached' },
+  'DDP-NOTICE-005': { severity: 'warn',  message: 'Permanent deletion attempted on a notice still live' },
+
+  // ── ATTACH ─────────────────────────────────────────────────────────────
+  'DDP-ATTACH-001': { severity: 'warn',  message: 'Attachment rejected — wrong type or over the size limit' },
+  'DDP-ATTACH-002': { severity: 'warn',  message: 'Attachment rejected — parent already has its maximum' },
+  'DDP-ATTACH-003': { severity: 'error', message: 'Attachment missing from R2 but row says stored' },
+  'DDP-ATTACH-004': { severity: 'fatal', message: 'Attachment row written but R2 upload failed' },
 };
 
 /** Domains in registry order, for the generated docs. */
-export const DOMAINS = ['AUTH', 'MAIL', 'BILL', 'PAY', 'PROOF', 'RECON', 'NOTICE', 'ADMIN', 'SYS'];
+export const DOMAINS = ['AUTH', 'MAIL', 'BILL', 'PAY', 'PROOF', 'RECON', 'NOTICE', 'ATTACH', 'ADMIN', 'SYS'];
 
 export function domainOf(code) {
   return code.split('-')[1];

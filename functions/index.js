@@ -5,7 +5,7 @@
  */
 
 import { json, problem, readJson, audit, rateLimit, clearRateLimit, guard, withSecurityHeaders } from './lib/http.js';
-import { reportError, assertAlerting } from './lib/errors.js';
+import { reportError, assertAlerting, postToTelegram } from './lib/errors.js';
 import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex } from './lib/crypto.js';
 import { dashboardPayload } from './lib/dashboard.js';
 import {
@@ -17,7 +17,12 @@ import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { validateStatement, parseStatement, reconcile, sweepAbandonedStatements } from './lib/statement.js';
 import { readReceipt } from './lib/vision.js';
 import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
-import { listNotices, getNotice, addComment, setCommentHidden, markNoticesSeen, NOTICE_SCOPES } from './lib/notices.js';
+import { listNotices, getNotice, addComment, setCommentHidden, markNoticesSeen, NOTICE_SCOPES,
+         canSeeAttachment, listArchivedNotices, purgeNotice } from './lib/notices.js';
+// r2Key is aliased: lib/proof.js exports one of its own, and the two build
+// different key shapes for different buckets' worth of rules.
+import { validateAttachment, validateThumb, safeFilename, r2Key as attachmentKey, assertRoom,
+         isLargeUpload, MAX_PER_NOTICE, MAX_PER_COMMENT } from './lib/attachments.js';
 import { submitMessage, fingerprintOf, AMENITIES, OFFICE_HOURS, MESSAGE_SUBJECTS, CONTACT } from './lib/public.js';
 import {
   transferFlat, canChangeRole, canResetPassword, canEditResident, waLink, planHandover, outstandingFor,
@@ -140,6 +145,17 @@ export default {
         return postComment(request, env, session, path);
       }
 
+      // ── attachments ───────────────────────────────────────────────────
+      // Residents attach to their OWN comment; the admin-only path for
+      // notices lives under /api/admin below.
+      if (request.method === 'POST' && /^\/api\/comments\/\d+\/attachments$/.test(path)) {
+        return postCommentAttachment(request, env, session, path, ctx);
+      }
+      if (request.method === 'GET' && /^\/api\/attachments\/\d+(\/thumb)?$/.test(path)) {
+        return serveAttachment(env, session, Number(path.split('/')[3]),
+          { thumb: path.endsWith('/thumb') });
+      }
+
       // ── admin ─────────────────────────────────────────────────────────
       if (path.startsWith('/api/admin/')) {
         if (!hasRole(session, 'admin')) {
@@ -222,7 +238,25 @@ export default {
           const rows = await env.DB.prepare('SELECT * FROM periods ORDER BY period DESC').all();
           return json({ periods: rows.results ?? [] });
         }
+        // Both admins and the superadmin read the archive; only the superadmin
+        // can destroy anything in it, which is why the delete lives under /god.
+        if (route === 'GET /api/admin/notices/archive') {
+          return json({ notices: await listArchivedNotices(env) });
+        }
+        if (request.method === 'GET' && /^\/api\/admin\/notices\/\d+\/archived$/.test(path)) {
+          const notice = await getNotice(env, Number(path.split('/')[4]),
+            { isAdmin: true, viewer: session.subject, includeWithdrawn: true });
+          return notice ? json(notice) : problem(404, 'DDP-NOTICE-001', 'That notice could not be found.');
+        }
         if (route === 'POST /api/admin/notices')  return postNotice(request, env, session);
+        if (request.method === 'POST' && /^\/api\/admin\/notices\/\d+\/attachments$/.test(path)) {
+          return postNoticeAttachment(request, env, session, path, ctx);
+        }
+        // Removing a resident's photo is the same shape of act as hiding their
+        // words, so it sits beside it: admin only, soft, and audited.
+        if (request.method === 'DELETE' && /^\/api\/admin\/attachments\/\d+$/.test(path)) {
+          return deleteAttachment(env, session, Number(path.split('/')[4]));
+        }
         if (request.method === 'PATCH' && /^\/api\/admin\/notices\/\d+$/.test(path)) {
           return patchNotice(request, env, session, path);
         }
@@ -276,6 +310,9 @@ export default {
         if (route === 'POST /api/god/capture') return setCapture(request, env, session);
         if (route === 'POST /api/god/handover') return handover(request, env, session);
         if (route === 'GET /api/god/people') return godPeople(env);
+        if (request.method === 'DELETE' && /^\/api\/god\/notices\/\d+$/.test(path)) {
+          return purgeNoticeRoute(env, session, Number(path.split('/')[4]), ctx);
+        }
         if (route === 'GET /api/god/bills')  return godBills(env, url);
         if (route === 'GET /api/god/edits')  return godEdits(env, url);
         if (route === 'GET /api/god/diagnostics') return godDiagnostics(env, url);
@@ -666,6 +703,284 @@ async function patchNotice(request, env, session, path) {
     .bind(...values, id).run();
   await audit(env, session, 'notice.update', { id, changed: Object.keys(b ?? {}) });
   return json({ id });
+}
+
+/**
+ * Destroy a withdrawn notice, its replies and its files. Superadmin only.
+ *
+ * The rows go first and the objects after. A key with no row is a byte nobody
+ * can find; a row whose object is already gone is merely a broken link the
+ * archive can show. If a delete fails the id is reported rather than retried —
+ * an orphaned object in R2 is a cleanup job, not a reason to abandon a deletion
+ * the superadmin has explicitly asked for and half-finished.
+ */
+async function purgeNoticeRoute(env, session, noticeId, ctx) {
+  let result;
+  try {
+    result = await purgeNotice(env, noticeId);
+  } catch (err) {
+    if (err.code === 'DDP-NOTICE-005') {
+      return problem(409, 'DDP-NOTICE-005',
+        'Withdraw this notice before deleting it permanently.');
+    }
+    if (err.code === 'DDP-NOTICE-001') {
+      return problem(404, 'DDP-NOTICE-001', 'That notice could not be found.');
+    }
+    throw err;
+  }
+
+  const failed = [];
+  for (const key of result.keys) {
+    try {
+      await env.PROOFS.delete(key);
+    } catch {
+      failed.push(key);
+    }
+  }
+  if (failed.length) await reportError(env, 'DDP-ATTACH-003', { noticeId, failed }, ctx);
+
+  await audit(env, session, 'notice.purge',
+    { id: noticeId, title: result.title, files: result.keys.length });
+  return json({ id: noticeId, deleted: true, files: result.keys.length });
+}
+
+/* ── attachments ──────────────────────────────────────────────────────────
+ *
+ * Uploaded AFTER the notice or comment exists, one request per file. The
+ * alternative — hold files somewhere and bind them when the parent is created —
+ * needs an orphan sweep for every upload the author abandons, and buys nothing:
+ * if the second request fails the author sees the error against a post that
+ * already exists and can simply try the file again.
+ */
+
+/**
+ * The one place bytes reach R2, whichever parent they belong to.
+ *
+ * The insert happens BEFORE the put, matching proofs (lib/proof.js): a row with
+ * no object is a visible, fixable inconsistency, while an object with no row is
+ * a byte nobody can find and nobody will ever delete.
+ */
+async function storeAttachment(request, env, session, parent, ctx) {
+  const form = await request.formData().catch(() => null);
+  const file = form?.get('file');
+  if (!file || typeof file === 'string') {
+    return problem(400, 'DDP-ATTACH-001', 'Choose a file to attach.');
+  }
+
+  const check = validateAttachment({ type: file.type, size: file.size });
+  if (!check.ok) {
+    await reportError(env, 'DDP-ATTACH-001', { type: file.type, size: file.size });
+    return problem(400, 'DDP-ATTACH-001', check.message);
+  }
+
+  try {
+    await assertRoom(env, parent);
+  } catch {
+    const cap = parent.noticeId ? MAX_PER_NOTICE : MAX_PER_COMMENT;
+    return problem(409, 'DDP-ATTACH-002',
+      `That already has ${cap} attachments, which is the limit.`);
+  }
+
+  const filename = safeFilename(file.name);
+  const key = attachmentKey(parent, filename);
+
+  // Optional, and never trusted: the browser makes it, so it is checked like
+  // any other upload. A thumbnail that fails validation is simply dropped —
+  // the board falls back to the full image, which is worse for mobile data but
+  // not worth failing an otherwise good upload over.
+  const thumbPart = form.get('thumb');
+  const thumb = thumbPart && typeof thumbPart !== 'string'
+    && validateThumb({ type: thumbPart.type, size: thumbPart.size })
+    ? thumbPart : null;
+  const thumbKey = thumb ? `${key}.thumb.jpg` : null;
+  // Streamed to R2 rather than buffered. At the old 2MB ceiling reading the
+  // whole file into a Uint8Array was harmless; at 25MB, against a Worker's
+  // 128MB of memory, two concurrent uploads should not be competing for it.
+  // Nothing here needs the bytes — unlike proofs, which hash them for dedupe.
+  const body = file.stream();
+
+  const row = await env.DB.prepare(
+    `INSERT INTO attachments (notice_id, comment_id, r2_key, thumb_key, filename, content_type, bytes, uploaded_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+  ).bind(parent.noticeId ?? null, parent.commentId ?? null, key, thumbKey, filename,
+         file.type, file.size, session.actor.id, new Date().toISOString()).first();
+
+  try {
+    await env.PROOFS.put(key, body, { httpMetadata: { contentType: file.type } });
+    if (thumb) {
+      // After the original, and allowed to fail on its own: losing the
+      // thumbnail costs mobile data, losing the original loses the evidence.
+      try {
+        await env.PROOFS.put(thumbKey, thumb.stream(), {
+          httpMetadata: { contentType: thumb.type },
+        });
+      } catch {
+        await env.DB.prepare('UPDATE attachments SET thumb_key = NULL WHERE id = ?')
+          .bind(row.id).run();
+      }
+    }
+  } catch (err) {
+    await env.DB.prepare('UPDATE attachments SET deleted_at = ? WHERE id = ?')
+      .bind(new Date().toISOString(), row.id).run();
+    await reportError(env, 'DDP-ATTACH-004', err, ctx);
+    return problem(500, 'DDP-ATTACH-004', 'The file could not be stored. Try again.');
+  }
+
+  await audit(env, session, 'attachment.upload', { id: row.id, ...parent, bytes: file.size });
+
+  // Told about AFTER it is stored, and off the critical path: the resident who
+  // uploaded it should not wait on Telegram, and a Telegram outage must not
+  // turn a successful upload into an error they see.
+  if (isLargeUpload(file.size)) {
+    const alert = () => announceLargeUpload(env, session, { filename, bytes: file.size, parent });
+    if (ctx?.waitUntil) ctx.waitUntil(alert());
+    else await alert();
+  }
+
+  return json({ id: row.id, filename, bytes: file.size }, { status: 201 });
+}
+
+/**
+ * Tell the committee, as it happens, that something big just landed in R2.
+ *
+ * Sent through postToTelegram rather than reportError, because this is NOT an
+ * error: the upload was accepted, is within the limit, and is doing exactly
+ * what it should. Routing it through the error path would file it in error_log
+ * and put a severity on it, and an alert channel that cries wolf about normal
+ * events stops being read — which is the failure mode that matters here.
+ *
+ * It names the flat and the notice, because "someone uploaded 22MB" is not
+ * something a committee can act on and "Sekharan, 5A, on the AGM notice" is.
+ */
+async function announceLargeUpload(env, session, { filename, bytes, parent }) {
+  const mb = (bytes / (1024 * 1024)).toFixed(1);
+
+  const where = parent.noticeId
+    ? await env.DB.prepare('SELECT title FROM notices WHERE id = ?').bind(parent.noticeId).first()
+    : await env.DB.prepare(
+        `SELECT n.title FROM comments c JOIN notices n ON n.id = c.notice_id WHERE c.id = ?`
+      ).bind(parent.commentId).first();
+
+  await postToTelegram(env, [
+    `LARGE UPLOAD · ${mb}MB`,
+    `${filename}`,
+    `${session.actor.name ?? 'Someone'} · flat ${session.actor.flat ?? '?'}`,
+    parent.noticeId ? `on notice: ${where?.title ?? '?'}` : `on a reply to: ${where?.title ?? '?'}`,
+    `\n${new Date().toISOString()}`,
+  ].join('\n'));
+}
+
+async function postNoticeAttachment(request, env, session, path, ctx) {
+  const noticeId = Number(path.split('/')[4]);
+  const notice = await env.DB.prepare('SELECT id FROM notices WHERE id = ? AND active = 1')
+    .bind(noticeId).first();
+  if (!notice) return problem(404, 'DDP-NOTICE-001', 'That notice could not be found.');
+  return storeAttachment(request, env, session, { noticeId }, ctx);
+}
+
+async function postCommentAttachment(request, env, session, path, ctx) {
+  if (session.impersonating) {
+    return problem(403, 'DDP-AUTH-007', 'Cannot upload while viewing as another resident.');
+  }
+  const commentId = Number(path.split('/')[3]);
+
+  // Yours, and still visible. Attaching to somebody else's reply would put a
+  // resident's name against a file they did not choose, and attaching to a
+  // hidden one would walk straight past a moderation decision.
+  const comment = await env.DB.prepare(
+    'SELECT id, owner_id, hidden_at FROM comments WHERE id = ?'
+  ).bind(commentId).first();
+  if (!comment) return problem(404, 'DDP-NOTICE-001', 'That reply could not be found.');
+  if (comment.owner_id !== session.actor.id || comment.hidden_at) {
+    await reportError(env, 'DDP-ADMIN-004', { commentId, actor: session.actor.id });
+    return problem(403, 'DDP-ADMIN-004', 'Not yours to add to.');
+  }
+
+  return storeAttachment(request, env, session, { commentId }, ctx);
+}
+
+/**
+ * Serving a file is a notice-visibility question, not a file question.
+ *
+ * An attachment inherits its notice's scope — through the comment it hangs off,
+ * if that is how it got here. Skip this and the AGM papers are readable by a
+ * tenant who guesses a small integer, which is the leak the scope rule
+ * (lib/notices.js canSeeNotice) exists to prevent, reopened through a side
+ * door. Withdrawn notices stop serving their files for the same reason.
+ */
+async function serveAttachment(env, session, id, { thumb = false } = {}) {
+  const row = await env.DB.prepare(
+    `SELECT a.id, a.r2_key, a.thumb_key, a.filename, a.content_type, a.deleted_at,
+            n.scope, n.active
+       FROM attachments a
+       LEFT JOIN comments c ON c.id = a.comment_id
+       JOIN notices n ON n.id = COALESCE(a.notice_id, c.notice_id)
+      WHERE a.id = ?`
+  ).bind(id).first();
+
+  if (!row) return problem(404, 'DDP-ATTACH-003', 'That file could not be found.');
+
+  // Asked about the SUBJECT, never the actor — see canSeeAttachment, which
+  // exists because getting this wrong here leaked the AGM papers to a tenant.
+  if (!canSeeAttachment(row, session.subject)) {
+    // Same answer as a missing file: declining to confirm it exists.
+    return problem(404, 'DDP-ATTACH-003', 'That file could not be found.');
+  }
+  if (row.deleted_at || !row.r2_key) {
+    return problem(410, 'DDP-ATTACH-003', 'That file has been removed.');
+  }
+
+  // Asking for a thumbnail that was never made gets the full image rather than
+  // a 404 — the board asks for /thumb on every image, including ones uploaded
+  // before 0019, and a broken picture is a worse answer than a large one.
+  const wantThumb = thumb && row.thumb_key;
+  const key = wantThumb ? row.thumb_key : row.r2_key;
+  const contentType = wantThumb ? 'image/jpeg' : row.content_type;
+
+  const object = await env.PROOFS.get(key);
+  if (!object) {
+    await reportError(env, 'DDP-ATTACH-003', { id, key });
+    return problem(404, 'DDP-ATTACH-003', 'That file is missing from storage.');
+  }
+
+  return new Response(object.body, {
+    headers: {
+      'content-type': contentType,
+      // inline so a photo opens in the tab and a PDF in the viewer, with the
+      // uploader's filename kept for whoever saves it. safeFilename has already
+      // stripped the quotes and control characters that would break this header.
+      'content-disposition': `inline; filename="${row.filename}"`,
+      // Attachments are behind a login and some are owners-only; a shared
+      // cache must not keep them.
+      'cache-control': 'private, no-store',
+      // Belt and braces for a bucket that also holds resident-uploaded files:
+      // never let a stored type be sniffed into something executable.
+      'x-content-type-options': 'nosniff',
+    },
+  });
+}
+
+/** Soft delete, matching comment hiding: the row and its uploader survive. */
+async function deleteAttachment(env, session, id) {
+  const row = await env.DB.prepare(
+    'SELECT id, r2_key, thumb_key, notice_id, comment_id FROM attachments WHERE id = ? AND deleted_at IS NULL'
+  ).bind(id).first();
+  if (!row) return problem(404, 'DDP-ATTACH-003', 'That file could not be found.');
+
+  // Both objects go; the row stays. Keeping the bytes of something a committee
+  // has decided to remove is the one outcome nobody wants — and a thumbnail is
+  // a legible copy of the same photograph, so leaving it behind would make the
+  // removal a gesture rather than a deletion.
+  for (const key of [row.r2_key, row.thumb_key]) {
+    if (key) await env.PROOFS.delete(key).catch(() => {});
+  }
+
+  await env.DB.prepare(
+    'UPDATE attachments SET r2_key = NULL, thumb_key = NULL, deleted_by = ?, deleted_at = ? WHERE id = ?'
+  ).bind(session.actor.id, new Date().toISOString(), id).run();
+
+  await audit(env, session, 'attachment.delete', { id, noticeId: row.notice_id, commentId: row.comment_id });
+  return json({ id, deleted: true });
 }
 
 async function postResident(request, env, session) {

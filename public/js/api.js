@@ -38,6 +38,29 @@ async function request(method, path, body) {
   return data;
 }
 
+/**
+ * Multipart, which the JSON helper above cannot express: setting a
+ * content-type by hand would strip the boundary FormData generates and the
+ * server would parse nothing.
+ */
+async function upload(path, field, blob, filename, thumb = null) {
+  let res;
+  try {
+    const form = new FormData();
+    form.append(field, blob, filename);
+    if (thumb) form.append('thumb', thumb, 'thumb.jpg');
+    res = await fetch(path, { method: 'POST', credentials: 'same-origin', body: form });
+  } catch {
+    throw new ApiError(0, 'OFFLINE', 'No connection. Check your network and try again.');
+  }
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const err = data?.error ?? {};
+    throw new ApiError(res.status, err.code ?? 'UNKNOWN', err.message);
+  }
+  return data;
+}
+
 export const api = {
   health:  ()               => request('GET',  '/api/health'),
   login:   (mobile, password, remember = true) =>
@@ -60,6 +83,23 @@ export const api = {
   notices:     ()            => request('GET',  '/api/notices'),
   notice:      (id)          => request('GET',  `/api/notices/${id}`),
   postComment: (id, body)    => request('POST', `/api/notices/${id}/comments`, { body }),
+
+  /**
+   * One file per request, to whichever parent it belongs.
+   *
+   * The caller posts the notice or comment first and attaches afterwards, so
+   * an upload that fails leaves a post that exists and a file that can simply
+   * be tried again — rather than a half-written notice nobody can see.
+   */
+  attach(parent, id, file, thumb = null) {
+    const path = parent === 'notice'
+      ? `/api/admin/notices/${id}/attachments`
+      : `/api/comments/${id}/attachments`;
+    // The thumbnail rides along in the same request. Sending it separately
+    // would leave a window where the board has a full-size image to render and
+    // an upload that may still fail — two requests to get one attachment right.
+    return upload(path, 'file', file, file.name, thumb);
+  },
 
   /** Multipart, so it bypasses the JSON request helper. */
   async uploadProof(billId, blob) {
@@ -120,6 +160,9 @@ export const api = {
     rosterStatus:  ()        => request('GET',  '/api/admin/roster/status'),
     rosterMarkSent:(id)      => request('POST', `/api/admin/roster/sent/${id}`),
     addNotice:     (body)    => request('POST', '/api/admin/notices', body),
+    deleteAttachment: (id)   => request('DELETE', `/api/admin/attachments/${id}`),
+    noticeArchive: ()        => request('GET',  '/api/admin/notices/archive'),
+    archivedNotice: (id)     => request('GET',  `/api/admin/notices/${id}/archived`),
     updateNotice:  (id, b)   => request('PATCH', `/api/admin/notices/${id}`, b),
     messages:      ()        => request('GET',  '/api/admin/messages'),
     markMessageHandled: (id) => request('POST', `/api/admin/messages/${id}/handled`),
@@ -175,6 +218,8 @@ export const api = {
     handover:    (toOwnerId)   => request('POST', '/api/god/handover', { toOwnerId }),
     residents:   ()            => request('GET',  '/api/god/residents'),
     people:      ()            => request('GET',  '/api/god/people'),
+    /** Destroys a withdrawn notice, its replies and its files. No undo. */
+    purgeNotice: (id)          => request('DELETE', `/api/god/notices/${id}`),
     bills:       (params = '') => request('GET',  `/api/god/bills${params}`),
     edits:       (params = '') => request('GET',  `/api/god/edits${params}`),
     diagnostics: (params = '') => request('GET',  `/api/god/diagnostics${params}`),
