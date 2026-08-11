@@ -1,8 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import {
   toCsv, toCsvValue, stripSecrets, bundle, cutoffFor, backupFilename,
   driveConfigured, backupCredentials, sharedCredentials, TABLES, RETENTION_DAYS,
   monthFolderName, ensureMonthFolder, uploadToDrive, BACKUP_CRON, isBackupCron,
+  backupProofs, proofBackupName, PROOF_BATCH,
 } from '../functions/lib/backup.js';
 import { mailConfigured } from '../functions/lib/mailer.js';
 
@@ -189,6 +190,118 @@ describe('the backup has its own cron', () => {
   });
 });
 
+// The CSVs carry the record of a payment; R2 carries the evidence. Lose the
+// bucket and the committee can say a payment was approved but cannot show what
+// was claimed — which is exactly the position a dispute puts them in.
+describe('the proof images go too', () => {
+  const ok = (body) => ({ ok: true, json: async () => body });
+
+  afterEach(() => { globalThis.fetch = undefined; });
+
+  it('names a file by flat and reference, so a folder is searchable', () => {
+    expect(proofBackupName({ flat: '4A', utr: '402318889021' })).toBe('4A-402318889021.jpg');
+  });
+
+  it('falls back to the hash when nothing could be read off the screenshot', () => {
+    expect(proofBackupName({ flat: '13E', utr: null, image_sha256: 'abc123def456789' }))
+      .toBe('13E-abc123def456.jpg');
+  });
+
+  it('keeps the real extension, because not every proof is a JPEG', () => {
+    expect(proofBackupName({ flat: '4A', utr: 'T2508' }, 'image/png')).toBe('4A-T2508.png');
+    expect(proofBackupName({ flat: '4A', utr: 'T2508' }, 'image/webp')).toBe('4A-T2508.webp');
+  });
+
+  const envWith = (rows, objects) => ({
+    GOOGLE_BACKUP_FOLDER_ID: 'PARENT',
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...args) { return this._b(sql, args); },
+          _b(s, args) {
+            return {
+              all: async () => ({ results: rows }),
+              run: async () => { updates.push({ sql: s, args }); return {}; },
+            };
+          },
+          all: async () => ({ results: rows }),
+        };
+      },
+    },
+    PROOFS: { get: async (key) => objects[key] ?? null },
+  });
+  let updates = [];
+  beforeEach(() => { updates = []; });
+
+  const image = { httpMetadata: { contentType: 'image/jpeg' }, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer };
+
+  it('copies a proof and records that it did', async () => {
+    const env = envWith(
+      [{ id: 7, r2_key: 'proofs/2026-07/4A/abc.jpg', utr: '402318889021', image_sha256: 'abc', flat: '4A', period: '2026-07' }],
+      { 'proofs/2026-07/4A/abc.jpg': image }
+    );
+    globalThis.fetch = async (url, init) => (init?.method === 'POST' || String(url).includes('upload')
+      ? ok({ id: 'F', name: '4A-402318889021.jpg' })
+      : ok({ files: [{ id: 'DIR' }] }));
+
+    const out = await backupProofs(env, 'tok');
+    expect(out).toMatchObject({ copied: 1, failed: 0 });
+    // The mark is what stops it being copied again every night for ever.
+    expect(updates[0].sql).toContain('UPDATE payment_proofs SET backed_up_at');
+    expect(updates[0].args[1]).toBe(7);
+  });
+
+  it('does not mark a proof whose image is missing from the bucket', async () => {
+    const env = envWith(
+      [{ id: 8, r2_key: 'gone.jpg', utr: 'x', image_sha256: 'h', flat: '4A', period: '2026-07' }],
+      {}
+    );
+    globalThis.fetch = async () => ok({ files: [{ id: 'DIR' }] });
+
+    const out = await backupProofs(env, 'tok');
+    expect(out).toMatchObject({ copied: 0, failed: 1 });
+    // Marking it would be a lie; a restored bucket must still get picked up.
+    expect(updates).toHaveLength(0);
+  });
+
+  it('lets one bad image cost only itself', async () => {
+    const env = envWith([
+      { id: 1, r2_key: 'a.jpg', utr: 'a', image_sha256: 'h1', flat: '4A', period: '2026-07' },
+      { id: 2, r2_key: 'b.jpg', utr: 'b', image_sha256: 'h2', flat: '4B', period: '2026-07' },
+    ], { 'a.jpg': { ...image, arrayBuffer: async () => { throw new Error('read failed'); } }, 'b.jpg': image });
+    globalThis.fetch = async (url, init) => (init?.method === 'POST' || String(url).includes('upload')
+      ? ok({ id: 'F' })
+      : ok({ files: [{ id: 'DIR' }] }));
+
+    const out = await backupProofs(env, 'tok');
+    expect(out).toMatchObject({ copied: 1, failed: 1 });
+  });
+
+  it('asks for no more than a batch, so a backlog cannot stall the night', async () => {
+    let limit = null;
+    const env = {
+      GOOGLE_BACKUP_FOLDER_ID: 'PARENT',
+      DB: { prepare: () => ({ bind: (n) => { limit = n; return { all: async () => ({ results: [] }) }; } }) },
+      PROOFS: { get: async () => null },
+    };
+    const out = await backupProofs(env, 'tok');
+    expect(limit).toBe(PROOF_BATCH);
+    expect(out).toEqual({ copied: 0, failed: 0, remaining: 0 });
+  });
+
+  it('touches Drive not at all when there is nothing to copy', async () => {
+    let called = false;
+    globalThis.fetch = async () => { called = true; return ok({}); };
+    const env = {
+      GOOGLE_BACKUP_FOLDER_ID: 'PARENT',
+      DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }) }) }) },
+      PROOFS: { get: async () => null },
+    };
+    await backupProofs(env, 'tok');
+    expect(called).toBe(false);
+  });
+});
+
 // A year of nightly files in one folder is 365 rows to scroll, and the person
 // this exists for is a treasurer looking for last March.
 describe('one folder per month', () => {
@@ -251,16 +364,19 @@ describe('one folder per month', () => {
   });
 
   it('uploads into the month folder, not the parent', async () => {
-    let body = '';
+    let sent = null;
     globalThis.fetch = async (url, init) => {
-      body = String(init?.body ?? '');
+      sent = init?.body;
       return ok({ id: 'F', name: 'diamond-park-2026-08-12.csv' });
     };
     await uploadToDrive(env, {
       name: 'diamond-park-2026-08-12.csv', content: 'a,b\n1,2\n',
       parentId: 'AUG', token: 'tok',
     });
+    // A Blob now, because the same function also carries JPEGs.
+    const body = await sent.text();
     expect(body).toContain('"parents":["AUG"]');
     expect(body).not.toContain('"parents":["PARENT"]');
+    expect(body).toContain('a,b\n1,2\n');
   });
 });

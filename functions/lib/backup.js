@@ -205,7 +205,12 @@ export function monthFolderName(now = new Date()) {
  * scattering files across both.
  */
 export async function ensureMonthFolder(env, token, name = monthFolderName()) {
-  const parent = env.GOOGLE_BACKUP_FOLDER_ID;
+  return ensureFolder(env, token, { name, parentId: env.GOOGLE_BACKUP_FOLDER_ID });
+}
+
+/** The same lookup-or-create, for any folder under any parent. */
+export async function ensureFolder(env, token, { name, parentId }) {
+  const parent = parentId ?? env.GOOGLE_BACKUP_FOLDER_ID;
   const FOLDER = 'application/vnd.google-apps.folder';
   const q = `name = '${name}' and mimeType = '${FOLDER}' and '${parent}' in parents `
     + 'and trashed = false';
@@ -237,18 +242,19 @@ export async function uploadToDrive(env, { name, content, mimeType = 'text/csv',
   const boundary = `ddp${crypto.randomUUID()}`;
   const metadata = { name, parents: [parentId ?? env.GOOGLE_BACKUP_FOLDER_ID] };
 
-  const body = [
-    `--${boundary}`,
-    'Content-Type: application/json; charset=UTF-8',
-    '',
+  // A Blob rather than a joined string, because `content` is now sometimes a
+  // JPEG. Concatenating bytes into a JS string corrupts them — it reinterprets
+  // each byte as UTF-16 — and base64 with Content-Transfer-Encoding would work
+  // but inflates every proof by a third for no reason a Blob does not solve.
+  const body = new Blob([
+    `--${boundary}\r\n`,
+    'Content-Type: application/json; charset=UTF-8\r\n\r\n',
     JSON.stringify(metadata),
-    `--${boundary}`,
-    `Content-Type: ${mimeType}`,
-    '',
+    `\r\n--${boundary}\r\n`,
+    `Content-Type: ${mimeType}\r\n\r\n`,
     content,
-    `--${boundary}--`,
-    '',
-  ].join('\r\n');
+    `\r\n--${boundary}--\r\n`,
+  ]);
 
   const res = await fetch(
     'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name',
@@ -267,6 +273,108 @@ export async function uploadToDrive(env, { name, content, mimeType = 'text/csv',
 
 export function backupFilename(now = new Date()) {
   return `diamond-park-${now.toISOString().slice(0, 10)}.csv`;
+}
+
+/* ── the proof images ──────────────────────────────────────────────────── */
+
+/**
+ * The CSVs carry the RECORD of a payment; R2 carries the EVIDENCE.
+ *
+ * `payment_proofs` backs up the UTR, the amount, the verdict and who approved
+ * it — everything except the screenshot the resident actually sent. Lose the
+ * bucket and the committee can say a payment was claimed and approved but
+ * cannot show what was claimed, which is exactly the position a disputed
+ * payment puts them in. So the images go too.
+ *
+ * Deliberately NOT included: thumbnails, which are derived and regenerable, and
+ * notice attachments, which share the bucket but are not financial evidence.
+ * Both are a decision to revisit rather than an oversight.
+ */
+export const PROOF_BATCH = 50;
+
+/**
+ * `4A-402318889021.jpg` — flat first so a folder sorts by flat, then the
+ * reference the resident and the bank both quote. A hash prefix stands in when
+ * there is no reference, which is the case for a screenshot nothing could be
+ * read from; the file is still worth keeping, it is just harder to name.
+ */
+export function proofBackupName({ flat, utr, image_sha256: hash }, contentType = 'image/jpeg') {
+  const ext = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
+  return `${flat}-${utr || (hash ?? '').slice(0, 12) || 'unknown'}.${ext}`;
+}
+
+/**
+ * Copy proof images that have not been copied, oldest first, and stop at
+ * PROOF_BATCH.
+ *
+ * **Marked in D1 rather than discovered from Drive.** The month folder is
+ * looked up every night precisely so a deleted folder repairs itself, and the
+ * opposite choice here is deliberate: that argument costs one request, while
+ * asking Drive "which of these four thousand images do you already have"
+ * costs a listing of the whole folder every night, for ever, to answer a
+ * question a column answers exactly. The price is that emptying the Drive
+ * folder by hand does not trigger a re-copy — `UPDATE payment_proofs SET
+ * backed_up_at = NULL` does, and that is written down here because nothing
+ * else would tell you.
+ *
+ * The batch cap exists because a backlog is normal — the first run after this
+ * ships has every proof ever taken — and a cron that tries to move all of them
+ * in one invocation is a cron that hits a limit and moves none. Fifty a night
+ * clears a year of a 99-flat building inside a month, and the watermark is
+ * never held hostage to it.
+ */
+export async function backupProofs(env, token, { limit = PROOF_BATCH } = {}) {
+  const { results } = await env.DB.prepare(
+    `SELECT p.id, p.r2_key, p.utr, p.image_sha256, b.flat, b.period
+       FROM payment_proofs p
+       JOIN bills b ON b.id = p.bill_id
+      WHERE p.r2_key IS NOT NULL
+        AND p.deleted_at IS NULL
+        AND p.backed_up_at IS NULL
+      ORDER BY p.id
+      LIMIT ?`
+  ).bind(limit).all();
+
+  const pending = results ?? [];
+  if (!pending.length) return { copied: 0, failed: 0, remaining: 0 };
+
+  const root = await ensureFolder(env, token, { name: 'proofs' });
+  const periods = new Map();
+  let copied = 0;
+  let failed = 0;
+
+  for (const row of pending) {
+    try {
+      const object = await env.PROOFS.get(row.r2_key);
+      // The row says there is an image and the bucket disagrees. Marking it
+      // copied would be a lie; leaving it unmarked retries a file that will
+      // never appear, every night. Counted as a failure so the digest says so,
+      // and left alone so a restored bucket still gets picked up.
+      if (!object) { failed += 1; continue; }
+
+      if (!periods.has(row.period)) {
+        periods.set(row.period, await ensureFolder(env, token, {
+          name: row.period, parentId: root,
+        }));
+      }
+      const contentType = object.httpMetadata?.contentType ?? 'image/jpeg';
+      await uploadToDrive(env, {
+        name: proofBackupName(row, contentType),
+        content: await object.arrayBuffer(),
+        mimeType: contentType,
+        parentId: periods.get(row.period),
+        token,
+      });
+      await env.DB.prepare('UPDATE payment_proofs SET backed_up_at = ? WHERE id = ?')
+        .bind(new Date().toISOString(), row.id).run();
+      copied += 1;
+    } catch {
+      // One unreadable image must not cost the other forty-nine. Unmarked, so
+      // tomorrow tries again.
+      failed += 1;
+    }
+  }
+  return { copied, failed, remaining: Math.max(0, pending.length - copied) };
 }
 
 /** Watermark key. Mirrors `last_digest_at`, and for the same reason. */
@@ -307,7 +415,23 @@ export async function runBackup(env, ctx) {
     // lands would report a backup that does not exist, which is worse than
     // reporting none: it is the reassurance without the copy.
     await setBackupWatermark(env, new Date().toISOString());
-    return { uploaded: uploaded.name, tables: Object.keys(files).length, bytes: content.length };
+
+    // After the watermark, and in its own try. The CSVs are the thing this
+    // feature promises and the images are the thing it should also carry; a
+    // bucket having a bad night must not make the night read as "no backup",
+    // because that is the one signal anybody watches.
+    let proofs = { copied: 0, failed: 0, remaining: 0 };
+    try {
+      proofs = await backupProofs(env, token);
+    } catch (err) {
+      await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);
+      proofs = { copied: 0, failed: -1, remaining: -1 };
+    }
+
+    return {
+      uploaded: uploaded.name, tables: Object.keys(files).length,
+      bytes: content.length, proofs,
+    };
   } catch (err) {
     await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);
     return { failed: true };

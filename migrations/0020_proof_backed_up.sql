@@ -1,0 +1,21 @@
+-- When this proof's image was copied off-site, or NULL if it has not been.
+--
+-- WHY A COLUMN RATHER THAN ASKING DRIVE. The nightly CSV backup looks its month
+-- folder up from Drive every night, on purpose, so that deleting the folder
+-- repairs itself. The same argument loses here: that is one request, whereas
+-- "which of these four thousand images do you already have" is a listing of the
+-- entire folder, every night, for ever, to answer something a column answers
+-- exactly. The images also never change once written — a proof is a screenshot
+-- somebody sent, not a document that gets edited — so there is nothing for a
+-- re-check to catch.
+--
+-- THE PRICE, WRITTEN DOWN BECAUSE NOTHING ELSE WOULD TELL YOU: emptying the
+-- Drive folder by hand does not cause a re-copy. This does:
+--
+--   UPDATE payment_proofs SET backed_up_at = NULL;
+--
+-- NULLABLE AND NOT BACKFILLED. Every proof that exists today is unbacked, which
+-- is the truth: nothing has ever been copied off-site. They are picked up
+-- oldest first, fifty a night, so the backlog clears on its own rather than
+-- needing a one-off script that would then rot in scripts/.
+ALTER TABLE payment_proofs ADD COLUMN backed_up_at TEXT;

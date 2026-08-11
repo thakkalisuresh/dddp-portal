@@ -77,8 +77,12 @@ Nightly backup, and retention.
 | fn | `refreshAccessToken` | A refresh token issued while the OAuth consent screen is in "Testing" mode expires after seven days. |
 | fn | `monthFolderName` |  |
 | fn | `ensureMonthFolder` | The month's subfolder, created the first night of each month. |
+| fn | `ensureFolder` |  |
 | fn | `uploadToDrive` |  |
 | fn | `backupFilename` |  |
+| const | `PROOF_BATCH` | The CSVs carry the RECORD of a payment; R2 carries the EVIDENCE. |
+| fn | `proofBackupName` | `4A-402318889021.jpg` — flat first so a folder sorts by flat, then the reference the resident and the bank both quote. |
+| fn | `backupProofs` | Copy proof images that have not been copied, oldest first, and stop at PROOF_BATCH. |
 | const | `BACKUP_SETTING` |  |
 | const | `BACKUP_CRON` | The backup has its own cron, and runs on nothing else. |
 | fn | `isBackupCron` |  |
@@ -646,4 +650,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-338 exports. 196 have no doc comment.
+342 exports. 197 have no doc comment.
