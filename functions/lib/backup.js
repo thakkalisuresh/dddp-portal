@@ -8,6 +8,7 @@
  */
 
 import { reportError, fail } from './errors.js';
+import { noticeHtml, noticeSignature } from './notice-doc.js';
 
 /** Every table worth carrying off-site, in dependency order. */
 export const TABLES = [
@@ -506,6 +507,129 @@ export async function backupAttachments(env, token, { limit = PROOF_BATCH } = {}
   return { copied, failed };
 }
 
+/* ── the notices, as documents ─────────────────────────────────────────── */
+
+/** What Drive calls a native Doc. Setting it on upload converts the HTML. */
+const GOOGLE_DOC = 'application/vnd.google-apps.document';
+
+/**
+ * Create the Doc, or rewrite the one that is already there.
+ *
+ * Rewriting matters more than it sounds: a notice gains comments for weeks
+ * after it is posted. Uploading a new file each time would leave the folder
+ * holding six versions of the same notice with no way to tell which is current,
+ * so the file id is remembered and updated in place. Drive keeps its own
+ * revision history, which is a better archive than six duplicates.
+ */
+async function putNoticeDoc(env, token, { html, name, parentId, fileId }) {
+  const boundary = `ddp${crypto.randomUUID()}`;
+  const metadata = fileId
+    ? { name }
+    : { name, parents: [parentId], mimeType: GOOGLE_DOC };
+
+  const body = new Blob([
+    `--${boundary}\r\n`,
+    'Content-Type: application/json; charset=UTF-8\r\n\r\n',
+    JSON.stringify(metadata),
+    `\r\n--${boundary}\r\n`,
+    'Content-Type: text/html; charset=UTF-8\r\n\r\n',
+    html,
+    `\r\n--${boundary}--\r\n`,
+  ]);
+
+  const url = fileId
+    ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&fields=id`
+    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id';
+
+  const res = await fetch(url, {
+    method: fileId ? 'PATCH' : 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': `multipart/related; boundary=${boundary}`,
+    },
+    body,
+  });
+  // A remembered id that Drive no longer has — the committee deleted the doc —
+  // is not a failure worth alerting on. Forget it and let the next line create
+  // a fresh one, which is what somebody deleting it probably wanted anyway.
+  if (res.status === 404 && fileId) {
+    return putNoticeDoc(env, token, { html, name, parentId, fileId: null });
+  }
+  if (!res.ok) fail('DDP-SYS-003', { status: res.status, step: 'notice-doc' });
+  return (await res.json()).id;
+}
+
+/**
+ * Every notice, as a Doc beside its own attachments.
+ *
+ * Runs over all notices rather than a batch: there is one today and there will
+ * be a few hundred after a decade, the signature check means almost all of them
+ * do nothing, and unlike the images each one costs a single small request.
+ */
+export async function backupNotices(env, token) {
+  const [notices, comments, attachments] = await Promise.all([
+    env.DB.prepare('SELECT * FROM notices ORDER BY id').all(),
+    env.DB.prepare(
+      `SELECT c.*, o.name AS author_name, o.flat AS author_flat
+         FROM comments c LEFT JOIN owners o ON o.id = c.owner_id
+        ORDER BY c.id`).all(),
+    env.DB.prepare(
+      `SELECT a.id, a.filename, a.bytes, a.deleted_at,
+              COALESCE(a.notice_id, c.notice_id) AS notice_id
+         FROM attachments a LEFT JOIN comments c ON c.id = a.comment_id
+        ORDER BY a.id`).all(),
+  ]);
+
+  const byNotice = (rows, key = 'notice_id') => {
+    const map = new Map();
+    for (const row of rows ?? []) {
+      if (!map.has(row[key])) map.set(row[key], []);
+      map.get(row[key]).push(row);
+    }
+    return map;
+  };
+  const threads = byNotice(comments.results);
+  const files = byNotice(attachments.results);
+
+  let written = 0;
+  let failed = 0;
+  let root = null;
+
+  for (const notice of notices.results ?? []) {
+    const parts = {
+      notice,
+      comments: threads.get(notice.id) ?? [],
+      attachments: files.get(notice.id) ?? [],
+    };
+    try {
+      const signature = await noticeSignature(parts);
+      if (signature === notice.backup_sig) continue;
+
+      // Only now, so a night where every notice is unchanged touches Drive not
+      // at all.
+      root ??= await ensureFolder(env, token, {
+        name: 'notices', parentId: committeeFolder(env),
+      });
+      const folder = await ensureFolder(env, token, {
+        name: noticeFolderName(notice), parentId: root,
+      });
+      const fileId = await putNoticeDoc(env, token, {
+        html: noticeHtml(parts),
+        name: `${String(notice.id).padStart(4, '0')} ${notice.title}`,
+        parentId: folder,
+        fileId: notice.backup_doc_id,
+      });
+      await env.DB.prepare(
+        'UPDATE notices SET backup_doc_id = ?, backup_sig = ? WHERE id = ?'
+      ).bind(fileId, signature, notice.id).run();
+      written += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  return { written, failed };
+}
+
 /** Watermark key. Mirrors `last_digest_at`, and for the same reason. */
 export const BACKUP_SETTING = 'last_backup_at';
 
@@ -551,16 +675,18 @@ export async function runBackup(env, ctx) {
     // because that is the one signal anybody watches.
     let proofs = { copied: 0, failed: 0, remaining: 0 };
     let attachments = { copied: 0, failed: 0 };
+    let notices = { written: 0, failed: 0 };
     try {
       proofs = await backupProofs(env, token);
       attachments = await backupAttachments(env, token);
+      notices = await backupNotices(env, token);
     } catch (err) {
       await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);
     }
 
     return {
       uploaded: uploaded.name, tables: Object.keys(files).length,
-      bytes: content.length, proofs, attachments,
+      bytes: content.length, proofs, attachments, notices,
     };
   } catch (err) {
     await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);

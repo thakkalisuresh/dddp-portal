@@ -87,6 +87,7 @@ Nightly backup, and retention.
 | fn | `backupProofs` | Copy proof images that have not been copied, oldest first, and stop at PROOF_BATCH. |
 | fn | `noticeFolderName` | `0012-water-tank-cleaning` — id first so it is unique and sorts by age, title after so a human can find the thread without opening twelve folders. |
 | fn | `backupAttachments` | Copy notice and comment attachments, the same way and for the same reason as the proofs. |
+| fn | `backupNotices` | Every notice, as a Doc beside its own attachments. |
 | const | `BACKUP_SETTING` |  |
 | const | `BACKUP_CRON` | The backup has its own cron, and runs on nothing else. |
 | fn | `isBackupCron` |  |
@@ -309,6 +310,17 @@ Sending email, via the Gmail API.
 | fn | `mailConfigured` |  |
 | fn | `buildRawMessage` | RFC 2822, base64url. |
 | fn | `sendEmail` | Send one message. |
+
+### `functions/lib/notice-doc.js`
+
+A notice, as a document the committee can read without the portal.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `escapeHtml` |  |
+| fn | `markdownToHtml` |  |
+| fn | `noticeHtml` | One notice, its thread, and what was attached to it. |
+| fn | `noticeSignature` | What the document would say, reduced to one string. |
 
 ### `functions/lib/notices.js`
 
@@ -654,4 +666,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-346 exports. 198 have no doc comment.
+351 exports. 200 have no doc comment.
