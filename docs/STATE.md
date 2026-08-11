@@ -93,9 +93,17 @@ drift tests.
 **Self-service password reset** (`/forgot`) — live, accepts requests, sends
 nothing. No Google credentials. `doctor` reports `MAIL-NOT-CONFIGURED`.
 
-**Nightly Drive backup** — written in phase 8, deployed, **never run once**. No
-Google secrets have ever been set. The only backups that exist were taken by
-hand during development. Same credentials as email, so one setup fixes both.
+**Nightly Drive backup** — written in phase 8, and **configured on 2026-08-11**
+after sitting inert since. It has still not run: the first 3am is the one to
+check. Doctor moved from BACKUP-NOT-CONFIGURED to BACKUP-NEVER, which is the
+whole of what has been proven so far.
+
+What IS proven: the credentials work and the folder is writable, because
+`google:auth` uploaded a real check file (`setup-check-2026-08-11.csv`) before
+finishing. What is NOT proven: that the cron fires, that `runBackup` completes
+against the real database, and that the watermark advances. Only the morning
+after says that, and until it does this line stays here rather than under
+"built and verified".
 
 `npm run google:auth -- backup` (2026-08-11) does the consent round-trip and
 prints the secret commands for both deployments, so this is now a browser tab
@@ -157,7 +165,7 @@ is useless and does not come back.
 | | |
 |---|---|
 | **B10** | Admin-issued temporary passwords never expire. Sent over WhatsApp, which keeps them for years. |
-| **B12** | No off-site backup has ever run. |
+| **B12** | Configured 2026-08-11; no off-site backup has run *yet*. First 3am is unproven. |
 | — | Rejecting a proof gives the resident no reason, so they re-upload the same wrong screenshot. Now that rejection also returns the bill to `unpaid` and the late fee applies (B13), this matters more than it did. |
 | — | Deleting a proof clears R2 but keeps `image_sha256`, so duplicate detection still fires against an image nobody can see. |
 | — | Notices can be withdrawn and scoped, but not edited in place, pinned or expired. Fixing a typo still means withdrawing and reposting, which loses the comments — the PATCH endpoint accepts title and body, nothing in the interface sends them. |

@@ -259,15 +259,27 @@ Where it would genuinely help: plain-language error-code explanations for
 residents in English and Malayalam, and overnight triage saying which of the 57
 codes is new versus routine. Both read-only, both additive to the report.
 
-## B12 — The nightly Drive backup has never run
+## B12 — The nightly Drive backup — CONFIGURED 2026-08-11, first run unproven
 
-Written in phase 8, deployed, never configured. No Google secrets have ever
-been set, so `runBackup` returns early every night and nothing is copied
-off-site. The only backups that exist are the ones taken by hand during this
-work, sitting in a scratchpad directory that does not survive the session.
+Written in phase 8, deployed, and never configured until now: no Google secrets
+had ever been set, so `runBackup` returned early every night for months and
+nothing was copied off-site. The only backups that existed were taken by hand
+during that work, in a scratchpad directory that did not survive the session.
 
-**Still true, and still blocked on W1** — it shares the same OAuth credentials
-as email, plus `GOOGLE_BACKUP_FOLDER_ID`.
+**Configured on 2026-08-11.** All four `GOOGLE_BACKUP_*` secrets are set on both
+deployments, both are deployed, and `npm run doctor` reads BACKUP-NEVER rather
+than BACKUP-NOT-CONFIGURED.
+
+**It has still not run.** `google:auth` proved the credentials and the folder by
+uploading a real check file, which is a different claim from "the nightly job
+works": the cron firing, `runBackup` completing against 105 residents and 898
+bills, and the watermark advancing are all still unobserved. The morning of
+2026-08-12 is the check, and BACKUP-NEVER disappearing is the only evidence that
+counts. This entry stays open until then.
+
+If it fails instead, it will say so — Telegram alerting is live and `runBackup`
+reports through `reportError`, so a failed upload pages the treasurer rather
+than passing as a quiet night.
 
 **The watching half is now built (2026-08-10).** `runBackup` writes a
 `last_backup_at` watermark to `settings` on an upload that returned, mirroring
