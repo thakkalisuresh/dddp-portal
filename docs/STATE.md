@@ -314,6 +314,29 @@ constraints rather than preferences, and each is argued at the top of that file:
   observations that actually settle this, and only the person holding the phone
   can make them.
 
+### How the run is being done
+
+Over a WhatsApp video call with the handset's screen shared, the link pasted
+into Chrome by hand rather than tapped from the chat. The hand-paste is the
+point: a link opened from inside WhatsApp lands in its WebView, which refuses
+custom schemes by design, and every shape would die in a way indistinguishable
+from the bug. Watching live also replaces the tester's retelling with direct
+observation, which matters because the page itself can only detect focus loss.
+
+**A limitation to read the results through: the confirmation screen will
+probably not be visible.** UPI apps set `FLAG_SECURE` on payment screens to
+defeat screenshot fraud, and that blanks screen capture as well, so the shared
+view is expected to go black at exactly the most interesting moment. This costs
+less than it appears — the app LAUNCHING is the observation that settles
+resolution, and it happens before the secure screen. The payee name, which is
+the secondary confirmation, has to be read aloud instead.
+
+The plain `upi://` link is tapped first and the chooser dismissed with "just
+once" every time. Choosing "always" would set an Android default and silently
+skip the chooser on every later tap, which would turn the single most
+informative test into one that cannot be repeated without clearing app defaults
+in system settings.
+
 ### Results
 
 Nothing recorded yet — no run has happened. The table below is the shape the
