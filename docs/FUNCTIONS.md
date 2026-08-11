@@ -473,6 +473,7 @@ UPI deep links.
 
 | | Export | What it does |
 |---|---|---|
+| const | `APP_SCHEMES` | Per-app schemes, used where the OS will not offer a chooser. |
 | const | `IOS_SCHEMES` |  |
 | const | `ANDROID_PACKAGES` | Android package names, used to address ONE app instead of asking the OS to choose. |
 | fn | `buildUpiParams` |  |
@@ -639,4 +640,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-331 exports. 193 have no doc comment.
+332 exports. 193 have no doc comment.

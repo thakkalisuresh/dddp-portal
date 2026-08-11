@@ -9,12 +9,25 @@
 
 import { fail } from './errors.js';
 
-export const IOS_SCHEMES = {
-  gpay: 'tez://upi/pay',
-  phonepe: 'phonepe://pay',
-  paytm: 'paytmmp://pay',
-  bhim: 'bhim://pay',
+/**
+ * Per-app schemes, used where the OS will not offer a chooser.
+ *
+ * `tez://` was Google Pay's scheme when the app was called Tez, and it is the
+ * one this file shipped with. Current guidance across the gateway SDKs is
+ * `gpay://upi/pay`; tez:// still resolves on older installs, so it stays as a
+ * second attempt rather than being deleted.
+ */
+export const APP_SCHEMES = {
+  gpay: ['gpay://upi/pay', 'tez://upi/pay'],
+  phonepe: ['phonepe://pay', 'phonepe://upi/pay'],
+  paytm: ['paytmmp://pay', 'paytm://upi/pay'],
+  bhim: ['bhim://pay', 'bhim://upi/pay'],
 };
+
+/** The first scheme for each app — what a single href can carry. */
+export const IOS_SCHEMES = Object.fromEntries(
+  Object.entries(APP_SCHEMES).map(([app, [first]]) => [app, first])
+);
 
 /**
  * Android package names, used to address ONE app instead of asking the OS to
@@ -91,15 +104,36 @@ export function stampFor(date = new Date()) {
 }
 
 export function buildUpiLinks({ vpa, payee, amount, flat, period, now = new Date(), fallbackUrl }) {
-  // (2B_09_08_26) — the flat, then the day the link was made. The reference
-  // below is what actually reconciles; this is what a human reads in a
-  // statement line, so it is short and shaped like a label rather than a
-  // sentence.
+  // (2B_09_08_26) — the flat, then the day the link was made. This is what a
+  // human reads in a statement line, so it is short and shaped like a label
+  // rather than a sentence, and it is what the treasurer reconciles against.
   const note = flat ? `(${flat}_${stampFor(now)})` : undefined;
-  const ref = flat && period ? `DDP${flat}${period.replace('-', '')}` : undefined;
-  const qs = queryString(buildUpiParams({ vpa, payee, amount, note, ref }));
+
+  // NO `tr`. It used to carry DDP<flat><period>, and it was doing damage:
+  //
+  //   * NPCI's linking spec makes `tr` "mandatory for merchant transactions".
+  //     Sending it WITHOUT the merchant code `mc` describes a P2M payment that
+  //     is missing half its fields, and PSP apps answer a payload they cannot
+  //     classify with a generic refusal — which from a browser looks like the
+  //     app simply declining to open.
+  //   * It was derived from flat and period, so every retry of the same bill
+  //     reused the same reference. A repeated `tr` is what duplicate detection
+  //     exists to catch.
+  //
+  // Nothing in this codebase ever read it back: reconciliation matches on the
+  // note above and on the UTR lifted from the payment screenshot. So it was
+  // pure liability, and this is a P2P transfer to the association's own VPA —
+  // which is what it should have been described as all along. If the RWA ever
+  // registers as a merchant, `tr` comes back WITH `mc`, together.
+  const qs = queryString(buildUpiParams({ vpa, payee, amount, note }));
 
   const links = {
+    // The implicit link, and on Android the one to try FIRST. NPCI's own flow
+    // is "hand `upi://pay` to the OS and let it offer every PSP app installed";
+    // Paytm's integration guide says the same for mobile web. Addressing one
+    // package is an optimisation on top of that, and this file previously
+    // shipped only the optimisation — so when it was refused, Android had no
+    // route left at all.
     generic: `upi://pay?${qs}`,
     qr: `upi://pay?${qs}`,
     // Chrome on Android hands custom schemes to the OS unevenly. An intent URI

@@ -4,7 +4,7 @@ Deferred deliberately. Everything here was raised, considered, and parked — no
 forgotten. Items keep their number for life so commit messages stay meaningful;
 the ORDER is priority, so the top of this file is what to do next.
 
-Reviewed 2026-08-09.
+Reviewed 2026-08-11.
 
 ---
 
@@ -124,6 +124,45 @@ inputmode="numeric"` — a digit keypad with no `+`. An owner with a foreign
 number cannot type their own login on a phone. Harmless so far because every
 stored number is `+91`; a text input fixes it in one line, and should not wait
 for the rest of this.
+
+## B19 — A pay link in the bill email
+
+Raised 2026-08-11. The idea was to put a `upi://` link in the body of the bill
+email so a resident taps once, straight from Gmail into their UPI app with the
+amount already filled. **The link half cannot be built. The email half should
+be, and is nearly free once W1 lands.**
+
+**Gmail deletes it.** Custom URL schemes are stripped from `href` during
+sanitisation, so the resident sees text that will not click. The known
+workaround stacks several `href` attributes hoping one survives the sanitiser,
+which is invalid HTML that other clients render their own way. That alone ends
+the `upi://` version, before any argument about whether it is a good idea.
+
+**And it would not fire if it arrived.** A tap still asks Android to resolve
+`upi://`, which is the thing that already does not work — see STATE.md, "The
+Android payment failure". Email changes nothing about resolution and usually
+makes it worse, since email links open in an in-app WebView, which refuses
+custom schemes more readily than Chrome.
+
+**The phishing objection was raised and is weaker than it first looks.** UPI
+resolves the payee from the registry and shows the NAME on the confirmation
+screen, so a spoofed mail pointing at a scam VPA announces itself as somebody
+else before any money moves. Banks and utilities send payment links routinely.
+The idea is legitimate; it is the plumbing that refuses, not the ethics.
+
+**What to build instead**, when there is an account to send from:
+
+> Your July bill is ₹289, due the 10th. **[View and pay]**
+
+An ordinary `https` link to that resident's bill. Same single tap, and it lands
+somewhere that can adapt to the handset — the OS chooser, the QR, the copyable
+UPI ID, or the proof upload if they have already paid. It renders in every
+client, and forwarding it is harmless because the destination needs a login.
+
+`lib/mailer.js` and `lib/digest.js` already exist, so this is a template and a
+send, not a subsystem. **Blocked on W1** for the same reason `/forgot` is: there
+is no account to send from. Worth doing in the same sitting as W1 rather than
+as its own project.
 
 ## B17 — A status-first home, when there are four things to route between
 

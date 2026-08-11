@@ -124,12 +124,33 @@ function paySection(me) {
   const record = () => { api.payIntent(b.id).catch(() => {}); };
 
   const manual = me.pay.manual ? manualBlock(me.pay.manual, record) : null;
+  // Assigned further down, once the platform decides whether the QR is folded
+  // away or shown outright. Declared here so the failure handling can reach it.
+  let qrDetails = null;
+  const revealFallbacks = () => {
+    if (qrDetails) qrDetails.open = true;
+    if (manual) manual.open = true;
+  };
 
-  // Shown only when a tap demonstrably did nothing. See handoff().
+  // Shown when a tap demonstrably did nothing — either watched live by
+  // handoff(), or reported by the intent's own fallback landing back here with
+  // ?upi=blocked, which is the only signal that survives the navigation.
+  // WORDED FROM WHAT WE LEARNED, not from what it looks like. The phone is not
+  // broken and the resident has not done anything wrong: their UPI app declined
+  // to accept a payment link from a browser, which is the app's own decision and
+  // outside anybody's control here. Saying "no app opened" invites them to hunt
+  // for a setting that does not exist, so it names the two routes that cannot be
+  // refused instead.
   const stuck = el('div', { class: 'note note--warn', hidden: true },
-    'No UPI app opened. Use ',
-    el('strong', {}, 'Pay another way'),
-    ' below — copy the UPI ID into your own app.');
+    'Your UPI app did not accept the payment link — some apps refuse links from a browser. ',
+    el('strong', {}, 'Scan the QR'),
+    ' or ',
+    el('strong', {}, 'copy the UPI ID'),
+    ' below. Both always work.');
+
+  // Chrome came back here instead of opening an app. Read now, ACTED ON at the
+  // end of this function: the fallbacks it opens do not exist yet.
+  const blocked = new URLSearchParams(location.search).get('upi') === 'blocked';
 
   /**
    * Wrap a pay link so a tap that goes nowhere says so.
@@ -153,20 +174,36 @@ function paySection(me) {
       for (const [t, e] of events) t.removeEventListener(e, mark);
       if (handedOff || document.visibilityState === 'hidden') return;
       stuck.hidden = false;
-      if (manual) manual.open = true;
+      revealFallbacks();
       stuck.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }, 1600);
   };
 
   if (target === 'ios' || target === 'android') {
-    // Neither platform can be trusted to produce a chooser: iOS has none at
-    // all, and on Android the chooser for an unaddressed `upi://` is exactly
-    // what fails to appear. So the apps are named, and each link addresses one
-    // app directly — on Android by package, which degrades to that app's Play
-    // Store page rather than to silence.
+    // ANDROID LEADS WITH THE PLAIN `upi://` LINK, and that is a reversal.
+    //
+    // This screen used to offer package-addressed intents ONLY, on the theory
+    // that the OS chooser for an unaddressed `upi://` does not reliably appear.
+    // But the implicit link is the mechanism NPCI defines and the one Paytm's
+    // own m-web guide describes — "invokes all the UPI PSP Apps on the device"
+    // — and making it the fallback rather than the first attempt left Android
+    // with a single route. When that route was refused, every button on the
+    // page failed at once, which is the bug that was reported.
+    //
+    // So: the chooser first, the named apps underneath for anyone whose device
+    // does not offer one. iOS keeps per-app schemes because it genuinely has no
+    // chooser to fall back on.
+    if (target === 'android') {
+      block.append(
+        el('a', { class: 'btn btn--block btn--lg', href: links.generic, onclick: handoff },
+          `Pay ${money(b.total)}`),
+        el('p', { class: 'helper' }, 'Opens your UPI app'));
+    }
+
     const hrefFor = (key) => (target === 'ios' ? links[key] : links.androidApps?.[key]);
     block.append(
-      el('p', { class: 'label' }, 'Choose your UPI app'),
+      el('p', { class: 'label' },
+        target === 'android' ? 'Or choose your app' : 'Choose your UPI app'),
       el('div', { class: 'pay-apps' },
         ...UPI_APPS.filter((app) => hrefFor(app.key)).map((app) =>
           el('a', { class: 'pay-app', href: hrefFor(app.key), onclick: handoff },
@@ -177,12 +214,6 @@ function paySection(me) {
             appMark(app),
             app.label)))
     );
-    if (target === 'android') {
-      block.append(
-        el('p', { style: 'text-align:center;margin-top:var(--s-3)' },
-          el('a', { class: 'linkish', href: links.intent ?? links.generic, onclick: handoff },
-            `Pay ${money(b.total)} with another UPI app`)));
-    }
   } else {
     block.append(
       el('a', { class: 'btn btn--block btn--lg', href: links.generic, onclick: handoff },
@@ -193,14 +224,30 @@ function paySection(me) {
 
   block.append(stuck);
 
+  const canvas = el('canvas', {
+    id: 'qr', role: 'img',
+    'aria-label': `UPI payment QR code for ${money(b.total)} to DD Diamond Park RWA`,
+  });
+  const qrBox = el('div', { style: 'margin-top:var(--s-4);text-align:center' }, canvas);
+
   if (target === 'desktop') {
-    const canvas = el('canvas', {
-      id: 'qr', role: 'img',
-      'aria-label': `UPI payment QR code for ${money(b.total)} to DD Diamond Park RWA`,
-    });
-    block.append(el('div', { style: 'margin-top:var(--s-4);text-align:center' }, canvas));
-    drawQr(canvas, links.qr, { target: 240 });
+    block.append(qrBox);
+  } else {
+    // ON A PHONE TOO, folded away. The QR is the one route that cannot be
+    // refused by a scheme handler: every UPI app has a scanner, and a resident
+    // whose taps go nowhere can screenshot this and scan it from their gallery,
+    // or have someone else scan it. It is behind a summary because it is the
+    // third thing to try, not the first — and `qrDetails` exists so that a
+    // failed handoff can open it, since the warning tells them to scan it and
+    // pointing at something folded shut would be its own small betrayal.
+    qrDetails = el('details', { class: 'manual' },
+      el('summary', {}, 'Show QR code'),
+      el('p', { class: 'small muted' },
+        'Scan with any UPI app — or screenshot it and scan from your gallery.'),
+      qrBox);
+    block.append(qrDetails);
   }
+  drawQr(canvas, links.qr, { target: 240 });
 
   if (manual) {
     block.append(manual);
@@ -216,6 +263,17 @@ function paySection(me) {
     el('p', { style: 'text-align:center;margin-top:var(--s-3)' },
       el('a', { class: 'linkish', href: '/proof' }, 'Already paid? Upload screenshot'))
   );
+
+  // Now that the QR and the manual details exist, a handoff that bounced back
+  // here can open them. The resident has just watched the page appear to reload
+  // for no reason; this is the only explanation they will get.
+  if (blocked) {
+    stuck.hidden = false;
+    revealFallbacks();
+    // The flag has done its job. Left in the URL, a later refresh would accuse
+    // the app of a failure that already happened.
+    history.replaceState(null, '', `${location.pathname}#pay-help`);
+  }
 
   return block;
 }

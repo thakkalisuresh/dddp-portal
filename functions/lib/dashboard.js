@@ -127,10 +127,17 @@ export async function dashboardPayload(env, subject, userAgent = '', origin = ''
         amount: bill.total,
         flat,
         period: bill.period,
-        // Where Chrome goes when the intent resolves to nothing. Back to the
-        // dashboard with the manual details already open — the resident lands
-        // somewhere that explains itself instead of on a page that did not move.
-        fallbackUrl: origin ? `${origin}/dashboard#pay-help` : undefined,
+        // Where Chrome goes when the intent resolves to nothing.
+        //
+        // THE QUERY PARAMETER IS THE WHOLE POINT. This used to be a bare
+        // /dashboard#pay-help, which meant a refused handoff navigated to the
+        // page the resident was already on: indistinguishable from a reload,
+        // and reported as exactly that. Worse, the "no app opened" warning is
+        // revealed by a timer after the tap, and the navigation destroys the
+        // timer — so the one thing built to explain the failure was the one
+        // thing the failure switched off. The flag survives the navigation and
+        // the page can say what happened.
+        fallbackUrl: origin ? `${origin}/dashboard?upi=blocked#pay-help` : undefined,
       }),
       // Always sent, on every platform. A deep link that does nothing is the
       // commonest failure here — no UPI app on iOS, or Chrome declining the
