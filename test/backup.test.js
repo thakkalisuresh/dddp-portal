@@ -287,7 +287,7 @@ describe('the proof images go too', () => {
     };
     const out = await backupProofs(env, 'tok');
     expect(limit).toBe(PROOF_BATCH);
-    expect(out).toEqual({ copied: 0, failed: 0, remaining: 0 });
+    expect(out).toEqual({ copied: 0, failed: 0 });
   });
 
   it('touches Drive not at all when there is nothing to copy', async () => {
