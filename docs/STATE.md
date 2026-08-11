@@ -318,6 +318,18 @@ Things I could not check and someone should:
   because sending it without `mc` describes a merchant transaction the payload
   cannot substantiate, which PSP apps refuse. One call to South Indian Bank.
 
+  **Partial evidence as of 2026-08-11: Google Pay lists this payee under
+  "Businesses."** Together with the `qr.` prefix, which South Indian Bank
+  issues for collect/QR merchant accounts, and with the payee name resolving
+  from the registry, that points at a genuine merchant registration.
+
+  It is not enough to act on, for two reasons. It is a PSP's own UI grouping
+  rather than the registry answering, so it is a strong hint about how one app
+  classifies the payee, not a fact about how the account is registered. And it
+  yields **no MCC at all** — which is the half that matters, because `tr` only
+  returns alongside `mc`, and `mc` needs the actual category code. The call to
+  the bank is still the thing that closes this.
+
 **`qr.ddwelfare@sib` is a live VPA** and no longer belongs on this list, as of
 2026-08-11: Google Pay resolved it from the portal's own QR and displayed the
 payee as DD Diamond Park RWA. A UPI app only shows a payee name after the
