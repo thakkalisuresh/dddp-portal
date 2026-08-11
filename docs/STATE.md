@@ -97,6 +97,15 @@ nothing. No Google credentials. `doctor` reports `MAIL-NOT-CONFIGURED`.
 Google secrets have ever been set. The only backups that exist were taken by
 hand during development. Same credentials as email, so one setup fixes both.
 
+`npm run google:auth` (2026-08-11) does the consent round-trip and prints the
+secret commands for both deployments, so W1 is now a browser tab and four
+commands rather than a research task. Two things it cannot do for you: the
+consent screen must be **published to Production** — a Testing-mode refresh
+token expires in seven days and the backup then stops silently — and the
+secrets must go on the **cron Worker as well as Pages**, because the 3am upload
+runs there and only there. Doctor used to check Pages alone and would have
+reported an all-clear on a backup that never ran; it now names each half.
+
 ## Never tested against real data
 
 This is the honest gap, and it is the whole of it.

@@ -399,28 +399,69 @@ export function checkDigest({ lastDigestAt, remote, now = new Date() }) {
  * path. What this protects is the other promise: that the committee can open
  * the data in Excel without a developer, which is the mistake this whole
  * project exists to not repeat.
+ *
+ * Configuration is asked of both deployments, not one. Two Workers over one
+ * database means secrets set on Pages never reach the cron Worker, and it is
+ * the cron Worker that runs the upload — so the half-configured state reads as
+ * healthy from inside the site while nothing at all is being written.
  */
 export function checkBackup({ lastBackupAt, driveConfigured, remote, now = new Date() }) {
   if (!remote) return [];
-  if (!driveConfigured) {
+
+  // Either shape, for the same reason as alerting: god mode can only see its
+  // own bindings and answers with a boolean, while the CLI can ask both
+  // deployments and answers with detail.
+  const d = typeof driveConfigured === 'object' && driveConfigured !== null
+    ? driveConfigured
+    : { cron: driveConfigured, pages: driveConfigured };
+
+  if (!d.cron && !d.pages) {
     return [finding('warn', 'BACKUP-NOT-CONFIGURED', 'Nothing is being backed up off-site',
       'runBackup returns early every night. The only copies of this building\'s '
       + 'billing history are in D1. Needs GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, '
       + 'GOOGLE_REFRESH_TOKEN and GOOGLE_BACKUP_FOLDER_ID.')];
   }
+  if (!d.cron) {
+    // The worst of the three states, and the one that looks best from inside
+    // the site: the Export tab reports a valid token and a reachable folder,
+    // because Pages has the secrets — but the backup runs on the cron Worker,
+    // which does not, so it returns early every night and writes nothing.
+    return [finding('warn', 'BACKUP-CRON-UNCONFIGURED',
+      'The backup secrets are on Pages but not on the cron Worker',
+      'Nothing is being backed up. The Export tab will say the token is valid, '
+      + 'because that check runs on Pages; the nightly upload runs on the cron '
+      + 'Worker and returns early. Set the four GOOGLE_ secrets with '
+      + '`wrangler secret put` as well as `wrangler pages secret put`.')];
+  }
+  // Not a return: the copies are still being written, so the watermark below
+  // remains the question worth asking. This only says the report is blind.
+  const out = [];
+  if (!d.pages) {
+    // Harmless to the copies themselves, which is exactly why it is worth
+    // naming separately: the backup works and the page that reports on it does
+    // not, so the committee is told there is no backup when there is one.
+    out.push(finding('info', 'BACKUP-PAGES-UNCONFIGURED',
+      'The backup runs, but the Export tab cannot see it',
+      'The cron Worker has the secrets and is writing nightly copies. Pages '
+      + 'does not, so the admin Export tab reports "not set up yet" to a '
+      + 'committee whose backup is fine. Add the same four secrets with '
+      + '`wrangler pages secret put --project-name diamondpark`.'));
+  }
+
   if (!lastBackupAt) {
-    return [finding('info', 'BACKUP-NEVER', 'The nightly backup has not run yet',
-      'Expected until the first 3am run after configuring it.')];
+    out.push(finding('info', 'BACKUP-NEVER', 'The nightly backup has not run yet',
+      'Expected until the first 3am run after configuring it.'));
+    return out;
   }
   const hours = (now - new Date(lastBackupAt)) / 3600_000;
   if (hours > 48) {
-    return [finding('warn', 'BACKUP-STALE', 'The nightly backup has not run for over 48 hours',
+    out.push(finding('warn', 'BACKUP-STALE', 'The nightly backup has not run for over 48 hours',
       'Check the refresh token first — one issued in OAuth "Testing" mode expires '
       + 'after seven days and the upload then fails silently. The watermark only '
       + 'advances on an upload that returned.',
-      [{ lastRun: lastBackupAt, hoursAgo: Math.round(hours) }])];
+      [{ lastRun: lastBackupAt, hoursAgo: Math.round(hours) }]));
   }
-  return [];
+  return out;
 }
 
 /** Things that are only wrong in production. */

@@ -19,6 +19,7 @@
     "deploy:all": "npm run deploy:pages && npm run deploy:cron",
     "doctor": "node scripts/doctor.mjs",
     "telegram:test": "node scripts/telegram-test.mjs",
+    "google:auth": "node scripts/google-oauth.mjs",
     "fndoc": "node scripts/gen-function-docs.mjs"
   },
   "devDependencies": {

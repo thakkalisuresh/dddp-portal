@@ -51,7 +51,9 @@ Unblocks **two** things, both built and inert:
 
 Needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`,
 `MAIL_FROM`, plus `GOOGLE_BACKUP_FOLDER_ID` for the backup. The refresh token
-needs an OAuth consent round-trip, which wants a terminal rather than a phone.
+needs an OAuth consent round-trip, which wants a terminal rather than a phone —
+`npm run google:auth` is that terminal step, and its header lists what to set up
+in the Google console first. Set the secrets on **both** deployments; see B12.
 
 ## W2 — Emails for Joy, Mukesh and Hari
 
@@ -282,9 +284,37 @@ at least visible while it lasts. Also removed: the Export tab used to state
 flatly that "a copy is also sent to the committee Drive folder every night",
 which has never once been true.
 
-What remains is entirely W1: set the four secrets, publish the OAuth consent
-screen to Production, then confirm the watermark advances after the first 3am
-run rather than trusting that it did.
+**The terminal half is now written (2026-08-11).** `npm run google:auth` does
+the consent round-trip end to end: it mints the refresh token, writes one small
+real file into the Drive folder — which is the only way to find out before 3am
+that the folder id is wrong, or the account cannot write to it, or the Drive API
+was never enabled — and prints the commands that put the five secrets on both
+deployments. Nothing is written to disk; `wrangler secret put` prompts, so the
+token never reaches shell history either.
+
+**Doctor was checking the wrong deployment.** `driveSecrets()` asked Pages only,
+because it was copied from the mail check, where Pages is the whole answer —
+mail sends from the request path. The backup does not: it runs from the cron
+Worker. Secrets set only on Pages would have produced an all-clear from doctor
+AND a healthy "token is valid" line in the Export tab, while `runBackup`
+returned early every night. Both deployments are now asked, and the two halves
+are separate findings — BACKUP-CRON-UNCONFIGURED (warn: nothing is being
+written, and everything says otherwise) and BACKUP-PAGES-UNCONFIGURED (info: the
+copies are fine, the tab reporting on them is blind).
+
+What remains is entirely W1, and is now four commands and a browser tab:
+
+1. The association Gmail, a Google Cloud project, Drive + Gmail APIs enabled,
+   and a **Desktop app** OAuth client. Details in the header of
+   `scripts/google-oauth.mjs`.
+2. **Publish the consent screen to Production.** Not Testing — seven days and
+   the token dies, silently. No code can tell the two apart; the tokens are
+   identical. Doctor catches it the day after, which is a smoke alarm.
+3. `npm run google:auth`, then the printed `wrangler secret put` lines, then
+   `npm run deploy:all`.
+4. `npm run doctor` — BACKUP-NOT-CONFIGURED should become BACKUP-NEVER the same
+   day, and BACKUP-NEVER should be gone the morning after. That second check is
+   the one that matters: it is the only evidence a file actually landed.
 
 ---
 
