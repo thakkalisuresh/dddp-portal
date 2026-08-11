@@ -2,9 +2,16 @@
  * Sending email, via the Gmail API.
  *
  * Gmail rather than a mail service because the OAuth plumbing already exists
- * for the nightly Drive backup — same client, same refresh-token exchange, one
- * extra scope (`gmail.send`). A new provider would mean a new account, a new
- * key, and a second thing to notice had stopped working.
+ * for the nightly Drive backup — same refresh-token exchange, one extra scope
+ * (`gmail.send`). A new provider would mean a new account, a new key, and a
+ * second thing to notice had stopped working.
+ *
+ * Same plumbing, not necessarily the same account. This path deliberately uses
+ * the SHARED `GOOGLE_` credentials, which belong to the association: a reset
+ * code arriving from a committee member's personal address is a worse email
+ * than one arriving from the association's, and it changes whose inbox the
+ * replies land in. The backup overrides these with `GOOGLE_BACKUP_*` and is
+ * free to be somebody's personal Drive; see backupCredentials() in backup.js.
  *
  * Everything funnels through sendEmail() so swapping providers later is one
  * function, not a search. If that day comes, the free tiers worth looking at

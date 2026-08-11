@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   toCsv, toCsvValue, stripSecrets, bundle, cutoffFor, backupFilename,
-  driveConfigured, TABLES, RETENTION_DAYS,
+  driveConfigured, backupCredentials, sharedCredentials, TABLES, RETENTION_DAYS,
 } from '../functions/lib/backup.js';
+import { mailConfigured } from '../functions/lib/mailer.js';
 
 describe('CSV that survives real resident data', () => {
   it('quotes a value containing a comma', () => {
@@ -120,5 +121,47 @@ describe('drive configuration', () => {
 
   it('names the file by date, so a folder sorts chronologically', () => {
     expect(backupFilename(new Date('2026-08-07T22:00:00Z'))).toBe('diamond-park-2026-08-07.csv');
+  });
+
+  // The backup writes to a committee member's personal Drive, because files
+  // are charged to the account that creates them and the association's own
+  // quota is for the association's own documents. The reset emails must still
+  // come from the association.
+  describe('the backup can run under its own account', () => {
+    const split = {
+      ...full,
+      GOOGLE_BACKUP_CLIENT_ID: 'A', GOOGLE_BACKUP_CLIENT_SECRET: 'B',
+      GOOGLE_BACKUP_REFRESH_TOKEN: 'C',
+    };
+
+    it('prefers the backup credentials when they are set', () => {
+      expect(backupCredentials(split))
+        .toEqual({ clientId: 'A', clientSecret: 'B', refreshToken: 'C' });
+    });
+
+    it('falls back to the shared ones, so one account is still a valid setup', () => {
+      expect(backupCredentials(full))
+        .toEqual({ clientId: 'a', clientSecret: 'b', refreshToken: 'c' });
+    });
+
+    it('leaves the mail path on the association account regardless', () => {
+      expect(sharedCredentials(split))
+        .toEqual({ clientId: 'a', clientSecret: 'b', refreshToken: 'c' });
+    });
+
+    it('is configured on the backup credentials alone, without the shared set', () => {
+      const backupOnly = {
+        GOOGLE_BACKUP_CLIENT_ID: 'A', GOOGLE_BACKUP_CLIENT_SECRET: 'B',
+        GOOGLE_BACKUP_REFRESH_TOKEN: 'C', GOOGLE_BACKUP_FOLDER_ID: 'd',
+      };
+      expect(driveConfigured(backupOnly)).toBe(true);
+      // Mail is a separate question with a separate answer, and this must not
+      // borrow the backup's account to answer it.
+      expect(mailConfigured({ ...backupOnly, MAIL_FROM: 'x@y.z' })).toBe(false);
+    });
+
+    it('still needs a folder, whichever account is used', () => {
+      expect(driveConfigured({ ...split, GOOGLE_BACKUP_FOLDER_ID: undefined })).toBe(false);
+    });
   });
 });

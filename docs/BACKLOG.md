@@ -43,15 +43,21 @@ does not come back. One message, and what they find is their own bill.
 
 ## W1 — A Gmail account and its OAuth credentials
 
-Unblocks **two** things, both built and inert:
+Unblocks `/forgot` — self-service password reset, live, accepting requests and
+sending nothing. `npm run doctor` reports MAIL-NOT-CONFIGURED.
 
-* `/forgot` — self-service password reset. Live, accepts requests, sends
-  nothing. `npm run doctor` reports MAIL-NOT-CONFIGURED.
-* The **nightly Drive backup**, which has never run once (B12).
+It **no longer blocks the nightly backup** (B12), as of 2026-08-11: the backup
+authenticates as a committee member's personal Google account, so it needs no
+association Gmail. Sharing one account was always the reason W1 blocked two
+things at once.
 
-Needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`,
-`MAIL_FROM`, plus `GOOGLE_BACKUP_FOLDER_ID` for the backup. The refresh token
-needs an OAuth consent round-trip, which wants a terminal rather than a phone.
+Needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` and
+`MAIL_FROM`, from an account that belongs to the association — 99 residents will
+read that From line, and their replies have to reach the committee. The refresh
+token needs an OAuth consent round-trip, which wants a terminal rather than a
+phone: `npm run google:auth -- mail` is that step, and its header lists what to
+set up in the Google console first. Set the secrets on **both** deployments;
+see B12.
 
 ## W2 — Emails for Joy, Mukesh and Hari
 
@@ -282,9 +288,63 @@ at least visible while it lasts. Also removed: the Export tab used to state
 flatly that "a copy is also sent to the committee Drive folder every night",
 which has never once been true.
 
-What remains is entirely W1: set the four secrets, publish the OAuth consent
-screen to Production, then confirm the watermark advances after the first 3am
-run rather than trusting that it did.
+**The terminal half is now written (2026-08-11).** `npm run google:auth -- backup`
+does the consent round-trip end to end: it mints the refresh token, writes one
+small real file into the Drive folder — which is the only way to find out before
+3am that the folder id is wrong, or the account cannot write to it, or the Drive
+API was never enabled — and prints the commands that put the secrets on both
+deployments. Nothing is written to disk; `wrangler secret put` prompts, so the
+token never reaches shell history either.
+
+**The backup runs under its own Google account** (decided 2026-08-11). Drive
+charges a file to the account that created it, so the account that authenticates
+is the account whose quota fills; the committee would rather spend its 15 GB on
+its own documents than on this. `GOOGLE_BACKUP_CLIENT_ID`,
+`GOOGLE_BACKUP_CLIENT_SECRET` and `GOOGLE_BACKUP_REFRESH_TOKEN` override the
+shared trio for the upload path only, and fall back to it when unset — one
+account remains a valid and simpler setup.
+
+The mail path deliberately does NOT follow. `/forgot` emails 99 residents their
+reset codes, and that From line should read as the association rather than as
+whichever member set this up; the replies should reach the committee too. So
+`sendEmail` stays on the shared credentials and only `uploadToDrive` and
+`backupHealth` take the override.
+
+Two things this costs, and they are worth writing down rather than discovering:
+the export carries every resident's name, mobile, email and payment history
+(never passwords — `NEVER_EXPORT`), so the holder is keeping the association's
+records personally; and when that person leaves the committee this is an account
+to replace, not a folder to move. Size is not among the costs — production D1 is
+639 kB entire, so a nightly bundle is a few hundred kB and a year is well under
+200 MB.
+
+**Doctor was checking the wrong deployment.** `driveSecrets()` asked Pages only,
+because it was copied from the mail check, where Pages is the whole answer —
+mail sends from the request path. The backup does not: it runs from the cron
+Worker. Secrets set only on Pages would have produced an all-clear from doctor
+AND a healthy "token is valid" line in the Export tab, while `runBackup`
+returned early every night. Both deployments are now asked, and the two halves
+are separate findings — BACKUP-CRON-UNCONFIGURED (warn: nothing is being
+written, and everything says otherwise) and BACKUP-PAGES-UNCONFIGURED (info: the
+copies are fine, the tab reporting on them is blind).
+
+What remains is a browser tab and a few commands, and the backup half no longer
+waits on the association Gmail at all:
+
+1. In the **personal** account: a Google Cloud project, the Drive API enabled, a
+   **Desktop app** OAuth client, and a folder for the backups. Details in the
+   header of `scripts/google-oauth.mjs`.
+2. **Publish the consent screen to Production.** Not Testing — seven days and
+   the token dies, silently. No code can tell the two apart; the tokens are
+   identical. Doctor catches it the day after, which is a smoke alarm.
+3. `npm run google:auth -- backup`, then the printed `wrangler secret put` lines
+   — on **both** deployments — then `npm run deploy:all`.
+4. `npm run doctor` — BACKUP-NOT-CONFIGURED should become BACKUP-NEVER the same
+   day, and BACKUP-NEVER should be gone the morning after. That second check is
+   the one that matters: it is the only evidence a file actually landed.
+
+`/forgot` is still blocked on W1 and the association Gmail, which is now a
+separate errand: `npm run google:auth -- mail`.
 
 ---
 

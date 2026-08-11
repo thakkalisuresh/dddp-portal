@@ -111,9 +111,44 @@ export async function pruneOldRows(env, now = Date.now()) {
 
 /* ── Google Drive ──────────────────────────────────────────────────────── */
 
+/**
+ * Which Google account the upload authenticates as.
+ *
+ * Two accounts, not one, because the two jobs sharing these credentials point
+ * in opposite directions. `/forgot` emails 99 residents and must come from an
+ * address that says "the association"; the backup writes files, and files are
+ * owned by whoever creates them, so that account is the one holding the copies.
+ * The committee wanted its own Drive quota for its own documents, and the
+ * treasurer's off-site copy is deliberately somewhere else.
+ *
+ * The `GOOGLE_BACKUP_*` trio therefore overrides the shared one for the upload
+ * path only. Unset, it falls back — a single account still works and is still
+ * the simpler setup, which is what the fallback is protecting.
+ *
+ * The consequence to know: whoever consents here holds every resident's name,
+ * mobile, email and payment history in their personal Drive. That is a person
+ * to replace, not a folder to move, when they leave the committee.
+ */
+export function backupCredentials(env) {
+  return {
+    clientId: env.GOOGLE_BACKUP_CLIENT_ID || env.GOOGLE_CLIENT_ID,
+    clientSecret: env.GOOGLE_BACKUP_CLIENT_SECRET || env.GOOGLE_CLIENT_SECRET,
+    refreshToken: env.GOOGLE_BACKUP_REFRESH_TOKEN || env.GOOGLE_REFRESH_TOKEN,
+  };
+}
+
+/** The shared credentials, which is what the mail path uses. */
+export function sharedCredentials(env) {
+  return {
+    clientId: env.GOOGLE_CLIENT_ID,
+    clientSecret: env.GOOGLE_CLIENT_SECRET,
+    refreshToken: env.GOOGLE_REFRESH_TOKEN,
+  };
+}
+
 export function driveConfigured(env) {
-  return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
-    && env.GOOGLE_REFRESH_TOKEN && env.GOOGLE_BACKUP_FOLDER_ID);
+  const { clientId, clientSecret, refreshToken } = backupCredentials(env);
+  return Boolean(clientId && clientSecret && refreshToken && env.GOOGLE_BACKUP_FOLDER_ID);
 }
 
 /**
@@ -121,15 +156,21 @@ export function driveConfigured(env) {
  * expires after seven days. That has bitten this author before: the backup
  * simply stops, silently, and nobody notices until they need it. Publish the
  * consent screen to Production, and rely on the health check below.
+ *
+ * Takes the credentials rather than reading them off env, because there are now
+ * two sets and which one is meant is the caller's business, not this
+ * function's. Defaulting to the shared set keeps the mail path unchanged; a
+ * default of "whatever the backup uses" would have silently mailed residents
+ * from a committee member's personal address the day the two diverged.
  */
-export async function refreshAccessToken(env) {
+export async function refreshAccessToken(env, credentials = sharedCredentials(env)) {
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      client_id: env.GOOGLE_CLIENT_ID,
-      client_secret: env.GOOGLE_CLIENT_SECRET,
-      refresh_token: env.GOOGLE_REFRESH_TOKEN,
+      client_id: credentials.clientId,
+      client_secret: credentials.clientSecret,
+      refresh_token: credentials.refreshToken,
       grant_type: 'refresh_token',
     }),
   });
@@ -140,7 +181,7 @@ export async function refreshAccessToken(env) {
 }
 
 export async function uploadToDrive(env, { name, content, mimeType = 'text/csv' }) {
-  const token = await refreshAccessToken(env);
+  const token = await refreshAccessToken(env, backupCredentials(env));
   const boundary = `ddp${crypto.randomUUID()}`;
   const metadata = { name, parents: [env.GOOGLE_BACKUP_FOLDER_ID] };
 
@@ -221,7 +262,9 @@ export async function backupHealth(env) {
 
   if (!driveConfigured(env)) return { ok: false, reason: 'not-configured', lastBackupAt };
   try {
-    await refreshAccessToken(env);
+    // The backup's own credentials, not the shared ones: a valid mail token
+    // says nothing about whether tonight's upload can authenticate.
+    await refreshAccessToken(env, backupCredentials(env));
     return { ok: true, lastBackupAt };
   } catch (err) {
     return { ok: false, reason: err?.code ?? 'token-refresh-failed', lastBackupAt };

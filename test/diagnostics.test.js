@@ -244,6 +244,52 @@ describe('the backup is itself checked', () => {
   it('stays out of the way locally — a laptop has no off-site folder', () => {
     expect(checkBackup({ driveConfigured: false, remote: false, now })).toEqual([]);
   });
+
+  // Two Workers over one database. Secrets set on Pages do not reach the cron
+  // Worker, and it is the cron Worker that runs the upload — so this state
+  // looks healthy from inside the site while nothing is being written at all.
+  it('names the half that matters when only Pages has the secrets', () => {
+    const f = checkBackup({
+      driveConfigured: { cron: false, pages: true }, remote: true, now });
+    expect(f[0].id).toBe('BACKUP-CRON-UNCONFIGURED');
+    expect(f[0].severity).toBe('warn');
+  });
+
+  it('does not call it unconfigured when one of the two deployments has it', () => {
+    const ids = checkBackup({
+      driveConfigured: { cron: false, pages: true }, remote: true, now }).map((x) => x.id);
+    expect(ids).not.toContain('BACKUP-NOT-CONFIGURED');
+  });
+
+  it('still reports nothing at all when neither deployment has the secrets', () => {
+    const f = checkBackup({
+      driveConfigured: { cron: false, pages: false }, remote: true, now });
+    expect(f[0].id).toBe('BACKUP-NOT-CONFIGURED');
+  });
+
+  it('says the report is blind, not the backup broken, when only the cron has it', () => {
+    const f = checkBackup({
+      lastBackupAt: '2026-08-08T03:00:00Z',
+      driveConfigured: { cron: true, pages: false }, remote: true, now });
+    expect(f[0].id).toBe('BACKUP-PAGES-UNCONFIGURED');
+    expect(f[0].severity).toBe('info');
+  });
+
+  // The blind-report note must not swallow the question it sits next to: a
+  // backup that stopped three days ago is still the more urgent fact.
+  it('reports staleness even while the Export tab cannot see the backup', () => {
+    const ids = checkBackup({
+      lastBackupAt: '2026-08-05T03:00:00Z',
+      driveConfigured: { cron: true, pages: false }, remote: true, now }).map((x) => x.id);
+    expect(ids).toEqual(['BACKUP-PAGES-UNCONFIGURED', 'BACKUP-STALE']);
+  });
+
+  it('accepts the boolean god mode sends, which sees only its own bindings', () => {
+    expect(checkBackup({
+      lastBackupAt: '2026-08-08T03:00:00Z', driveConfigured: true, remote: true, now })).toEqual([]);
+    expect(checkBackup({ driveConfigured: false, remote: true, now })[0].id)
+      .toBe('BACKUP-NOT-CONFIGURED');
+  });
 });
 
 describe('an unreadable table is not an empty one', () => {

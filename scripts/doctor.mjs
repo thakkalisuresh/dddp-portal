@@ -98,16 +98,38 @@ function mailSecrets() {
  * The backup needs one secret the mail path does not — the folder to write
  * into — so this cannot just reuse mailSecrets(). Asked of Cloudflare rather
  * than of this shell, for the same reason as the others.
+ *
+ * Asked of BOTH deployments, unlike mail. Mail sends from the request path, so
+ * Pages alone is the whole answer there; the backup runs from the 3am cron,
+ * which lives on the Worker. Checking Pages only — which this did — would have
+ * reported a healthy backup to someone who had configured the one deployment
+ * that never runs it, and the Export tab would have agreed, because that check
+ * also runs on Pages.
  */
 function driveSecrets() {
-  try {
-    const out = execFileSync('npx', ['wrangler', 'pages', 'secret', 'list'],
-      { encoding: 'utf8', cwd: join(process.cwd(), 'pages'), stdio: ['ignore', 'pipe', 'pipe'] });
-    return ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN',
-            'GOOGLE_BACKUP_FOLDER_ID'].every((n) => out.includes(n));
-  } catch {
-    return false;
-  }
+  // Either credential set satisfies each of the three, because the backup runs
+  // under its own Google account when GOOGLE_BACKUP_* is set and falls back to
+  // the shared one when it is not. Requiring the shared names outright would
+  // report "not configured" against a correctly split setup.
+  const EITHER = [
+    ['GOOGLE_BACKUP_CLIENT_ID', 'GOOGLE_CLIENT_ID'],
+    ['GOOGLE_BACKUP_CLIENT_SECRET', 'GOOGLE_CLIENT_SECRET'],
+    ['GOOGLE_BACKUP_REFRESH_TOKEN', 'GOOGLE_REFRESH_TOKEN'],
+    ['GOOGLE_BACKUP_FOLDER_ID'],
+  ];
+  const has = (args, cwd) => {
+    try {
+      const out = execFileSync('npx', ['wrangler', ...args],
+        { encoding: 'utf8', cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      return EITHER.every((names) => names.some((n) => out.includes(n)));
+    } catch {
+      return false;
+    }
+  };
+  return {
+    cron: has(['secret', 'list'], process.cwd()),
+    pages: has(['pages', 'secret', 'list'], join(process.cwd(), 'pages')),
+  };
 }
 
 const main = () => {
@@ -149,7 +171,7 @@ const main = () => {
       alerting: local ? { cron: true, pages: true } : alertingSecrets(),
       // Same reasoning as alerting: ask Cloudflare, not this shell.
       mailConfigured: local ? true : mailSecrets(),
-      driveConfigured: local ? true : driveSecrets(),
+      driveConfigured: local ? { cron: true, pages: true } : driveSecrets(),
       remote: !local,
     },
   });
