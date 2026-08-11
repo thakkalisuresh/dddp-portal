@@ -450,6 +450,17 @@ export function checkBackup({ lastBackupAt, driveConfigured, remote, now = new D
       + '`wrangler pages secret put --project-name diamondpark`.'));
   }
 
+  if (d.committeeShared === false) {
+    // Sharing in Drive inherits downward. One folder shared with the committee
+    // is the roster shared with the committee, and it happens the moment
+    // somebody shares the parent to hand over the proof screenshots.
+    out.push(finding('warn', 'BACKUP-ONE-FOLDER',
+      'Proofs and the data export are in the same Drive folder',
+      'That folder cannot be shared with the committee without also sharing the '
+      + 'nightly CSV of every resident\'s name, mobile, email and payment '
+      + 'history. Make a second folder and set GOOGLE_COMMITTEE_FOLDER_ID to it.'));
+  }
+
   if (!lastBackupAt) {
     out.push(finding('info', 'BACKUP-NEVER', 'The nightly backup has not run yet',
       'Expected until the first 3am run after configuring it.'));

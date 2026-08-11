@@ -275,6 +275,35 @@ export function backupFilename(now = new Date()) {
   return `diamond-park-${now.toISOString().slice(0, 10)}.csv`;
 }
 
+/* ── the two folders ───────────────────────────────────────────────────── */
+
+/**
+ * Where the committee's own material goes, which is NOT where the backup goes.
+ *
+ * The backup folder holds the nightly CSV bundle: every resident's name, mobile,
+ * email and payment history in one file. It is a disaster copy, and the list of
+ * people who should be able to open it is short.
+ *
+ * This folder is the opposite — proof screenshots, notice attachments, the
+ * things a committee actually looks at — and is meant to be SHARED with the
+ * committee. Sharing is per-folder in Drive and inherits downward, so the only
+ * way to share one without the other is for them to be different folders. One
+ * folder with careful permissions inside it is the version that leaks the
+ * roster the first time somebody shares the parent.
+ *
+ * Falls back to the backup folder when unset, so nothing breaks before it is
+ * configured — but `npm run doctor` says so rather than letting the two quietly
+ * be the same place.
+ */
+export function committeeFolder(env) {
+  return env.GOOGLE_COMMITTEE_FOLDER_ID || env.GOOGLE_BACKUP_FOLDER_ID;
+}
+
+export function committeeFolderSeparate(env) {
+  return Boolean(env.GOOGLE_COMMITTEE_FOLDER_ID
+    && env.GOOGLE_COMMITTEE_FOLDER_ID !== env.GOOGLE_BACKUP_FOLDER_ID);
+}
+
 /* ── the proof images ──────────────────────────────────────────────────── */
 
 /**
@@ -338,7 +367,9 @@ export async function backupProofs(env, token, { limit = PROOF_BATCH } = {}) {
   const pending = results ?? [];
   if (!pending.length) return { copied: 0, failed: 0, remaining: 0 };
 
-  const root = await ensureFolder(env, token, { name: 'proofs' });
+  const root = await ensureFolder(env, token, {
+    name: 'proofs', parentId: committeeFolder(env),
+  });
   const periods = new Map();
   let copied = 0;
   let failed = 0;
@@ -375,6 +406,104 @@ export async function backupProofs(env, token, { limit = PROOF_BATCH } = {}) {
     }
   }
   return { copied, failed, remaining: Math.max(0, pending.length - copied) };
+}
+
+/* ── the notice attachments ────────────────────────────────────────────── */
+
+/**
+ * `0012-water-tank-cleaning` — id first so it is unique and sorts by age, title
+ * after so a human can find the thread without opening twelve folders.
+ *
+ * Truncated rather than full: notice titles run to a sentence, and a Drive
+ * folder called "0012-the-committee-has-decided-that-the-water-tank-on-block-b"
+ * is worse to read than the short one, not better.
+ */
+export function noticeFolderName({ id, title }) {
+  const slug = String(title ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 40)
+    .replace(/-$/, '');
+  return `${String(id).padStart(4, '0')}${slug ? `-${slug}` : ''}`;
+}
+
+/**
+ * Copy notice and comment attachments, the same way and for the same reason as
+ * the proofs.
+ *
+ * These are photographs of the building — a damp patch, a cracked beam — kept
+ * at full quality on purpose, because 0018 decided the evidence is the point.
+ * Evidence that exists in exactly one bucket is evidence with a single point of
+ * failure.
+ *
+ * A comment's attachment is filed under its NOTICE, not on its own: the thread
+ * is the unit anybody thinks in, and three photographs split across a notice
+ * folder and a comment folder is a thread nobody can reassemble.
+ *
+ * Thumbnails are skipped. They are made in the browser from the file that IS
+ * copied here, so a lost thumbnail costs a page render and nothing else.
+ */
+export async function backupAttachments(env, token, { limit = PROOF_BATCH } = {}) {
+  const { results } = await env.DB.prepare(
+    `SELECT a.id, a.r2_key, a.filename, a.content_type,
+            COALESCE(a.notice_id, c.notice_id) AS notice_id,
+            n.title AS notice_title
+       FROM attachments a
+       LEFT JOIN comments c ON c.id = a.comment_id
+       LEFT JOIN notices  n ON n.id = COALESCE(a.notice_id, c.notice_id)
+      WHERE a.r2_key IS NOT NULL
+        AND a.deleted_at IS NULL
+        AND a.backed_up_at IS NULL
+      ORDER BY a.id
+      LIMIT ?`
+  ).bind(limit).all();
+
+  const pending = results ?? [];
+  if (!pending.length) return { copied: 0, failed: 0 };
+
+  const root = await ensureFolder(env, token, {
+    name: 'notices', parentId: committeeFolder(env),
+  });
+  const folders = new Map();
+  let copied = 0;
+  let failed = 0;
+
+  for (const row of pending) {
+    try {
+      const object = await env.PROOFS.get(row.r2_key);
+      if (!object) { failed += 1; continue; }
+
+      const key = row.notice_id ?? 'orphaned';
+      if (!folders.has(key)) {
+        folders.set(key, await ensureFolder(env, token, {
+          name: row.notice_id
+            ? noticeFolderName({ id: row.notice_id, title: row.notice_title })
+            // A notice deleted out from under its attachment still leaves a
+            // file worth keeping. Somewhere obvious beats nowhere.
+            : 'orphaned',
+          parentId: root,
+        }));
+      }
+
+      await uploadToDrive(env, {
+        // The uploader's own filename, which is what the person who attached it
+        // will look for. Prefixed with the id because two residents photograph
+        // the same wall and both call it IMG_2081.jpg.
+        name: `${row.id}-${row.filename}`,
+        content: await object.arrayBuffer(),
+        mimeType: row.content_type || 'application/octet-stream',
+        parentId: folders.get(key),
+        token,
+      });
+      await env.DB.prepare('UPDATE attachments SET backed_up_at = ? WHERE id = ?')
+        .bind(new Date().toISOString(), row.id).run();
+      copied += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  return { copied, failed };
 }
 
 /** Watermark key. Mirrors `last_digest_at`, and for the same reason. */
@@ -421,16 +550,17 @@ export async function runBackup(env, ctx) {
     // bucket having a bad night must not make the night read as "no backup",
     // because that is the one signal anybody watches.
     let proofs = { copied: 0, failed: 0, remaining: 0 };
+    let attachments = { copied: 0, failed: 0 };
     try {
       proofs = await backupProofs(env, token);
+      attachments = await backupAttachments(env, token);
     } catch (err) {
       await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);
-      proofs = { copied: 0, failed: -1, remaining: -1 };
     }
 
     return {
       uploaded: uploaded.name, tables: Object.keys(files).length,
-      bytes: content.length, proofs,
+      bytes: content.length, proofs, attachments,
     };
   } catch (err) {
     await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);

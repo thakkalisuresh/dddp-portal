@@ -3,7 +3,8 @@ import {
   toCsv, toCsvValue, stripSecrets, bundle, cutoffFor, backupFilename,
   driveConfigured, backupCredentials, sharedCredentials, TABLES, RETENTION_DAYS,
   monthFolderName, ensureMonthFolder, uploadToDrive, BACKUP_CRON, isBackupCron,
-  backupProofs, proofBackupName, PROOF_BATCH,
+  backupProofs, proofBackupName, PROOF_BATCH, backupAttachments,
+  committeeFolder, committeeFolderSeparate, noticeFolderName,
 } from '../functions/lib/backup.js';
 import { mailConfigured } from '../functions/lib/mailer.js';
 
@@ -299,6 +300,55 @@ describe('the proof images go too', () => {
     };
     await backupProofs(env, 'tok');
     expect(called).toBe(false);
+  });
+});
+
+// Sharing in Drive is per-folder and inherits downward, so the only way to
+// share the committee's material without the roster is two folders.
+describe('the committee folder is not the backup folder', () => {
+  it('uses the committee folder when one is configured', () => {
+    expect(committeeFolder({ GOOGLE_BACKUP_FOLDER_ID: 'B', GOOGLE_COMMITTEE_FOLDER_ID: 'C' }))
+      .toBe('C');
+  });
+
+  it('falls back to the backup folder, so nothing breaks before it is set', () => {
+    expect(committeeFolder({ GOOGLE_BACKUP_FOLDER_ID: 'B' })).toBe('B');
+  });
+
+  it('knows when the two are the same place, which doctor reports', () => {
+    expect(committeeFolderSeparate({ GOOGLE_BACKUP_FOLDER_ID: 'B' })).toBe(false);
+    expect(committeeFolderSeparate({ GOOGLE_BACKUP_FOLDER_ID: 'B', GOOGLE_COMMITTEE_FOLDER_ID: 'B' }))
+      .toBe(false);
+    expect(committeeFolderSeparate({ GOOGLE_BACKUP_FOLDER_ID: 'B', GOOGLE_COMMITTEE_FOLDER_ID: 'C' }))
+      .toBe(true);
+  });
+});
+
+describe('notice attachments', () => {
+  it('names a folder by id and title, so a thread can be found', () => {
+    expect(noticeFolderName({ id: 12, title: 'Water tank cleaning' }))
+      .toBe('0012-water-tank-cleaning');
+  });
+
+  it('truncates a title that runs to a sentence', () => {
+    const name = noticeFolderName({
+      id: 3,
+      title: 'The committee has decided that the water tank on Block B will be cleaned',
+    });
+    expect(name.length).toBeLessThanOrEqual(45);
+    expect(name.startsWith('0003-')).toBe(true);
+    expect(name.endsWith('-')).toBe(false);
+  });
+
+  it('survives a title with no usable characters at all', () => {
+    expect(noticeFolderName({ id: 5, title: '!!!' })).toBe('0005');
+    expect(noticeFolderName({ id: 5, title: null })).toBe('0005');
+  });
+
+  it('handles Malayalam titles without producing an empty slug trap', () => {
+    // Nothing in the title survives slugification, which must still leave a
+    // valid folder name rather than a bare hyphen.
+    expect(noticeFolderName({ id: 9, title: 'ജല ടാങ്ക്' })).toBe('0009');
   });
 });
 

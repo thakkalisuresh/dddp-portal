@@ -80,9 +80,13 @@ Nightly backup, and retention.
 | fn | `ensureFolder` |  |
 | fn | `uploadToDrive` |  |
 | fn | `backupFilename` |  |
+| fn | `committeeFolder` | Where the committee's own material goes, which is NOT where the backup goes. |
+| fn | `committeeFolderSeparate` |  |
 | const | `PROOF_BATCH` | The CSVs carry the RECORD of a payment; R2 carries the EVIDENCE. |
 | fn | `proofBackupName` | `4A-402318889021.jpg` — flat first so a folder sorts by flat, then the reference the resident and the bank both quote. |
 | fn | `backupProofs` | Copy proof images that have not been copied, oldest first, and stop at PROOF_BATCH. |
+| fn | `noticeFolderName` | `0012-water-tank-cleaning` — id first so it is unique and sorts by age, title after so a human can find the thread without opening twelve folders. |
+| fn | `backupAttachments` | Copy notice and comment attachments, the same way and for the same reason as the proofs. |
 | const | `BACKUP_SETTING` |  |
 | const | `BACKUP_CRON` | The backup has its own cron, and runs on nothing else. |
 | fn | `isBackupCron` |  |
@@ -650,4 +654,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-342 exports. 197 have no doc comment.
+346 exports. 198 have no doc comment.
