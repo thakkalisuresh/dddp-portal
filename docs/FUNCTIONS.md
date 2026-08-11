@@ -75,9 +75,13 @@ Nightly backup, and retention.
 | fn | `sharedCredentials` |  |
 | fn | `driveConfigured` |  |
 | fn | `refreshAccessToken` | A refresh token issued while the OAuth consent screen is in "Testing" mode expires after seven days. |
+| fn | `monthFolderName` |  |
+| fn | `ensureMonthFolder` | The month's subfolder, created the first night of each month. |
 | fn | `uploadToDrive` |  |
 | fn | `backupFilename` |  |
 | const | `BACKUP_SETTING` |  |
+| const | `BACKUP_CRON` | The backup has its own cron, and runs on nothing else. |
+| fn | `isBackupCron` |  |
 | fn | `runBackup` |  |
 | fn | `backupHealth` | Confirms the backup path still works WITHOUT writing a file. |
 
@@ -642,4 +646,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-334 exports. 194 have no doc comment.
+338 exports. 196 have no doc comment.

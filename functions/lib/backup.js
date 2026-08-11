@@ -180,10 +180,62 @@ export async function refreshAccessToken(env, credentials = sharedCredentials(en
   return body.access_token;
 }
 
-export async function uploadToDrive(env, { name, content, mimeType = 'text/csv' }) {
-  const token = await refreshAccessToken(env, backupCredentials(env));
+/** `2026-08`. ISO order so the folder list sorts itself, in every locale. */
+export function monthFolderName(now = new Date()) {
+  return now.toISOString().slice(0, 7);
+}
+
+/**
+ * The month's subfolder, created the first night of each month.
+ *
+ * A year of nightly files in one folder is 365 rows to scroll, and the person
+ * this backup exists for is a treasurer looking for last March — not a
+ * developer with a search box. Twelve folders of thirty is the shape that
+ * answers that question.
+ *
+ * Looked up from Drive each night rather than remembered in `settings`. A
+ * cached id survives the folder being deleted or reorganised and then fails
+ * every night thereafter pointing at something that is gone; a lookup costs one
+ * request and repairs itself. `drive.file` can see this folder because this
+ * client created it, which is also why the parent folder can stay outside the
+ * scope's reach.
+ *
+ * `orderBy=createdTime` matters more than it looks: if a duplicate ever did
+ * appear, every later night would agree on which one to use rather than
+ * scattering files across both.
+ */
+export async function ensureMonthFolder(env, token, name = monthFolderName()) {
+  const parent = env.GOOGLE_BACKUP_FOLDER_ID;
+  const FOLDER = 'application/vnd.google-apps.folder';
+  const q = `name = '${name}' and mimeType = '${FOLDER}' and '${parent}' in parents `
+    + 'and trashed = false';
+
+  const found = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}`
+    + '&fields=files(id,name)&orderBy=createdTime&pageSize=1',
+    { headers: { authorization: `Bearer ${token}` } }
+  );
+  if (!found.ok) fail('DDP-SYS-003', { status: found.status, step: 'find-month-folder' });
+  const existing = (await found.json()).files?.[0];
+  if (existing) return existing.id;
+
+  const made = await fetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ name, mimeType: FOLDER, parents: [parent] }),
+  });
+  if (!made.ok) fail('DDP-SYS-003', { status: made.status, step: 'create-month-folder' });
+  return (await made.json()).id;
+}
+
+export async function uploadToDrive(env, { name, content, mimeType = 'text/csv',
+  parentId, token: given } = {}) {
+  // The caller may already hold a token — runBackup needs one for the folder
+  // lookup anyway, and refreshing twice a night for one upload is two chances
+  // to fail where one will do.
+  const token = given ?? await refreshAccessToken(env, backupCredentials(env));
   const boundary = `ddp${crypto.randomUUID()}`;
-  const metadata = { name, parents: [env.GOOGLE_BACKUP_FOLDER_ID] };
+  const metadata = { name, parents: [parentId ?? env.GOOGLE_BACKUP_FOLDER_ID] };
 
   const body = [
     `--${boundary}`,
@@ -220,6 +272,24 @@ export function backupFilename(now = new Date()) {
 /** Watermark key. Mirrors `last_digest_at`, and for the same reason. */
 export const BACKUP_SETTING = 'last_backup_at';
 
+/**
+ * The backup has its own cron, and runs on nothing else.
+ *
+ * 22:00 UTC is 03:30 IST. It was moved off the 03:00 UTC job because that one
+ * also sends the Telegram digest, and a digest that arrives at 3:30 in the
+ * morning is a notification people turn off — at which point the building loses
+ * the 22 warnings that only the digest surfaces.
+ *
+ * Must match wrangler.toml exactly. A typo here means the backup silently never
+ * runs while both crons fire happily, which is this feature's signature failure
+ * and the reason it is a named constant rather than a string in an if.
+ */
+export const BACKUP_CRON = '0 22 * * *';
+
+export function isBackupCron(cron) {
+  return cron === BACKUP_CRON;
+}
+
 export async function runBackup(env, ctx) {
   if (!driveConfigured(env)) {
     // Not an error worth alerting on — it simply hasn't been set up yet.
@@ -228,7 +298,11 @@ export async function runBackup(env, ctx) {
   try {
     const files = await dumpAll(env);
     const content = bundle(files, { generatedAt: new Date().toISOString() });
-    const uploaded = await uploadToDrive(env, { name: backupFilename(), content });
+    const token = await refreshAccessToken(env, backupCredentials(env));
+    const parentId = await ensureMonthFolder(env, token);
+    const uploaded = await uploadToDrive(env, {
+      name: backupFilename(), content, parentId, token,
+    });
     // Written only after the upload returns. A watermark set before the file
     // lands would report a backup that does not exist, which is worse than
     // reporting none: it is the reassurance without the copy.

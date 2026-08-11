@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   toCsv, toCsvValue, stripSecrets, bundle, cutoffFor, backupFilename,
   driveConfigured, backupCredentials, sharedCredentials, TABLES, RETENTION_DAYS,
+  monthFolderName, ensureMonthFolder, uploadToDrive, BACKUP_CRON, isBackupCron,
 } from '../functions/lib/backup.js';
 import { mailConfigured } from '../functions/lib/mailer.js';
 
@@ -163,5 +164,103 @@ describe('drive configuration', () => {
     it('still needs a folder, whichever account is used', () => {
       expect(driveConfigured({ ...split, GOOGLE_BACKUP_FOLDER_ID: undefined })).toBe(false);
     });
+  });
+});
+
+describe('the backup has its own cron', () => {
+  // Moved off the 03:00 UTC job because that one sends the Telegram digest, and
+  // a digest arriving at 3:30am is a notification people mute.
+  it('claims 22:00 UTC, which is 03:30 IST', () => {
+    expect(BACKUP_CRON).toBe('0 22 * * *');
+  });
+
+  it('runs the backup on its own trigger and nothing else', () => {
+    expect(isBackupCron('0 22 * * *')).toBe(true);
+    expect(isBackupCron('0 3 * * *')).toBe(false);
+  });
+
+  // A scheduled event with no cron string must not be mistaken for the backup's
+  // trigger: silently backing up on the digest run would double the uploads and
+  // put the digest's own failures on the wrong watermark.
+  it('treats an unknown or absent trigger as not the backup', () => {
+    expect(isBackupCron(undefined)).toBe(false);
+    expect(isBackupCron('')).toBe(false);
+    expect(isBackupCron('0 22 * * 1')).toBe(false);
+  });
+});
+
+// A year of nightly files in one folder is 365 rows to scroll, and the person
+// this exists for is a treasurer looking for last March.
+describe('one folder per month', () => {
+  const env = { GOOGLE_BACKUP_FOLDER_ID: 'PARENT' };
+  const ok = (body) => ({ ok: true, json: async () => body });
+
+  afterEach(() => { globalThis.fetch = undefined; });
+
+  it('names the folder in ISO order, so the list sorts itself', () => {
+    expect(monthFolderName(new Date('2026-08-11T22:00:00Z'))).toBe('2026-08');
+    expect(monthFolderName(new Date('2027-01-01T00:00:00Z'))).toBe('2027-01');
+  });
+
+  it('reuses the folder that is already there', async () => {
+    const calls = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), method: init?.method ?? 'GET' });
+      return ok({ files: [{ id: 'AUG', name: '2026-08' }] });
+    };
+    expect(await ensureMonthFolder(env, 'tok', '2026-08')).toBe('AUG');
+    // One lookup, and crucially no create — a second folder every night would
+    // scatter the year across duplicates.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe('GET');
+  });
+
+  it('creates it on the first night of the month', async () => {
+    const calls = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), method: init?.method ?? 'GET', body: init?.body });
+      return calls.length === 1 ? ok({ files: [] }) : ok({ id: 'SEP' });
+    };
+    expect(await ensureMonthFolder(env, 'tok', '2026-09')).toBe('SEP');
+    expect(calls[1].method).toBe('POST');
+    const sent = JSON.parse(calls[1].body);
+    expect(sent).toMatchObject({
+      name: '2026-09',
+      mimeType: 'application/vnd.google-apps.folder',
+      parents: ['PARENT'],
+    });
+  });
+
+  it('searches inside the configured parent, and ignores trashed folders', async () => {
+    const urls = [];
+    globalThis.fetch = async (url) => {
+      urls.push(decodeURIComponent(String(url)));
+      return ok({ files: [] });
+    };
+    await ensureMonthFolder(env, 'tok', '2026-08').catch(() => {});
+    const seen = urls[0];  // the lookup; urls[1] is the create that follows
+    expect(seen).toContain("'PARENT' in parents");
+    expect(seen).toContain('trashed = false');
+    // Without this, two nights could disagree about which duplicate to use.
+    expect(seen).toContain('orderBy=createdTime');
+  });
+
+  it('fails loudly rather than writing to the wrong place', async () => {
+    globalThis.fetch = async () => ({ ok: false, status: 403, text: async () => 'nope' });
+    await expect(ensureMonthFolder(env, 'tok', '2026-08')).rejects.toThrow();
+  });
+
+  it('uploads into the month folder, not the parent', async () => {
+    let body = '';
+    globalThis.fetch = async (url, init) => {
+      body = String(init?.body ?? '');
+      return ok({ id: 'F', name: 'diamond-park-2026-08-12.csv' });
+    };
+    await uploadToDrive(env, {
+      name: 'diamond-park-2026-08-12.csv', content: 'a,b\n1,2\n',
+      parentId: 'AUG', token: 'tok',
+    });
+    expect(body).toContain('"parents":["AUG"]');
+    expect(body).not.toContain('"parents":["PARENT"]');
   });
 });
