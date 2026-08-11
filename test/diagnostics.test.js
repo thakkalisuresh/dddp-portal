@@ -284,6 +284,28 @@ describe('the backup is itself checked', () => {
     expect(ids).toEqual(['BACKUP-PAGES-UNCONFIGURED', 'BACKUP-STALE']);
   });
 
+  // Drive sharing inherits downward: one folder shared with the committee is
+  // the roster shared with the committee.
+  it('warns when the proofs and the roster share one folder', () => {
+    const f = checkBackup({
+      lastBackupAt: '2026-08-08T03:00:00Z', driveConfigured: true,
+      committeeShared: false, remote: true, now });
+    expect(f[0].id).toBe('BACKUP-ONE-FOLDER');
+    expect(f[0].severity).toBe('warn');
+  });
+
+  it('is quiet once a second folder is configured', () => {
+    expect(checkBackup({
+      lastBackupAt: '2026-08-08T03:00:00Z', driveConfigured: true,
+      committeeShared: true, remote: true, now })).toEqual([]);
+  });
+
+  it('says nothing about folders when it was not told, rather than guessing', () => {
+    expect(checkBackup({
+      lastBackupAt: '2026-08-08T03:00:00Z', driveConfigured: true,
+      remote: true, now })).toEqual([]);
+  });
+
   it('accepts the boolean god mode sends, which sees only its own bindings', () => {
     expect(checkBackup({
       lastBackupAt: '2026-08-08T03:00:00Z', driveConfigured: true, remote: true, now })).toEqual([]);

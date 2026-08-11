@@ -405,7 +405,8 @@ export function checkDigest({ lastDigestAt, remote, now = new Date() }) {
  * the cron Worker that runs the upload — so the half-configured state reads as
  * healthy from inside the site while nothing at all is being written.
  */
-export function checkBackup({ lastBackupAt, driveConfigured, remote, now = new Date() }) {
+export function checkBackup({ lastBackupAt, driveConfigured, committeeShared,
+  remote, now = new Date() }) {
   if (!remote) return [];
 
   // Either shape, for the same reason as alerting: god mode can only see its
@@ -448,6 +449,19 @@ export function checkBackup({ lastBackupAt, driveConfigured, remote, now = new D
       + 'does not, so the admin Export tab reports "not set up yet" to a '
       + 'committee whose backup is fine. Add the same four secrets with '
       + '`wrangler pages secret put --project-name diamondpark`.'));
+  }
+
+  // Explicitly false, not merely falsy: a caller that did not ask the question
+  // must not be told the answer is no.
+  if (committeeShared === false) {
+    // Sharing in Drive inherits downward. One folder shared with the committee
+    // is the roster shared with the committee, and it happens the moment
+    // somebody shares the parent to hand over the proof screenshots.
+    out.push(finding('warn', 'BACKUP-ONE-FOLDER',
+      'Proofs and the data export are in the same Drive folder',
+      'That folder cannot be shared with the committee without also sharing the '
+      + 'nightly CSV of every resident\'s name, mobile, email and payment '
+      + 'history. Make a second folder and set GOOGLE_COMMITTEE_FOLDER_ID to it.'));
   }
 
   if (!lastBackupAt) {

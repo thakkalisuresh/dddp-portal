@@ -46,7 +46,7 @@ import { splitMobile, NATIONAL_LENGTHS } from '../public/js/countries.js';
 import { addFlat } from './lib/flats.js';
 import { ERROR_CODES } from './lib/error-codes.js';
 import { isCaptureOn, captureWindow, validateBatch } from './lib/clicks.js';
-import { runBackup, backupHealth, driveConfigured, isBackupCron, pruneOldRows, dumpTable, dumpAll, bundle, toCsv, TABLES } from './lib/backup.js';
+import { runBackup, backupHealth, driveConfigured, committeeFolderSeparate, isBackupCron, pruneOldRows, dumpTable, dumpAll, bundle, toCsv, TABLES } from './lib/backup.js';
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole,
@@ -2397,7 +2397,8 @@ async function godDiagnostics(env, url) {
     config: {
       upiVpa: env.UPI_VPA, alertingConfigured: Boolean(env.TELEGRAM_BOT_TOKEN),
       mailConfigured: mailConfigured(env),
-      driveConfigured: driveConfigured(env), remote: true,
+      driveConfigured: driveConfigured(env),
+      committeeShared: committeeFolderSeparate(env), remote: true,
     },
   };
 

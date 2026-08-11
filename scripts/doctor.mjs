@@ -94,6 +94,20 @@ function mailSecrets() {
   }
 }
 
+/** Has a separate, shareable committee folder been configured? */
+function committeeSecret() {
+  const has = (args, cwd) => {
+    try {
+      return execFileSync('npx', ['wrangler', ...args],
+        { encoding: 'utf8', cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+        .includes('GOOGLE_COMMITTEE_FOLDER_ID');
+    } catch {
+      return false;
+    }
+  };
+  return has(['secret', 'list'], process.cwd()) && has(['pages', 'secret', 'list'], join(process.cwd(), 'pages'));
+}
+
 /**
  * The backup needs one secret the mail path does not — the folder to write
  * into — so this cannot just reuse mailSecrets(). Asked of Cloudflare rather
@@ -172,6 +186,10 @@ const main = () => {
       // Same reasoning as alerting: ask Cloudflare, not this shell.
       mailConfigured: local ? true : mailSecrets(),
       driveConfigured: local ? { cron: true, pages: true } : driveSecrets(),
+      // Only the names are readable, never the values, so "are these two the
+      // same folder" cannot be answered from here — the in-app check answers
+      // it, and this reports whether a second folder was configured at all.
+      committeeShared: local ? true : committeeSecret(),
       remote: !local,
     },
   });

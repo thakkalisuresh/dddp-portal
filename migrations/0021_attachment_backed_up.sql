@@ -1,0 +1,13 @@
+-- When this attachment was copied off-site, or NULL if it has not been.
+--
+-- The same column, for the same reason, as 0020 put on payment_proofs — read
+-- that one for why this is a column rather than a question asked of Drive each
+-- night, and for the UPDATE that forces a re-copy.
+--
+-- WHY THESE ARE WORTH CARRYING. 0018 stores notice photographs at full quality
+-- deliberately: a damp patch or a cracked beam is evidence somebody has to be
+-- able to look into, and it said plainly that there is no second copy to fall
+-- back on. This is that second copy. Thumbnails are not included — they are
+-- generated in the browser from the file this does carry, so losing one costs a
+-- page render and nothing else.
+ALTER TABLE attachments ADD COLUMN backed_up_at TEXT;
