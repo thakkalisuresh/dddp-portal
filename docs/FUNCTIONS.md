@@ -71,6 +71,8 @@ Nightly backup, and retention.
 | const | `RETENTION_DAYS` | Activity and click rows are the highest-volume, lowest-value data here, and the most invasive. |
 | fn | `cutoffFor` |  |
 | fn | `pruneOldRows` |  |
+| fn | `backupCredentials` | Which Google account the upload authenticates as. |
+| fn | `sharedCredentials` |  |
 | fn | `driveConfigured` |  |
 | fn | `refreshAccessToken` | A refresh token issued while the OAuth consent screen is in "Testing" mode expires after seven days. |
 | fn | `uploadToDrive` |  |
@@ -640,4 +642,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-332 exports. 193 have no doc comment.
+334 exports. 194 have no doc comment.

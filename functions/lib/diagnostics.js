@@ -418,8 +418,10 @@ export function checkBackup({ lastBackupAt, driveConfigured, remote, now = new D
   if (!d.cron && !d.pages) {
     return [finding('warn', 'BACKUP-NOT-CONFIGURED', 'Nothing is being backed up off-site',
       'runBackup returns early every night. The only copies of this building\'s '
-      + 'billing history are in D1. Needs GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, '
-      + 'GOOGLE_REFRESH_TOKEN and GOOGLE_BACKUP_FOLDER_ID.')];
+      + 'billing history are in D1. Needs GOOGLE_BACKUP_FOLDER_ID, plus a client '
+      + 'id, secret and refresh token — the GOOGLE_BACKUP_ ones if the backup has '
+      + 'its own Google account, otherwise the shared GOOGLE_ ones. '
+      + 'Run npm run google:auth.')];
   }
   if (!d.cron) {
     // The worst of the three states, and the one that looks best from inside

@@ -107,13 +107,21 @@ function mailSecrets() {
  * also runs on Pages.
  */
 function driveSecrets() {
-  const NAMES = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN',
-                 'GOOGLE_BACKUP_FOLDER_ID'];
+  // Either credential set satisfies each of the three, because the backup runs
+  // under its own Google account when GOOGLE_BACKUP_* is set and falls back to
+  // the shared one when it is not. Requiring the shared names outright would
+  // report "not configured" against a correctly split setup.
+  const EITHER = [
+    ['GOOGLE_BACKUP_CLIENT_ID', 'GOOGLE_CLIENT_ID'],
+    ['GOOGLE_BACKUP_CLIENT_SECRET', 'GOOGLE_CLIENT_SECRET'],
+    ['GOOGLE_BACKUP_REFRESH_TOKEN', 'GOOGLE_REFRESH_TOKEN'],
+    ['GOOGLE_BACKUP_FOLDER_ID'],
+  ];
   const has = (args, cwd) => {
     try {
       const out = execFileSync('npx', ['wrangler', ...args],
         { encoding: 'utf8', cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-      return NAMES.every((n) => out.includes(n));
+      return EITHER.every((names) => names.some((n) => out.includes(n)));
     } catch {
       return false;
     }

@@ -1,32 +1,57 @@
 #!/usr/bin/env node
 /**
- * Mint the Google refresh token the backup and `/forgot` both need (W1).
+ * Mint a Google refresh token — for the nightly backup, or for `/forgot` (W1).
  *
- *   node scripts/google-oauth.mjs
+ *   npm run google:auth -- backup     # the Drive account that holds the copies
+ *   npm run google:auth -- mail       # the account reset codes are sent from
  *
  * This exists because W1 has sat blocked for months on a step described as "an
  * OAuth consent round-trip, which wants a terminal rather than a phone". That
  * is one command's worth of work, and leaving it as a paragraph of Google
  * Console instructions is how a task stays undone. Nothing here is clever; it
- * is the loopback dance, plus the two checks that catch the ways this silently
+ * is the loopback dance, plus the checks that catch the ways this silently
  * fails afterwards.
+ *
+ * ── Two accounts, on purpose ────────────────────────────────────────────────
+ *
+ * The two jobs point in opposite directions, so they are run twice, once each.
+ *
+ * **mail** should be the ASSOCIATION's Gmail. It emails 99 residents their
+ * reset codes; the From line should say the association, and the replies should
+ * arrive somewhere the committee can read.
+ *
+ * **backup** is whoever holds the off-site copies, and can be a personal
+ * account — Drive charges a file to the account that created it, so this is
+ * the account whose quota fills, and the committee's own 15 GB is left for the
+ * committee's own documents.
+ *
+ * Know what that means before choosing: the bundle carries every resident's
+ * name, mobile, email and payment history (never passwords — see NEVER_EXPORT
+ * in functions/lib/backup.js). Whoever consents to `backup` is holding the
+ * association's records personally, and when they leave the committee that is
+ * a person to replace, not a folder to move.
+ *
+ * Running only `mail` is a valid, simpler setup: leave GOOGLE_BACKUP_* unset
+ * and the backup falls back to the shared credentials and the same account.
  *
  * ── Before running ──────────────────────────────────────────────────────────
  *
- * 1. A Gmail account owned by the ASSOCIATION, not by a person. The whole point
- *    of B12 is that the committee keeps its own records; an account tied to
- *    whoever set it up recreates the problem this project exists to fix.
- *
- * 2. At https://console.cloud.google.com — a project, then:
- *      · APIs & Services → Library → enable **Google Drive API** and **Gmail API**
- *      · OAuth consent screen → External → add the association Gmail as a user
+ * 1. At https://console.cloud.google.com, signed in as the account you are
+ *    setting up — a project, then:
+ *      · APIs & Services → Library → enable **Google Drive API** (backup)
+ *        or **Gmail API** (mail)
+ *      · OAuth consent screen → External
  *      · Credentials → Create credentials → OAuth client ID → **Desktop app**
  *
  *    Desktop app, specifically. A Web application client would need this
  *    script's exact redirect URI registered by hand; a Desktop client accepts
  *    any loopback port, so nothing has to be kept in sync.
  *
- * 3. **PUBLISH the consent screen to Production.** Not "Testing".
+ *    Two accounts means two projects and two OAuth clients. They are not
+ *    interchangeable: a client belongs to one project, and the refresh token
+ *    belongs to the account that consented.
+ *
+ * 2. **PUBLISH the consent screen to Production.** Not "Testing".
  *
  *    In Testing mode Google expires the refresh token after seven days. The
  *    nightly upload then stops, throws where nobody is looking, and leaves a
@@ -36,12 +61,12 @@
  *    token looks identical either way. `npm run doctor` catches it the day
  *    after it happens (BACKUP-STALE), which is a smoke alarm, not a fix.
  *
- * 4. A Drive folder for the backups, shared with the association account. Its
- *    id is the last path segment of the folder URL.
+ * 3. For `backup`, a Drive folder to write into. Its id is the last path
+ *    segment of the folder URL.
  *
  * ── What it prints ──────────────────────────────────────────────────────────
  *
- * The refresh token, and the eight commands that put the four secrets on BOTH
+ * The refresh token, and the commands that put the secrets on BOTH
  * deployments. Both is not optional: the 3am upload runs on the cron Worker and
  * the Export tab's health line runs on Pages. Secrets on one do not reach the
  * other, and the half-configured state is the one that lies — see
@@ -57,15 +82,28 @@ import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 
 /**
+ * One scope each, rather than both on both.
+ *
  * `drive.file` rather than `drive`: it grants access to files this client
- * creates and nothing else, so a leaked token cannot read the committee's
- * other documents. Uploading into a folder the app did not create is still
- * allowed, which is all the backup does.
+ * creates and nothing else, so a leaked token cannot read the rest of that
+ * account's Drive. Uploading into a folder the app did not create is still
+ * allowed, which is all the backup does. That narrowness matters more now the
+ * backup account is somebody's personal one.
  */
-const SCOPES = [
-  'https://www.googleapis.com/auth/drive.file',
-  'https://www.googleapis.com/auth/gmail.send',
-];
+const MODES = {
+  backup: {
+    scope: 'https://www.googleapis.com/auth/drive.file',
+    api: 'Google Drive API',
+    names: ['GOOGLE_BACKUP_CLIENT_ID', 'GOOGLE_BACKUP_CLIENT_SECRET',
+            'GOOGLE_BACKUP_REFRESH_TOKEN', 'GOOGLE_BACKUP_FOLDER_ID'],
+  },
+  mail: {
+    scope: 'https://www.googleapis.com/auth/gmail.send',
+    api: 'Gmail API',
+    names: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET',
+            'GOOGLE_REFRESH_TOKEN', 'MAIL_FROM'],
+  },
+};
 
 const PORT = 8976;
 const REDIRECT = `http://localhost:${PORT}`;
@@ -170,69 +208,93 @@ async function writeCheckFile({ accessToken, folderId }) {
 }
 
 const main = async () => {
+  const which = process.argv[2];
+  if (!MODES[which]) {
+    console.error('\nUsage: npm run google:auth -- backup   (the Drive account holding the copies)'
+      + '\n       npm run google:auth -- mail     (the account reset codes are sent from)'
+      + '\n\nRun it once for each. Read the header of scripts/google-oauth.mjs first.\n');
+    process.exitCode = 1;
+    return;
+  }
+  const mode = MODES[which];
+  const isBackup = which === 'backup';
+
   const rl = createInterface({ input: stdin, output: stdout });
   try {
-    console.log(`\n${C.bold}Google credentials for the backup and password reset${C.off}`);
-    console.log(`${C.dim}Read the header of this file first if you have not already.${C.off}\n`);
+    console.log(`\n${C.bold}Google credentials — ${which}${C.off}`);
+    console.log(`${C.dim}Scope: ${mode.scope}${C.off}`);
+    console.log(`${C.dim}Sign in as ${isBackup
+      ? 'the account that will HOLD the backups. It keeps every resident\'s name,'
+        + '\nmobile, email and payment history in its Drive.'
+      : 'the ASSOCIATION\'s Gmail. Residents see this address on their reset codes.'}${C.off}\n`);
 
     const clientId = await ask(rl, 'OAuth client ID: ');
     const clientSecret = await ask(rl, 'OAuth client secret: ');
-    const mailFrom = await ask(rl, 'Association Gmail address (MAIL_FROM): ');
-    const folderId = await ask(rl, 'Drive folder id for backups: ');
+    const extra = isBackup
+      ? await ask(rl, 'Drive folder id for backups: ')
+      : await ask(rl, 'Address to send from (MAIL_FROM): ');
 
     const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     authUrl.search = new URLSearchParams({
       client_id: clientId,
       redirect_uri: REDIRECT,
       response_type: 'code',
-      scope: SCOPES.join(' '),
+      scope: mode.scope,
       // offline is what produces a refresh token at all; consent forces one to
       // be re-issued even if this client has been approved before.
       access_type: 'offline',
       prompt: 'consent',
     }).toString();
 
-    console.log(`\n${C.bold}Open this, signed in as the association account:${C.off}\n`);
+    console.log(`\n${C.bold}Open this, signed in as that account:${C.off}\n`);
     console.log(`${authUrl}\n`);
     console.log(`${C.dim}Waiting for the redirect back to ${REDIRECT} …${C.off}`);
 
     const code = await waitForCode();
     const token = await exchange({ clientId, clientSecret, code });
+    console.log(`\n${C.ok}Consent granted.${C.off}`);
 
-    console.log(`\n${C.ok}Consent granted.${C.off} Writing a check file to the folder…`);
-    const file = await writeCheckFile({ accessToken: token.access_token, folderId });
-    console.log(`${C.ok}Drive accepted it:${C.off} ${file.name} (${file.id})`);
-    console.log(`${C.dim}Open the folder and confirm you can see that file. Then delete it.${C.off}`);
+    if (isBackup) {
+      console.log('Writing a check file to the folder…');
+      const file = await writeCheckFile({ accessToken: token.access_token, folderId: extra });
+      console.log(`${C.ok}Drive accepted it:${C.off} ${file.name} (${file.id})`);
+      console.log(`${C.dim}Open the folder and confirm you can see that file. Then delete it.${C.off}`);
+    }
 
-    console.log(`\n${C.bold}GOOGLE_REFRESH_TOKEN${C.off}\n\n${token.refresh_token}\n`);
+    const [idName, secretName, tokenName, extraName] = mode.names;
+    console.log(`\n${C.bold}${tokenName}${C.off}\n\n${token.refresh_token}\n`);
 
-    console.log(`${C.bold}Set all five on BOTH deployments.${C.off} The 3am upload runs on the`);
+    console.log(`${C.bold}Set all four on BOTH deployments.${C.off} The 3am upload runs on the`);
     console.log('cron Worker; the Export tab health line runs on Pages. One without the');
     console.log('other is the state that reports healthy while nothing is written.\n');
 
-    const names = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN',
-                   'GOOGLE_BACKUP_FOLDER_ID', 'MAIL_FROM'];
     console.log(`${C.dim}# cron Worker — from the repo root${C.off}`);
-    for (const n of names) console.log(`npx wrangler secret put ${n}`);
+    for (const n of mode.names) console.log(`npx wrangler secret put ${n}`);
     console.log(`\n${C.dim}# Pages — from the repo root${C.off}`);
-    for (const n of names) {
+    for (const n of mode.names) {
       console.log(`npx wrangler pages secret put ${n} --project-name diamondpark`);
     }
 
     console.log(`\n${C.dim}Values, for pasting into those prompts:${C.off}`);
-    console.log(`  GOOGLE_CLIENT_ID          ${clientId}`);
-    console.log(`  GOOGLE_CLIENT_SECRET      ${clientSecret}`);
-    console.log('  GOOGLE_REFRESH_TOKEN      (printed above)');
-    console.log(`  GOOGLE_BACKUP_FOLDER_ID   ${folderId}`);
-    console.log(`  MAIL_FROM                 ${mailFrom}`);
+    console.log(`  ${idName.padEnd(28)}${clientId}`);
+    console.log(`  ${secretName.padEnd(28)}${clientSecret}`);
+    console.log(`  ${tokenName.padEnd(28)}(printed above)`);
+    console.log(`  ${extraName.padEnd(28)}${extra}`);
 
     console.log(`\n${C.warn}Then, in this order:${C.off}`);
     console.log('  1. Confirm the OAuth consent screen is PUBLISHED, not in Testing.');
     console.log('     Testing expires this token in seven days and the backup then stops');
     console.log('     silently. Nothing in the code can tell the two apart.');
-    console.log('  2. npm run deploy:all');
-    console.log('  3. npm run doctor          — expect BACKUP-NEVER, not BACKUP-NOT-CONFIGURED');
-    console.log('  4. Tomorrow, after 3am IST:');
+    if (isBackup) {
+      console.log(`  2. Run this again as ${C.bold}mail${C.off} if you have not — the reset emails`);
+      console.log('     should come from the association, not from this account.');
+    } else {
+      console.log(`  2. Run this again as ${C.bold}backup${C.off} if the backups belong in a`);
+      console.log('     different account. Skip it to use this one for both.');
+    }
+    console.log('  3. npm run deploy:all');
+    console.log('  4. npm run doctor          — expect BACKUP-NEVER, not BACKUP-NOT-CONFIGURED');
+    console.log('  5. Tomorrow, after 3am IST:');
     console.log('     npm run doctor          — BACKUP-NEVER must be gone');
     console.log('     A file in the Drive folder is the proof; the watermark is the record.\n');
   } catch (err) {

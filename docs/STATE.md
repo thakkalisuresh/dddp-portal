@@ -97,14 +97,34 @@ nothing. No Google credentials. `doctor` reports `MAIL-NOT-CONFIGURED`.
 Google secrets have ever been set. The only backups that exist were taken by
 hand during development. Same credentials as email, so one setup fixes both.
 
-`npm run google:auth` (2026-08-11) does the consent round-trip and prints the
-secret commands for both deployments, so W1 is now a browser tab and four
-commands rather than a research task. Two things it cannot do for you: the
-consent screen must be **published to Production** — a Testing-mode refresh
-token expires in seven days and the backup then stops silently — and the
+`npm run google:auth -- backup` (2026-08-11) does the consent round-trip and
+prints the secret commands for both deployments, so this is now a browser tab
+and a few commands rather than a research task. Two things it cannot do for
+you: the consent screen must be **published to Production** — a Testing-mode
+refresh token expires in seven days and the backup then stops silently — and the
 secrets must go on the **cron Worker as well as Pages**, because the 3am upload
 runs there and only there. Doctor used to check Pages alone and would have
 reported an all-clear on a backup that never ran; it now names each half.
+
+> ### The backup account is personal, and deliberately
+>
+> Decided 2026-08-11. The nightly upload authenticates as a committee member's
+> own Google account (`GOOGLE_BACKUP_CLIENT_ID` and friends, overriding the
+> shared trio), because Drive charges a file to whoever creates it and the
+> association's 15 GB is wanted for the association's own documents. Storage
+> was never the constraint — production D1 is 639 kB entire, so a year of
+> nightly bundles is under 200 MB — the quota is.
+>
+> Two consequences, recorded here so they are not discovered:
+>
+> * That person holds every resident's name, mobile, email and payment history
+>   in a personal Drive. Passwords are never exported (`NEVER_EXPORT`).
+> * **When they leave the committee this is an account to replace, not a folder
+>   to move.** Re-run `npm run google:auth -- backup` as the new holder.
+>
+> `/forgot` deliberately did not follow. Reset codes go to 99 residents and must
+> come from the association's address, so `sendEmail` stays on the shared
+> credentials. Only `uploadToDrive` and `backupHealth` take the override.
 
 ## Never tested against real data
 
@@ -124,7 +144,9 @@ resident sees a bill.**
    consume it is built. This is a people problem, measured in weeks.
 2. **The meter walk.** There is no migration from the old portal; month one
    starts from a physical read.
-3. **A Gmail account.** Unblocks `/forgot` and the backup together.
+3. **A Gmail account for the association.** Unblocks `/forgot`. It no longer
+   blocks the backup, which now runs under a personal Google account — see
+   above.
 
 Order matters: import the roster, walk the meters, generate the month, **then**
 send the logins. A resident who logs in to an empty dashboard decides the site

@@ -32,10 +32,18 @@ UPI_PAYEE = "DD Diamond Park RWA"
 PBKDF2_ITERATIONS = "100000"
 
 # Secrets (wrangler secret put): TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
-# GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN,
-# GOOGLE_BACKUP_FOLDER_ID, MAIL_FROM.
+# GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN, MAIL_FROM,
+# GOOGLE_BACKUP_FOLDER_ID, and optionally GOOGLE_BACKUP_CLIENT_ID,
+# GOOGLE_BACKUP_CLIENT_SECRET, GOOGLE_BACKUP_REFRESH_TOKEN.
 #
-# The GOOGLE_ four belong HERE as well as on Pages. The 3am backup runs from
+# Two Google accounts. The shared GOOGLE_ trio is the ASSOCIATION's, because
+# `/forgot` emails 99 residents and the From line should say so. The
+# GOOGLE_BACKUP_ trio overrides it for the nightly upload only, so the copies
+# live in a committee member's personal Drive — files are charged to whoever
+# creates them, and the association's own quota is for its own documents.
+# Unset, the backup falls back to the shared trio and one account does both.
+#
+# The GOOGLE_ secrets belong HERE as well as on Pages. The 3am backup runs from
 # this Worker's cron and nowhere else, so secrets set only on Pages leave the
 # upload returning early every night while the Export tab — which does run on
 # Pages — reports a valid token. `npm run doctor` calls that state
