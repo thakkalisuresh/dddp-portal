@@ -10,7 +10,7 @@ import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
 import { $, el, esc, statusChip, billBreakdown, renderGodBanner, showError } from './ui.js';
-import { money, kg, periodLabel, dayLabel, bilingual } from './i18n.js';
+import { money, kg, periodLabel, dayLabel } from './i18n.js';
 import { drawQr } from './qr.js';
 import { treasurerLine } from './contact.js';
 
@@ -84,7 +84,7 @@ function billSection(me) {
     el('p', { class: 'muted' },
       settled
         ? (b.paidAt ? `Paid ${dayLabel(b.paidAt)}` : 'Settled')
-        : el('span', { html: `Due ${esc(dayLabel(b.dueDate))} <span class="ml" aria-hidden="true">അവസാന തീയതി</span>` })),
+        : `Due ${dayLabel(b.dueDate)}`),
 
     // Warn about the fee before it lands — nobody should be surprised by it.
     b.lateFeeWarning
@@ -340,7 +340,7 @@ function consumptionSection(readings, bills = []) {
 
   return el('section', { class: 'stack' },
     el('hr', { class: 'rule' }),
-    el('p', { class: 'label', html: bilingual('consumption') }),
+    el('p', { class: 'label' }, 'Consumption'),
     el('div', { class: 'chart-wrap' },
       el('div', { class: 'chart' },
         ...withUse.map((r, i) =>
@@ -378,7 +378,7 @@ function consumptionSection(readings, bills = []) {
 function billHistorySection(bills) {
   return el('section', { class: 'stack' },
     el('hr', { class: 'rule' }),
-    el('p', { class: 'label', html: bilingual('billHistory') }),
+    el('p', { class: 'label' }, 'Bill history'),
     el('div', { class: 'scroll-x' },
       el('table', { class: 'table' },
         el('thead', {}, el('tr', {},

@@ -385,6 +385,44 @@ export function checkDigest({ lastDigestAt, remote, now = new Date() }) {
   return [];
 }
 
+/**
+ * Is a copy of the data actually leaving the building?
+ *
+ * The failure mode here is silence, and it is a documented one: a refresh token
+ * issued while the OAuth consent screen is in "Testing" mode expires after
+ * seven days, at which point the nightly upload simply stops. Nothing throws
+ * where anyone is looking, and a folder that stopped filling looks exactly like
+ * a folder nobody has opened. backupHealth answers "would the token work right
+ * now"; only the watermark answers "did a file actually land".
+ *
+ * Warn rather than fail, because D1's Time Travel is the real disaster-recovery
+ * path. What this protects is the other promise: that the committee can open
+ * the data in Excel without a developer, which is the mistake this whole
+ * project exists to not repeat.
+ */
+export function checkBackup({ lastBackupAt, driveConfigured, remote, now = new Date() }) {
+  if (!remote) return [];
+  if (!driveConfigured) {
+    return [finding('warn', 'BACKUP-NOT-CONFIGURED', 'Nothing is being backed up off-site',
+      'runBackup returns early every night. The only copies of this building\'s '
+      + 'billing history are in D1. Needs GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, '
+      + 'GOOGLE_REFRESH_TOKEN and GOOGLE_BACKUP_FOLDER_ID.')];
+  }
+  if (!lastBackupAt) {
+    return [finding('info', 'BACKUP-NEVER', 'The nightly backup has not run yet',
+      'Expected until the first 3am run after configuring it.')];
+  }
+  const hours = (now - new Date(lastBackupAt)) / 3600_000;
+  if (hours > 48) {
+    return [finding('warn', 'BACKUP-STALE', 'The nightly backup has not run for over 48 hours',
+      'Check the refresh token first — one issued in OAuth "Testing" mode expires '
+      + 'after seven days and the upload then fails silently. The watermark only '
+      + 'advances on an upload that returned.',
+      [{ lastRun: lastBackupAt, hoursAgo: Math.round(hours) }])];
+  }
+  return [];
+}
+
 /** Things that are only wrong in production. */
 export function checkConfig({ upiVpa, alerting, alertingConfigured, remote }) {
   const out = [];
@@ -461,6 +499,7 @@ function runAvailable(data, have) {
     ...(have('owners') ? checkExemptions(data.owners ?? []) : []),
     ...(have('owners') ? checkDemoData(data.owners ?? [], data.demoMarker) : []),
     ...checkDigest({ ...(data.config ?? {}), lastDigestAt: data.lastDigestAt ?? null }),
+    ...checkBackup({ ...(data.config ?? {}), lastBackupAt: data.lastBackupAt ?? null }),
   ].sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));
 }
 

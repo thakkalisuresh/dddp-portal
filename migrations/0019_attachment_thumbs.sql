@@ -1,0 +1,21 @@
+-- A small copy of each image attachment, for the notice board itself.
+--
+-- WHY THIS EXISTS. 0018 stores photographs at full quality on purpose: a damp
+-- patch or a cracked beam is evidence somebody has to be able to look INTO, and
+-- there is no second copy to fall back on. But the notice board shows those
+-- images inline, so a thread with three photographs was pulling up to 75MB down
+-- a resident's mobile connection to render a page they came to read.
+--
+-- Both, therefore: the full file for anyone who taps it, and a ~400px copy for
+-- the page. That is a second object per image, which is the cost of keeping the
+-- original honest — the alternative is degrading the stored evidence to make a
+-- web page cheap, and the evidence is the point.
+--
+-- NULLABLE, AND NOT BACKFILLED. Thumbnails are made in the browser at upload
+-- time, so attachments that predate this column have none and never will; the
+-- board falls back to the full image for those, exactly as it did before. A
+-- migration cannot generate them — D1 has no canvas.
+--
+-- PDFs never get one. Rendering a first page needs a PDF library this project
+-- is not taking on, and a PDF is shown as a link rather than inline anyway.
+ALTER TABLE attachments ADD COLUMN thumb_key TEXT;

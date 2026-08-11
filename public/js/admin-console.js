@@ -14,7 +14,8 @@ import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
 import { $, el, esc, renderGodBanner, showError } from './ui.js';
 import { mobileField } from './mobile-field.js';
-import { money, kg, periodLabel, dayLabel } from './i18n.js';
+import { money, kg, periodLabel, dayLabel, stampLabel } from './i18n.js';
+import { prepareUpload, makeThumbnail } from './compress.js';
 
 const main = $('#main');
 let me = null;
@@ -615,6 +616,7 @@ function otpPanel(result, who) {
 
 /* ── notices ───────────────────────────────────────────────────────────── */
 
+
 async function noticesPanel() {
   const { notices } = await api.notices();
   const status = el('div');
@@ -627,12 +629,22 @@ async function noticesPanel() {
   // right answer for nearly every notice, and the narrower option should be a
   // thing somebody chooses on purpose.
   const ownersOnly = el('input', { type: 'checkbox', id: 'n-owners' });
+  const files = el('input', {
+    type: 'file', class: 'input', id: 'n-files', multiple: true,
+    accept: 'image/jpeg,image/png,image/webp,application/pdf',
+  });
 
   return el('div', { class: 'panel stack' },
     el('h2', {}, 'Notices'),
     status,
     el('div', { class: 'field' }, el('label', { for: 'n-title' }, 'Title'), title),
     el('div', { class: 'field' }, el('label', { for: 'n-body' }, 'Body'), body),
+    // Stated rather than hidden behind a toolbar: what is on offer is short
+    // enough to write down, and a committee member typing on a phone should
+    // not have to discover it by accident.
+    el('p', { class: 'small muted' },
+      'Blank lines start a new paragraph. **bold**, *italic*, '
+      + '[link text](https://…), and lines beginning with - become a list.'),
     el('label', { class: 'row', style: 'gap:var(--s-2)' }, isEvent, 'This is an event'),
     el('label', { class: 'row', style: 'gap:var(--s-2)' }, allowComments, 'Allow replies'),
     el('p', { class: 'small muted' },
@@ -641,18 +653,41 @@ async function noticesPanel() {
     el('p', { class: 'small muted' },
       'For AGM papers and anything with a vote attached. Owners living elsewhere '
       + 'still see it; tenants do not, and cannot reply to it.'),
+    el('div', { class: 'field' },
+      el('label', { for: 'n-files' }, 'Attach files'),
+      files,
+      el('p', { class: 'small muted' },
+        'Up to 5 photos or PDFs — the agenda, quotes, the accounts. '
+        + 'Photos keep their full quality. 25MB each; anything over 20MB alerts Telegram.')),
     el('button', {
       class: 'btn', type: 'button',
-      onclick: async () => {
+      onclick: async (event) => {
+        const publish = event.currentTarget;
+        publish.disabled = true;
         try {
-          await api.admin.addNotice({
+          // The notice is created first and the files are attached to it. If an
+          // upload fails the committee is looking at a published notice missing
+          // one document, which they can fix from here — better than a silent
+          // half-write, and better than holding the notice back over a file.
+          const { id } = await api.admin.addNotice({
             title: title.value, body: body.value,
             kind: isEvent.checked ? 'event' : 'notice',
             allowComments: allowComments.checked,
             scope: ownersOnly.checked ? 'owners' : 'all',
           });
+
+          const chosen = [...files.files].slice(0, 5);
+          for (const [i, file] of chosen.entries()) {
+            status.replaceChildren(el('p', { class: 'small muted' },
+              `Uploading ${i + 1} of ${chosen.length}…`));
+            const ready = await prepareUpload(file);
+            await api.attach('notice', id, ready, await makeThumbnail(ready));
+          }
           await show('notices');
-        } catch (err) { showError(status, err); }
+        } catch (err) {
+          showError(status, err);
+          publish.disabled = false;
+        }
       },
     }, 'Publish'),
 
@@ -663,7 +698,7 @@ async function noticesPanel() {
           el('b', {}, n.title),
           // Shown on the row, because a narrowed audience is invisible
           // otherwise and "why did nobody see this" is the question it causes.
-          el('div', {}, `${dayLabel(n.postedAt)} · ${n.commentCount} replies`
+          el('div', {}, `${stampLabel(n.postedAt)} · ${n.commentCount} replies`
             + (n.scope === 'owners' ? ' · owners only' : ''))),
         el('button', {
           class: 'btn btn--sm btn--quiet', type: 'button',
@@ -693,9 +728,12 @@ function exportPanel() {
   const tables = ['bills', 'readings', 'owners', 'periods', 'payment_proofs', 'audit_log', 'messages'];
   return el('div', { class: 'panel stack' },
     el('h2', {}, 'Download the data'),
+    // The old copy promised a nightly Drive copy flatly. That has never once
+    // been true — the secrets have never been set, so runBackup returns early
+    // every night. Whether it happens is now answered below, by the watermark,
+    // rather than asserted here.
     el('p', { class: 'muted small' },
-      'CSV, openable in Excel. Passwords are never included. A copy is also sent '
-      + 'to the committee Drive folder every night.'),
+      'CSV, openable in Excel. Passwords are never included.'),
     el('a', { class: 'btn', href: '/api/admin/export', download: '' }, 'Download everything'),
     el('p', { class: 'label', style: 'margin-top:var(--s-4)' }, 'Single table'),
     el('div', { class: 'row', style: 'flex-wrap:wrap' },
@@ -706,6 +744,15 @@ function exportPanel() {
     backupHealthLine());
 }
 
+/**
+ * Two different questions, and the second is the one that matters.
+ *
+ * "Is the token valid" is a live check and answers whether tonight's run could
+ * work. "When did a file last land" is the watermark, and it is the only thing
+ * that can tell a working backup from one that stopped weeks ago — which is
+ * what actually happened here: written in phase 8, deployed, never run once,
+ * and nothing said so.
+ */
 function backupHealthLine() {
   const line = el('p', { class: 'small muted' }, 'Checking…');
   api.admin.backupHealth().then((h) => {
@@ -714,10 +761,25 @@ function backupHealthLine() {
         ? 'Google Drive is reachable and the token is valid.'
         : h.reason === 'not-configured'
           ? 'Not set up yet. Add the Google secrets to enable nightly off-site copies.'
-          : `Backup is BROKEN (${h.reason}). A refresh token issued in OAuth "Testing" mode expires after 7 days. Publish the consent screen.`);
+          : `Backup is BROKEN (${h.reason}). A refresh token issued in OAuth "Testing" mode expires after 7 days. Publish the consent screen.`,
+      el('br'),
+      lastBackupText(h));
     if (!h.ok && h.reason !== 'not-configured') line.className = 'small';
   }).catch(() => line.replaceChildren('Could not check.'));
   return line;
+}
+
+function lastBackupText(h) {
+  if (!h.lastBackupAt) {
+    return h.reason === 'not-configured'
+      ? 'No copy has ever been written.'
+      : 'No copy has been written yet — the first runs at 3am.';
+  }
+  const days = Math.floor((Date.now() - new Date(h.lastBackupAt)) / 86_400_000);
+  const when = days === 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
+  // Stated in days rather than a timestamp, because the only question anyone
+  // asks of this line is "recently enough?".
+  return `Last copy written ${when}.`;
 }
 
 async function messagesPanel() {
@@ -750,8 +812,71 @@ async function messagesPanel() {
 /* ── archive ───────────────────────────────────────────────────────────── */
 
 async function archivePanel() {
-  const { proofs, stored } = await api.admin.proofArchive();
+  const [{ proofs, stored }, { notices }] = await Promise.all([
+    api.admin.proofArchive(),
+    api.admin.noticeArchive(),
+  ]);
 
+  return el('div', { class: 'stack' },
+    withdrawnNotices(notices),
+    proofArchive(proofs, stored));
+}
+
+/**
+ * Withdrawn notices, kept rather than destroyed.
+ *
+ * Withdrawing used to hide a notice from everyone including the superadmin,
+ * while its replies and uploaded files stayed in the database and in R2 —
+ * retained, paid for, and readable by nobody. This is the other half of that
+ * decision: the committee can still open what it took down.
+ *
+ * Restoring is an admin's call, because withdrawing already is and an action
+ * whose undo needs a more senior person is a trap. Destroying is the
+ * superadmin's alone.
+ */
+function withdrawnNotices(notices) {
+  return el('div', { class: 'panel stack' },
+    el('h2', {}, 'Withdrawn notices'),
+    el('p', { class: 'muted small' },
+      'Taken off the board but kept, with their replies and files. Restoring '
+      + 'puts one back in front of residents.'
+      + (me.role === 'superadmin'
+        ? ' Deleting destroys it and its files for good.'
+        : ' Only the superadmin can delete one permanently.')),
+
+    ...(notices.length
+      ? notices.map((n) =>
+          el('div', { class: 'rowitem' },
+            el('div', { class: 'rowitem__main' },
+              el('b', {}, n.title),
+              el('div', {}, `${stampLabel(n.postedAt)} · ${n.commentCount} replies`
+                + (n.attachmentCount ? ` · ${n.attachmentCount} files` : '')
+                + (n.scope === 'owners' ? ' · owners only' : ''))),
+            el('button', {
+              class: 'btn btn--sm btn--quiet', type: 'button',
+              onclick: async () => {
+                await api.admin.updateNotice(n.id, { active: true });
+                await show('archive');
+              },
+            }, 'Restore'),
+            me.role === 'superadmin'
+              ? el('button', {
+                  class: 'btn btn--sm btn--danger', type: 'button',
+                  onclick: async () => {
+                    // Names what goes, and says it twice over: this is the one
+                    // action on the notice board with nothing behind it.
+                    const what = [`“${n.title}”`, `${n.commentCount} replies`]
+                      .concat(n.attachmentCount ? [`${n.attachmentCount} files`] : []).join(', ');
+                    if (!confirm(`Permanently delete ${what}?\n\nThis cannot be undone.`)) return;
+                    await api.god.purgeNotice(n.id);
+                    await show('archive');
+                  },
+                }, 'Delete for good')
+              : null))
+      : [el('p', { class: 'muted' }, 'Nothing withdrawn.')]));
+}
+
+function proofArchive(proofs, stored) {
   return el('div', { class: 'panel stack' },
     el('h2', {}, 'Payment proofs'),
     el('p', { class: 'muted small' },

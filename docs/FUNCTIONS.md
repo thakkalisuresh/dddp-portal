@@ -33,6 +33,28 @@ Admin billing: the reading grid, and generation.
 | fn | `parseReadings` | Parse pasted or uploaded readings. |
 | fn | `normaliseFlat` |  |
 
+### `functions/lib/attachments.js`
+
+Attachments on notices and comments.
+
+| | Export | What it does |
+|---|---|---|
+| const | `MAX_BYTES` | One ceiling for everything, and it is not the proofs' 2MB. |
+| const | `MAX_IMAGE_BYTES` |  |
+| const | `MAX_PDF_BYTES` |  |
+| const | `ALERT_BYTES` | Above this, the committee hears about it on Telegram as it happens. |
+| const | `ACCEPTED` |  |
+| fn | `isLargeUpload` |  |
+| const | `MAX_THUMB_BYTES` | A thumbnail is made in the browser, so the server treats it as a claim to be checked rather than a fact. |
+| fn | `validateThumb` |  |
+| const | `MAX_PER_NOTICE` | How many files may hang off one parent. |
+| const | `MAX_PER_COMMENT` |  |
+| fn | `validateAttachment` |  |
+| fn | `safeFilename` | A filename safe to store and to send back in a header. |
+| fn | `r2Key` | R2 keys are grouped by parent so everything for one notice can be found — and removed — together. |
+| fn | `shapeAttachments` |  |
+| fn | `assertRoom` | Refuse the upload that would take a parent past its cap. |
+
 ### `functions/lib/backup.js`
 
 Nightly backup, and retention.
@@ -53,6 +75,7 @@ Nightly backup, and retention.
 | fn | `refreshAccessToken` | A refresh token issued while the OAuth consent screen is in "Testing" mode expires after seven days. |
 | fn | `uploadToDrive` |  |
 | fn | `backupFilename` |  |
+| const | `BACKUP_SETTING` |  |
 | fn | `runBackup` |  |
 | fn | `backupHealth` | Confirms the backup path still works WITHOUT writing a file. |
 
@@ -172,6 +195,7 @@ Self-checks — the building's invariants, written down as assertions.
 | fn | `checkExemptions` | Who is currently exempt from late fees. |
 | fn | `checkResetPath` | Can residents reset their own password? Two separate ways this fails, and they need different fixes: nobody can reset if the mail path is unconfigured, and an individual cannot reset if their account has no email — which is invisible until they are locked out and phoning somebody. |
 | fn | `checkDigest` | Has the digest actually been running? The digest is the only thing that surfaces 22 of the warn codes, and it is silent by design when nothing happened — so "no digest arrived" is indistinguishable from "a quiet night" unless the watermark is checked. |
+| fn | `checkBackup` | Is a copy of the data actually leaving the building? The failure mode here is silence, and it is a documented one: a refresh token issued while the OAuth consent screen is in "Testing" mode expires after seven days, at which point the nightly upload simply stops. |
 | fn | `checkConfig` |  |
 | fn | `runChecks` | An empty table and an unreadable one are NOT the same thing. |
 | fn | `summarise` |  |
@@ -284,7 +308,11 @@ Notices and their comments.
 | fn | `shapeComments` | Hidden comments keep their row and their author, so moderation is auditable rather than a silent disappearance. |
 | const | `NOTICE_SCOPES` |  |
 | fn | `canSeeNotice` | Can this viewer see a notice with this scope? The ONE place the rule lives. |
+| fn | `canSeeAttachment` | May this viewer be served this attachment? A FUNCTION RATHER THAN THREE LINES IN THE ROUTE, because those three lines were wrong the first time they were written: they let `hasRole(session, 'admin')` short-circuit the scope check, and hasRole reads the ACTOR. |
+| fn | `isCommittee` |  |
 | fn | `listNotices` |  |
+| fn | `listArchivedNotices` | Withdrawn notices, for the committee's archive. |
+| fn | `purgeNotice` | Destroy a withdrawn notice and everything hanging off it. |
 | fn | `unreadNoticeCount` | How many active notices are newer than the last time this resident looked. |
 | fn | `markNoticesSeen` | Stamped when the resident opens the notice list, which is the only honest definition of "seen" available without tracking scroll position. |
 | fn | `getNotice` |  |
@@ -490,6 +518,11 @@ Client-side image compression.
 | const | `MAX_EDGE` | Client-side image compression. |
 | const | `QUALITY` |  |
 | fn | `compressImage` |  |
+| const | `ATTACHMENT_MAX_BYTES` |  |
+| const | `THUMB_EDGE` | The inline copy shown on the notice board. |
+| const | `THUMB_QUALITY` |  |
+| fn | `makeThumbnail` | A small copy for the page, or null when there should not be one. |
+| fn | `prepareUpload` | An attachment ready to upload. |
 | fn | `humanSize` |  |
 
 ### `public/js/contact.js`
@@ -516,17 +549,25 @@ Dialling codes, and what a valid national number looks like under each.
 
 ### `public/js/i18n.js`
 
-Bilingual labels — English with Malayalam alongside for the ~30 strings a resident actually reads.
+Formatting for the things a resident reads: money, weight, months, dates.
 
 | | Export | What it does |
 |---|---|---|
-| const | `L` | Bilingual labels — English with Malayalam alongside for the ~30 strings a resident actually reads. |
-| fn | `bilingual` |  |
-| fn | `en` |  |
 | fn | `money` | Indian rupee. |
 | fn | `kg` |  |
 | fn | `periodLabel` |  |
 | fn | `dayLabel` |  |
+| fn | `timeLabel` |  |
+| fn | `stampLabel` | When something was posted, at the precision a reader actually wants. |
+
+### `public/js/markdown.js`
+
+A very small markdown subset, for notice bodies.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `parse` | Body text -> a block tree: paragraphs and bullet lists. |
+| fn | `renderMarkdown` |  |
 
 ### `public/js/mobile-field.js`
 
@@ -598,4 +639,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-304 exports. 181 have no doc comment.
+331 exports. 193 have no doc comment.

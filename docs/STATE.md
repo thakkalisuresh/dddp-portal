@@ -140,5 +140,3 @@ Things I could not check and someone should:
 - That an impersonated admin genuinely cannot reset the superadmin's password
   on the live site. Proven locally with a real admin session, never on prod.
 - Whether `qr.ddwelfare@sib` is a live VPA.
-- Whether the Malayalam strings are correct. They are unreviewed, and a
-  language toggle would remove the English sitting beside them.

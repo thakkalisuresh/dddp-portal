@@ -23,14 +23,6 @@
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2000-206F, U+20B9, U+2122;
 }
 
-@font-face {
-  font-family: 'Manjari';
-  src: url('../fonts/manjari-malayalam.woff2') format('woff2');
-  font-weight: 400;
-  font-display: swap;
-  unicode-range: U+0307, U+0323, U+0D00-0D7F, U+200C-200D, U+25CC;
-}
-
 :root {
   /* ── colour ─────────────────────────────────────────────────────────────
      Navy ink on warm paper, one green accent. Green is retained deliberately:
@@ -59,11 +51,10 @@
 
   /* ── type ───────────────────────────────────────────────────────────────
      Lexend for UI and figures (designed for reading proficiency, which is the
-     point given the resident age range). Source Sans 3 for prose. Manjari for
-     Malayalam — an open-source face designed in Kerala.                     */
+     point given the resident age range). Source Sans 3 for prose. Two faces,
+     both Latin — the Malayalam face went with the bilingual labels.         */
   --font-ui:   'Lexend', ui-sans-serif, system-ui, sans-serif;
   --font-body: 'Source Sans 3', ui-sans-serif, system-ui, sans-serif;
-  --font-ml:   'Manjari', 'Noto Sans Malayalam', sans-serif;
 
   /* 18px base, not 16 — older readers. */
   --text-xs:   0.778rem;   /* 14 */

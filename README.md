@@ -31,7 +31,7 @@ the cron running old code, and shipping only the Worker leaves the site stale.
 | 1 | Scaffold, auth, sessions, roles, audit | **done** |
 | 1b | God mode — view-as, impersonation, error log | **done** |
 | — | Error-code registry + generated docs | **done** |
-| 2 | Design system, app shell, self-hosted fonts, bilingual labels | **done** |
+| 2 | Design system, app shell, self-hosted fonts | **done** |
 | 3 | Resident dashboard, login, dev seed | **done** |
 | 4 | Meter reading grid + bill generation | **done** |
 | 4b | Bulk reading import (paste + template) | **done** |
@@ -210,7 +210,6 @@ pruned — it is what makes administration accountable.
   one-time password at cutover; readings restart from a physical meter walk.
 - **Test UPI amount-prefill on real apps early.** The VPA is personal, not a merchant one,
   so behaviour differs across GPay, PhonePe and Paytm and NPCI keeps tightening it.
-- **Malayalam labels need a native speaker** before launch.
 - **Publish the Google OAuth consent screen to Production** before relying on the
   nightly backup. A refresh token issued in "Testing" mode expires after 7 days and
   the backup then fails silently — `GET /api/admin/backup-health` and the Export tab

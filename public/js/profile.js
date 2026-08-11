@@ -10,7 +10,6 @@ import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
 import { $, el, esc, renderGodBanner, showError, withReveal } from './ui.js';
-import { bilingual } from './i18n.js';
 
 const main = $('#main');
 
@@ -40,7 +39,7 @@ function render(me) {
   const next = el('input', { class: 'input', id: 'new', type: 'password', autocomplete: 'new-password' });
 
   main.replaceChildren(
-    el('h1', { html: bilingual('myDetails') }),
+    el('h1', {}, 'My details'),
     status,
     // Apartment, floor, and whether you own or rent. There is no confirmation
     // step in onboarding by design, so this line IS how a wrong roster entry
@@ -71,7 +70,7 @@ function render(me) {
     }, 'Save'),
 
     el('hr', { class: 'rule' }),
-    el('p', { class: 'label', html: bilingual('changePassword') }),
+    el('p', { class: 'label' }, 'Change password'),
     pwStatus,
     el('div', { class: 'field' }, el('label', { for: 'cur' }, 'Current password'), withReveal(current)),
     el('div', { class: 'field' }, el('label', { for: 'new' }, 'New password'), withReveal(next)),

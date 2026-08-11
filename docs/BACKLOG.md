@@ -170,24 +170,30 @@ always was.
 
 ## B1 — Language toggle (English ⇄ Malayalam)
 
-Replace the side-by-side bilingual labels with a real toggle. Agreed as the
-right end state; parked because the toggle itself is the small part.
+Still the agreed end state. **The half-measure is gone**: the side-by-side
+bilingual labels were removed 2026-08-10, along with the Manjari face and the
+`.ml` class, because a second word in a span was an unreviewed guess sitting
+next to every English label — a promise the app could not keep. English-only is
+honest; a toggle would be better; the thing in between was neither.
 
-28 keys in `public/js/i18n.js` at 10 call sites, against ~58 explanatory
-sentences hardcoded in English. Today a weak translation is survivable because
-the English sits beside it. Under a toggle it is the only thing on screen.
+So this now starts from nothing rather than from 28 keys, which changes less
+than it sounds: the registry was never the source of truth, and the ~58
+explanatory sentences hardcoded across the screens always were the real body of
+work. The old strings are in git if they are ever worth reviving as a starting
+draft — `git show 4bba0ab:public/js/i18n.js`.
 
-Known risk worth testing FIRST: Malayalam runs long. "Upload screenshot" is
-roughly 3x wider. If the nav cannot hold the real strings, that changes the
-labels, not the CSS.
+Known risk worth testing FIRST, unchanged: Malayalam runs long. "Upload
+screenshot" is roughly 3x wider. If the nav cannot hold the real strings, that
+changes the labels, not the CSS.
 
 Blocked by B2.
 
-## B2 — Malayalam review by a native speaker
+## B2 — Malayalam strings, from a native speaker
 
-The 28 existing strings are unreviewed. Best use of a resident who reads
-Malayalam: generate the full English list as two columns and have them fill the
-second. Better than asking them to audit guesses.
+Nothing to review any more — there are no Malayalam strings in the app. What is
+needed is the strings themselves, which was always the better shape: give a
+resident who reads Malayalam the full English list as two columns and have them
+fill the second, rather than asking them to audit somebody's guesses.
 
 Blocks B1.
 
@@ -215,11 +221,31 @@ been set, so `runBackup` returns early every night and nothing is copied
 off-site. The only backups that exist are the ones taken by hand during this
 work, sitting in a scratchpad directory that does not survive the session.
 
-Unblocked by W1 — it shares the same OAuth credentials as email.
+**Still true, and still blocked on W1** — it shares the same OAuth credentials
+as email, plus `GOOGLE_BACKUP_FOLDER_ID`.
 
-Worth adding a doctor check once it is on: a backup that silently stops looks
-exactly like a backup that is working, which is the failure the digest
-staleness check already exists for.
+**The watching half is now built (2026-08-10).** `runBackup` writes a
+`last_backup_at` watermark to `settings` on an upload that returned, mirroring
+the digest's, and `checkBackup` reads it: BACKUP-NOT-CONFIGURED while the
+secrets are missing, BACKUP-NEVER once configured but before the first 3am run,
+BACKUP-STALE past 48 hours. The Export tab shows the same fact in words a
+treasurer reads — "Last copy written 3 days ago", or "No copy has ever been
+written".
+
+That check is what makes the rest safe to switch on. `backupHealth` only ever
+answered "would the token work right now", which is the reassuring half: a
+refresh token issued in OAuth "Testing" mode expires after seven days and the
+upload then stops silently, looking exactly like a folder nobody opened. Only
+the watermark separates the two.
+
+Doctor now reports BACKUP-NOT-CONFIGURED against production, so the silence is
+at least visible while it lasts. Also removed: the Export tab used to state
+flatly that "a copy is also sent to the committee Drive folder every night",
+which has never once been true.
+
+What remains is entirely W1: set the four secrets, publish the OAuth consent
+screen to Production, then confirm the watermark advances after the first 3am
+run rather than trusting that it did.
 
 ---
 
