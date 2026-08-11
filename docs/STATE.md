@@ -45,10 +45,18 @@ The portal is **built and deployed**. It has never billed a real month.
 **Billing.** Readings grid, paste import, per-period rate, preview before
 generation, ceiling rounding, the 2.60 conversion, locked periods.
 
-**Payment.** UPI deep links per platform, dynamic QR on desktop, a named app row
-on both phone platforms (Android by `package=`, with `browser_fallback_url`), a
-manual fallback on every platform that the page reveals by itself when a handoff
-goes nowhere, payment-intent logging from Pay and from Copy alike.
+**Payment.** Four routes, ordered by how reliably they survive a device that
+will not cooperate: Android leads with the plain `upi://` link that raises the
+OS chooser (the mechanism NPCI defines), then the named app row, then a QR —
+available on phones now, not only desktop — then the UPI ID, copyable, which
+always works. iOS keeps per-app schemes because it has no chooser to fall back
+on. A failed handoff says so, both when the page watches the tap go nowhere and
+when Chrome bounces back through `browser_fallback_url` carrying `?upi=blocked`.
+Payment-intent logging fires from Pay and from Copy alike.
+
+The ordering is not a preference, it is a finding: see "The Android payment
+failure" below. No `tr` is sent — it described a merchant transaction the
+payload could not substantiate, and nothing ever read it back.
 
 **Proof.** Client-side resize, upload to R2, duplicate detection by image hash
 and UTR, a review queue with bulk approve for exact matches, retention pruning.
@@ -129,14 +137,63 @@ rather than to the state the cron protects.
 
 Full list with reasoning in `docs/BACKLOG.md`.
 
+## The Android payment failure, resolved as far as it can be
+
+Investigated 2026-08-11 on real hardware. **The links were never the problem,
+and no change to them can fix this.**
+
+What was proven, on a stock Android with apps registered for `upi://`: every
+link shape the portal emits — plain `upi://`, `intent://` with and without a
+package, `gpay://`, `tez://` — delivers our exact URI to the app byte for byte,
+and the plain link raises Android's own app chooser. The payload is equally
+clear: Google Pay reads the identical URI correctly when it arrives by QR.
+
+What actually fails is intent RESOLUTION. On both handsets inspected, the UPI
+apps had **disabled their own deep-link components** — Google Pay's
+`UpiIntentFilter`, PhonePe's `IntentRegistrationActivity`, Paytm's
+`UPIDeeplinkActivity`. The manifests still advertise the filters, which is why
+they look correct from outside, but a disabled component is invisible to
+resolution. Android returns "unable to resolve", and Chrome does the only two
+things it can: nothing at all for `upi://`, or follows `browser_fallback_url`
+for `intent://` — which pointed back at the dashboard and read as a page
+reload. Both reported symptoms, one cause.
+
+**Nothing outside the app can switch those components back on.** Enabling them
+needs `CHANGE_COMPONENT_ENABLED_STATE`, which is signature-level; a web page has
+no access to the package manager at all. Even `adb shell pm enable` with USB
+debugging is refused outright — `SecurityException: Shell cannot change
+component state`. Only Google Pay can, by its own logic, per device.
+
+Why the apps disable it is NOT established. Onboarding state is the obvious
+theory — the OnePlus tested had no bank linked, and an app should not advertise
+a payment door it cannot open — but the phone that originally failed has a
+working Google Pay, which the theory does not explain. No documentation states
+the rule. The direction of travel is at least consistent: UPI security guidance
+says not to rely on custom schemes because any app can claim `upi://`, and
+Google's own web documentation offers websites no deep-link path, only a
+verified-merchant API.
+
+**The design conclusion:** a web page cannot see whether a resident's UPI app
+will accept a link, so the pay screen must work when it does not. Hence the
+chooser first, the QR on mobile as well as desktop, the UPI ID always copyable,
+and an honest message when a tap goes nowhere.
+
 ## Not verified by me
 
 Things I could not check and someone should:
 
-- **Whether the reported Android payment failure is fixed.** Two real defects
-  were found and corrected, but the original could not be reproduced from here.
-  It needs testing on the phone that failed.
+- Whether a UPI app with a bank account actually linked keeps its deep-link
+  component enabled. One command answers it on such a phone:
+  `adb shell dumpsys package com.google.android.apps.nbu.paisa.user | grep -A10 disabledComponents`
 - The god-mode Health tab rendering against production.
 - That an impersonated admin genuinely cannot reset the superadmin's password
   on the live site. Proven locally with a real admin session, never on prod.
-- Whether `qr.ddwelfare@sib` is a live VPA.
+- Whether `qr.ddwelfare@sib` is registered as a MERCHANT VPA, and its MCC. The
+  answer decides whether `tr` can return to the payment link — it was removed
+  because sending it without `mc` describes a merchant transaction the payload
+  cannot substantiate, which PSP apps refuse. One call to South Indian Bank.
+
+**`qr.ddwelfare@sib` is a live VPA** and no longer belongs on this list, as of
+2026-08-11: Google Pay resolved it from the portal's own QR and displayed the
+payee as DD Diamond Park RWA. A UPI app only shows a payee name after the
+address resolves against the registry.
