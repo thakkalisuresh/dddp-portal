@@ -97,7 +97,31 @@ export function linkRows(links) {
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-/** The whole test page as one self-contained string — no imports, no backend. */
+/**
+ * The whole test page as one self-contained string — no imports, no backend.
+ *
+ * ON THE STYLING: it borrows the portal's tokens, but only the parts that are
+ * ERGONOMICS rather than IDENTITY.
+ *
+ * Taken — the 18px base (chosen there for older readers, and the tester here is
+ * one), hairline borders instead of shadows, a single accent, 56px touch
+ * targets, tabular figures, warm paper rather than pure white. These make the
+ * page feel considered, which is not vanity: a link that looks thrown together
+ * may simply not get tapped, and an untapped link is a failed run.
+ *
+ * Left behind — the accent green and the Lexend / Source Sans 3 pairing. Those
+ * are the association's identity. `tokens.css` documents the green as
+ * deliberately carried over from the old site so residents recognise it, which
+ * is precisely the recognition a page handed to an outsider must not create.
+ * The faces are self-hosted too, so matching them would mean either base64-ing
+ * 67KB of woff2 into the page or fetching them from the portal's hostname —
+ * and that would put the name in a network request no matter what the page
+ * itself says. Same bones, different skin.
+ *
+ * None of this reasoning is emitted. The generated page is read by someone
+ * outside the association, and a stylesheet comment explaining what is being
+ * kept from them is its own disclosure, sitting in view-source.
+ */
 export function renderPage({ vpa = TEST_VPA, payee = TEST_PAYEE, now = new Date() } = {}) {
   const links = buildUpiLinks({
     vpa,
@@ -126,21 +150,66 @@ export function renderPage({ vpa = TEST_VPA, payee = TEST_PAYEE, now = new Date(
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Link check</title>
 <style>
-  :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
-  body { margin: 0; padding: 20px; max-width: 640px; }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  .lead { color: #666; margin: 0 0 20px; }
-  #warn { display: none; background: #b3261e; color: #fff; padding: 14px; border-radius: 8px; margin-bottom: 20px; }
+  :root {
+    --ink: #0F172A;
+    --ink-muted: #52525B;
+    --paper: #FAFAF8;
+    --surface: #FFFFFF;
+    --border: #DDDCD6;
+    --accent: #334155;
+    --good: #15803D;
+    --bad: #B91C1C;
+    --bad-wash: #FCF3F3;
+    --bad-line: #E7C3C3;
+    --font: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto; padding: 24px 20px 48px; max-width: 40rem;
+    background: var(--paper); color: var(--ink);
+    font-family: var(--font); font-size: 18px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    font-variant-numeric: tabular-nums;
+  }
+  h1 { font-size: 1.667rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 4px; }
+  h2 { font-size: 1.111rem; font-weight: 600; letter-spacing: -0.02em; margin: 32px 0 4px; }
+  p { margin: 0; max-width: 34rem; }
+  .lead { color: var(--ink-muted); font-size: 0.889rem; margin-bottom: 24px; }
+  #warn {
+    display: none; background: var(--bad-wash); border: 1px solid var(--bad-line);
+    color: #7F1D1D; padding: 12px 16px; border-radius: 10px; margin-bottom: 24px;
+    font-size: 0.889rem;
+  }
   #warn.show { display: block; }
   ul { list-style: none; padding: 0; margin: 0; }
-  .row { border: 1px solid #8883; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
-  .tap { display: block; font-weight: 600; text-decoration: none; color: #0b57d0; }
-  .uri { font: 11px/1.4 ui-monospace, monospace; color: #888; word-break: break-all; margin: 6px 0; }
-  .verdict { font-size: 14px; font-weight: 600; color: #888; }
-  .verdict.opened { color: #146c2e; }
-  .verdict.nothing { color: #b3261e; }
-  #summary { width: 100%; min-height: 140px; margin-top: 8px; font: 12px ui-monospace, monospace; }
-  button { font-size: 15px; padding: 10px 16px; border-radius: 8px; border: 1px solid #8886; background: transparent; color: inherit; }
+  .row {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin-bottom: 12px;
+  }
+  .tap {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 56px; padding: 12px 20px; border-radius: 8px;
+    background: var(--accent); color: #fff; font-weight: 600;
+    text-decoration: none; text-align: center;
+  }
+  .uri {
+    font: 0.72rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--ink-muted); word-break: break-all; margin: 10px 0 8px;
+  }
+  .verdict { font-size: 0.889rem; font-weight: 600; color: var(--ink-muted); }
+  .verdict.opened { color: var(--good); }
+  .verdict.nothing { color: var(--bad); }
+  #summary {
+    width: 100%; min-height: 150px; margin-top: 8px; padding: 12px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+    color: var(--ink); font: 0.72rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #copy {
+    min-height: 56px; width: 100%; margin-top: 12px; padding: 12px 20px;
+    border-radius: 8px; border: 1.5px solid var(--accent);
+    background: transparent; color: var(--accent);
+    font-family: var(--font); font-size: 1rem; font-weight: 600; cursor: pointer;
+  }
 </style>
 
 <h1>Link check</h1>

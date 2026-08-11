@@ -675,8 +675,8 @@ Generate the standalone UPI intent-resolution test page.
 | const | `TEST_AMOUNT` |  |
 | const | `TEST_NOTE` | Rendered by the UPI app on its confirmation screen, in caps because it is the last thing anyone reads before a real transfer. |
 | fn | `linkRows` | Every shape the portal can emit, each one its own row. |
-| fn | `renderPage` |  |
+| fn | `renderPage` | The whole test page as one self-contained string — no imports, no backend. |
 
 ---
 
-357 exports. 203 have no doc comment.
+357 exports. 202 have no doc comment.

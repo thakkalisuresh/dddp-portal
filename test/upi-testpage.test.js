@@ -59,4 +59,20 @@ describe('upi test page', () => {
   it('sets no browser_fallback_url', () => {
     expect(html).not.toContain('browser_fallback_url');
   });
+
+  // The page borrows the portal's ERGONOMICS on purpose and its IDENTITY never.
+  // This guards the distinction against a later well-meaning "make it match the
+  // site" — the accent green is documented in tokens.css as carried over from
+  // the old site for resident recognition, which is the one thing a page handed
+  // to an outsider must not reproduce.
+  it('wears none of the portal identity', () => {
+    expect(html).not.toContain('0A6B4A');
+    expect(html).not.toMatch(/Lexend|Source Sans/);
+  });
+
+  // Everything must be inline. A request to the portal for a font or stylesheet
+  // would put its hostname in the network log regardless of what the page says.
+  it('requests nothing from anywhere', () => {
+    expect(html).not.toMatch(/<link[^>]+href|src=["']https?:|@import|\.woff2/);
+  });
 });
