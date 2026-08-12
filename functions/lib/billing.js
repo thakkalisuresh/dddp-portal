@@ -119,7 +119,7 @@ export function assertRateSetForPeriod(period) {
 }
 
 /**
- * Catch a fat-fingered rate before 52 bills are generated from it.
+ * Catch a fat-fingered rate before 99 bills are generated from it.
  *
  * This is a note at the point of entry, NOT an error. A rate that moved is
  * ordinary monthly business: the real history here is 72 -> 75 -> 75 -> 75, a
@@ -129,7 +129,7 @@ export function assertRateSetForPeriod(period) {
  *
  * What survives is the one thing worth keeping: a line on screen at the moment
  * the number is typed, when it costs nothing to double-check the supplier bill
- * and everything to discover it after 52 bills have gone out.
+ * and everything to discover it after 99 bills have gone out.
  */
 export const RATE_JUMP_THRESHOLD = 0.25;
 

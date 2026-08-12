@@ -5,7 +5,7 @@ Only usage can cost anything, and the building is roughly three orders of
 magnitude below every limit.
 
 Measured on the live account, 2026-08-08 — and note that this traffic was
-testing, not 52 residents:
+testing, not 99 flats of residents:
 
 | | Using | Free allowance | |
 |---|---|---|---|
@@ -31,18 +31,38 @@ are unmetered. Deploying fifty times in a day costs the same as not deploying.
 
 Workers, Pages and D1 on the free plan **fail closed**: past the daily limit
 requests start failing rather than quietly billing. For this building that is
-the right failure mode, and it is not a limit 52 flats can reach — one
+the right failure mode, and it is not a limit 99 flats can reach — one
 resident checking a bill is a handful of requests, against 100,000 a day.
 
 **R2 is the exception, and it is why the account needed a card.** R2 meters
 storage and operations with no free-plan cutoff, so it bills past the
-allowance. In practice: ~52 payment screenshots a month, compressed in the
+allowance. In practice: ~99 payment screenshots a month, compressed in the
 browser before upload to well under 500 KB each — call it 25 MB/month against
 10 GB. With nothing ever deleted that is roughly 3% after a year. Egress is
 free on R2, which is the charge that usually catches people on other providers.
 
 Screenshot retention already prunes old objects (see `pruneOldRows` and
 `docs/PRIVACY.md`), so storage does not grow without bound.
+
+## The limit that is not about money
+
+**50 subrequests per Worker invocation**, on the free plan. It is in this file
+because it is a free-tier ceiling and because B20 was found by checking batch
+sizes against this page — which did not mention it, so the ceiling had to be
+rediscovered from Cloudflare's documentation.
+
+It binds nothing today and it is not a bill. What it does is cap the nightly
+Drive backup at fifty **Google API** calls a night: R2 and D1 do not compete for
+those, being counted against a separate internal allowance of 1,000 that this
+job comes nowhere near. Workers Paid raises it to 10,000, which is the ~$5/month
+subscription described below and a legitimate alternative to rationing.
+
+The reason it matters is the failure mode rather than the number. The backup's
+sweeps run in a fixed order and catch per item, so exhausting the budget shows
+up as a swallowed count and an unmarked row — the later sweeps starve every
+night while the watermark advances and the health check reports a good backup.
+See **B20** for the split that fixes it. The month it bites is the month
+residents actually start uploading, which is the month the portal goes live.
 
 ## The one thing worth doing
 

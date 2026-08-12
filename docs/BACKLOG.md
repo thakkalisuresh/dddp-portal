@@ -285,11 +285,13 @@ Worth knowing before weighing it up: **2 of 107 accounts have any address at
 all** (B5 and W2 are the same fact from other angles), so this is a door almost
 nobody could use on the day it shipped.
 
-**One live bug hides in here.** The login field is `type="tel"
-inputmode="numeric"` — a digit keypad with no `+`. An owner with a foreign
-number cannot type their own login on a phone. Harmless so far because every
-stored number is `+91`; a text input fixes it in one line, and should not wait
-for the rest of this.
+**The live bug that used to hang off this entry is fixed**, and the paragraph is
+kept rather than deleted because the reasoning is what made it worth finding.
+The login field was `type="tel" inputmode="numeric"` — a digit keypad with no
+`+`, so an owner with a foreign number could not type their own login on a
+phone. It is now `inputmode="tel"` (`public/login.html`), which `/forgot` had
+right all along. Nothing else in B18 is affected: this was always the one part
+that did not need the list of old usernames to proceed.
 
 ## B23 — The app row sends people to install apps they already have
 
@@ -479,9 +481,27 @@ than BACKUP-NOT-CONFIGURED.
 **It has still not run.** `google:auth` proved the credentials and the folder by
 uploading a real check file, which is a different claim from "the nightly job
 works": the cron firing, `runBackup` completing against 105 residents and 898
-bills, and the watermark advancing are all still unobserved. The morning of
-2026-08-12 is the check, and BACKUP-NEVER disappearing is the only evidence that
-counts. This entry stays open until then.
+bills, and the watermark advancing are all still unobserved. BACKUP-NEVER
+disappearing is the only evidence that counts, and this entry stays open until
+it does.
+
+**The check was set for the morning of 2026-08-12 and that date was wrong — by
+about sixteen minutes.** Established on 2026-08-12 rather than assumed, because
+"the backup did not run" is exactly the shape of failure this feature is prone
+to and it deserved evidence either way. The `0 22 * * *` trigger was committed
+at 21:36 UTC on 2026-08-11, and the deploy carrying it landed at **22:16 UTC —
+after that night's 22:00 window had passed.** There has therefore never been a
+window with the trigger deployed. **The real check is the morning of
+2026-08-13.**
+
+Everything downstream is verified, so there is nothing to do but wait: all four
+`GOOGLE_BACKUP_*` secrets are on the cron Worker, `BACKUP_CRON` matches
+`wrangler.toml`, `last_digest_at` proves cron delivery reaches this Worker, and
+`settings` has no `last_backup_at` key at all — the shape of a job that never
+ran, not one that ran and failed. Worth recording because the diagnosis is
+reusable: **a deploy that misses tonight's window is indistinguishable from a
+broken job until the following night**, and the four checks above are what
+separate them without waiting.
 
 If it fails instead, it will say so — Telegram alerting is live and `runBackup`
 reports through `reportError`, so a failed upload pages the treasurer rather

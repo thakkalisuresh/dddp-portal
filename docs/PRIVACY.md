@@ -1,8 +1,13 @@
 # What the portal records, and what it deliberately does not
 
-This is a residents' portal for 52 households. The people running it live in
-the same building as the people it records. That asymmetry is worth being
-explicit about.
+This is a residents' portal for 99 flats. The people running it live in the
+same building as the people it records. That asymmetry is worth being explicit
+about.
+
+(This said "52 households" until 2026-08-12, a figure that predates the
+building model in `functions/lib/building.js` and had been copied into
+`docs/COSTS.md` as well. 99 is what the `flats` table holds and what the roster
+import validates against.)
 
 ## What is recorded
 
@@ -65,6 +70,52 @@ activity trail.
 
 Every admin view of a payment screenshot is itself written to `audit_log`, so
 looking at a resident's financial documents is a recorded act.
+
+## Where this data leaves Cloudflare
+
+Added 2026-08-12. Until then this document described what is recorded and who
+inside the portal can read it, and said nothing about the three routes by which
+resident data leaves the account entirely — which is the half a resident would
+actually ask about.
+
+**Nightly, to a committee member's personal Google Drive.** The 3:30 IST backup
+uploads the full CSV bundle plus payment screenshots and notice attachments.
+That bundle carries every resident's **name, mobile, email and payment
+history**. It never carries passwords or password hashes — `NEVER_EXPORT` in
+`lib/backup.js` is what enforces that, and it is a list worth checking before
+adding a column to `owners`.
+
+The account is deliberately personal rather than the association's, because
+Drive charges a file to whoever creates it and the association's 15 GB is wanted
+for its own documents (B12). The consequence belongs here rather than only in
+the backlog: **one named committee member is holding the association's records
+in a personal account.** When they leave the committee that is an account to
+replace, not a folder to hand over — re-run `npm run google:auth -- backup` as
+the new holder, which re-points the upload without moving anything.
+
+**To Telegram, on alerts and the morning digest.** One shared committee chat,
+via `postToTelegram`. It carries error codes, counts and the fact that something
+needs attention. It is deliberately kept clear of resident contact details: the
+contact-change notification (B22) says a request is waiting and who raised it,
+and does **not** carry the new number or address, because that chat is a wider
+audience than the console and nothing in it can be recalled.
+
+**To Gmail, when a resident recovers their account.** `/forgot` mails a
+six-digit code to the address on file. A code rather than a link, because a link
+in an inbox is a bearer token that outlives its use and mail scanners follow
+links and consume them. This route is **not live yet** — it needs the
+association Gmail (W1) — and the From line must be the association's, so
+resident-facing mail deliberately does not use the personal backup account.
+
+**And the one that is not a route at all:** the reconciliation statement. The
+bank statement's PDF text layer is read inside the Worker and never posted to
+the vision provider, because the alternative is mailing every member's payment
+history to a third party. The file itself is deleted on finish and never
+stored. Screenshot OCR (`GROQ_API_KEY` / `GEMINI_API_KEY`) is optional, applies
+to payment screenshots only, and is never a gate on paying a bill.
+
+There is still no analytics script, no third-party tag, and no font CDN
+request.
 
 ## Retention
 
