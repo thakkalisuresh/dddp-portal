@@ -165,6 +165,7 @@ is useless and does not come back.
 | | |
 |---|---|
 | **B10** | Admin-issued temporary passwords never expire. Sent over WhatsApp, which keeps them for years. |
+| **B21** | An admin who resets a resident's password is handed a working credential for that account, so they can log in as that resident and `must_change_pw` does not prevent it. Bounded by `canResetPassword` — not the superadmin, not another admin — so it is the 99 residents. Decided 2026-08-12; blocked on W1. |
 | **B12** | Configured 2026-08-11; no off-site backup has run *yet*. First 3am is unproven. |
 | — | Rejecting a proof gives the resident no reason, so they re-upload the same wrong screenshot. Now that rejection also returns the bill to `unpaid` and the late fee applies (B13), this matters more than it did. |
 | — | Deleting a proof clears R2 but keeps `image_sha256`, so duplicate detection still fires against an image nobody can see. |

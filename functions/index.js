@@ -1067,8 +1067,12 @@ async function patchResident(request, env, session, path) {
   const id = Number(path.split('/')[4]);
   const b = await readJson(request);
 
-  const target = await env.DB.prepare('SELECT id, name, flat, role FROM owners WHERE id = ?')
-    .bind(id).first();
+  // email and mobile are read for the audit trail as much as for the edit: the
+  // log has to say what an admin changed a number FROM, or a resident locked
+  // out by a corrected typo leaves no record of the number that used to work.
+  const target = await env.DB.prepare(
+    'SELECT id, name, flat, role, email, mobile FROM owners WHERE id = ?'
+  ).bind(id).first();
   if (!target) return problem(404, 'DDP-AUTH-006', 'No such resident.');
 
   // The directory puts mobile and email in front of every admin, and mobile IS
@@ -1084,6 +1088,9 @@ async function patchResident(request, env, session, path) {
 
   const fields = [];
   const values = [];
+  // What the audit row will say. Keyed by field, each entry the value before
+  // and after, so the log answers "what was it?" and not merely "it changed".
+  const changes = {};
   // Validated by the same helper the god-edit page uses, which normalises the
   // mobile to E.164. This path used to store bare digits while login looked up
   // '+91…', so an admin fixing a typo could lock the resident out entirely.
@@ -1102,6 +1109,11 @@ async function patchResident(request, env, session, path) {
           `That ${field} already belongs to ${clash.name} (${clash.flat}).`);
       }
     }
+    // The normalised value, not what was typed — that is what gets stored, and
+    // an audit row showing the raw input would misreport the account's state.
+    if (value !== (target[field] ?? null)) {
+      changes[field] = { from: target[field] ?? null, to: value };
+    }
     fields.push(`${field} = ?`);
     values.push(value);
   }
@@ -1116,12 +1128,19 @@ async function patchResident(request, env, session, path) {
       await reportError(env, 'DDP-ADMIN-006', { id, newRole: b.role, count: count?.n });
       return problem(409, 'DDP-ADMIN-006', verdict.message);
     }
+    if (b.role !== target.role) changes.role = { from: target.role, to: b.role };
     fields.push('role = ?'); values.push(b.role);
   }
   if (!fields.length) return problem(400, 'DDP-ADMIN-003', 'Nothing to change.');
 
   await env.DB.prepare(`UPDATE owners SET ${fields.join(', ')} WHERE id = ?`).bind(...values, id).run();
-  await audit(env, session, 'resident.update', { id, changed: Object.keys(b ?? {}) });
+  // Only what actually moved, following the rule `diff()` already sets for the
+  // god path: a field submitted with the value it already held records nothing.
+  // The list of submitted keys used to be all this row carried; it is dropped
+  // rather than kept beside `changes`, because the two together overflow the
+  // 300 characters the activity log renders and `role` is what falls off the
+  // end — the one change in here worth reading.
+  await audit(env, session, 'resident.update', { id, flat: target.flat, changes });
   return json({ id });
 }
 

@@ -4,7 +4,12 @@ Deferred deliberately. Everything here was raised, considered, and parked — no
 forgotten. Items keep their number for life so commit messages stay meaningful;
 the ORDER is priority, so the top of this file is what to do next.
 
-Reviewed 2026-08-11.
+Reviewed 2026-08-12.
+
+**B10, B21, B22 and B18 are one decision, taken 2026-08-12.** Read them
+together or they mislead: each one alone looks like a smaller, stranger change
+than it is. The decision is written out once at the head of "Ready to build"
+rather than four times.
 
 ---
 
@@ -15,9 +20,14 @@ the schema for 99 flats, four committee accounts, and **no bills**.
 
 ## C1 — The roster
 
-Flat, name, mobile, owner/tenant, for ~99 flats. Everything to consume it is
-built and deployed (`/admin/roster`): paste, preview, import, then a worklist
-for sending logins with sent/logged-in tracking.
+Flat, name, mobile, **email**, owner/tenant, for ~99 flats. Everything to consume
+it is built and deployed (`/admin/roster`): paste, preview, import, then a
+worklist for sending logins with sent/logged-in tracking.
+
+**Email joined that list on 2026-08-12** and is the one addition worth chasing
+while the sheet is still going round — it is now how a resident recovers their
+own account, so a flat without one is a flat that will need a person every time
+somebody forgets a password. See the credential decision under "Ready to build".
 
 The only genuine blocker, and it is a people problem rather than a software
 one. Collecting it from a committee is measured in weeks.
@@ -69,6 +79,53 @@ NO-EMAIL-ON-FILE.
 
 # Ready to build
 
+## The credential decision, 2026-08-12
+
+B10, B21 and B22 are three parts of one change, and B18 is what it leans on.
+Stated once, here:
+
+**An admin who can reset a resident's password can become that resident.** The
+reset does not show them an existing password — the old one is a hash and is
+gone — but it mints a new one and hands it to the admin, who then knows a working
+credential for an account that is not theirs. `must_change_pw = 1` does not
+help: the admin can log in first and change it themselves. Every bill, every
+proof, every notice comment that account touches afterwards is attributable to
+a resident who never typed the password. `canResetPassword` already stops an
+admin resetting the superadmin or another admin, which was the sharp end; what
+remains is all 99 residents.
+
+So: **reset moves to the superadmin, and residents recover their own accounts by
+email.** The admin's job in a recovery becomes telling the resident to use
+`/forgot`.
+
+**Admins keep the collecting, not the writing.** An admin is the person who
+learns that 7B's number has changed — they are in the building and they answer
+the phone. Taking away the edit and leaving them nothing to do with what they
+learn would just route the change through a WhatsApp message to the superadmin,
+which is worse than a form because nothing records it. So they raise a request
+with a reason, the superadmin approves, and approving is what applies the change
+(B22).
+
+**Email becomes a mandatory roster column** (C1), because email is now the
+recovery route and a resident without one has no way back into their account.
+
+Three things that will catch you out, all verified in the code rather than
+remembered:
+
+1. **"Temporary password" is not a one-time code.** `generateOneTimePassword`
+   writes an ordinary password into `owners.pw_hash` via `hashPassword`. Nothing
+   about it is single-use or time-limited today. B10 is what makes the name
+   half-true.
+2. **Four paths mint one, not just the reset.** `resetPassword`, `postResident`,
+   `postTransfer` and `rosterImport` all call `generateOneTimePassword` and all
+   hand the result to whichever admin is looking at the screen. B21 names the
+   reset because that is the one a resident triggers, but the other three are the
+   same hole and are accounted for there.
+3. **`/forgot` cannot accept a code you did not just request.** `public/js/forgot.js`
+   holds the mobile in a module variable set only after step 1 succeeds, and step
+   2 is `hidden` until then. See B21 — this is why "I already have a code" is a
+   real change and not a link.
+
 ## B10 — Expire admin-issued temporary passwords
 
 The reset message used to claim "expires in 24 hours" while nothing enforced
@@ -77,10 +134,161 @@ WhatsApp works forever, and those messages persist on both phones for years,
 get forwarded, and survive a handset changing hands. It is the one credential
 in this system deliberately sent in the clear.
 
-Shape: `pw_expires_at` on `owners`, set when an admin issues one, checked at
-login only while `must_change_pw = 1` so it never touches a password the
-resident chose. An expired one should say so and point at `/forgot` rather than
-failing as "wrong password". Perhaps thirty lines and a test.
+Shape: `pw_expires_at` on `owners`, set when one is issued, checked at login
+only while `must_change_pw = 1` so it never touches a password the resident
+chose. An expired one should say so and point at `/forgot` rather than failing as
+"wrong password". Perhaps thirty lines and a test.
+
+**Two durations, decided 2026-08-12.** They differ because the two messages are
+read at different speeds:
+
+* **4 hours** for a superadmin reset. Somebody is locked out and waiting; they
+  will use it within minutes, and a short window is nearly free to them and
+  expensive to anyone reading the WhatsApp thread next year.
+* **48–72 hours** for a roster invite. Sent in bulk to 99 people who were not
+  expecting it, some of whom will be travelling. Anything shorter and the
+  cutover becomes a re-send exercise. Pick one number in that range and put it
+  in a named constant — the range is the argument, not the value.
+
+**The roster invite stops sending a password at all where there is an email.**
+It sends an announcement instead: you have an account, here is the address it is
+under, set your own password at `/forgot`. A bulk WhatsApp of 99 live
+credentials is the largest single exposure this system would ever create, and
+the resident has to choose a password on first login regardless — so the
+temporary one is a step that exists only to be replaced.
+
+This part is a **deletion**, and worth recognising as one rather than building a
+setting: `generateOneTimePassword`, `hashPassword` and `waLink` come out of
+`rosterImport`, and the `oneTimePassword` / `whatsapp` pair comes out of the
+worklist it returns. `sendList` in `public/js/admin-roster.js` loses the WhatsApp
+`href` and keeps the row, the Sent tracking and `rosterMarkSent` — knowing who
+has been told is still the point. The `state` derivation on the worklist
+(`!must_change_pw ? 'logged-in' : invited_at ? 'sent' : 'not-sent'`) survives
+untouched, which is the useful accident: it reads `must_change_pw`, not the
+password, so it still says who has actually logged in.
+
+**Where a resident has no email, the invite keeps the temporary password** — that
+is B5's population and there is no other route to them. Which means the 48–72
+hour expiry only ever applies to those rows, and the 4-hour one only to whatever
+residual reset path B21 leaves for the same people. Build B10 before B21 anyway:
+the column and the login check are what both need, and they are correct on their
+own.
+
+Do not promise an expiry in any message until it is enforced. The copy in
+`resetPassword` was corrected once already for exactly this — `expiresInHours: 24`
+was a decorative number nothing acted on.
+
+## B21 — Reset moves to the superadmin, and the resident recovers by email
+
+Raised and decided 2026-08-12. The reasoning is in "The credential decision"
+above; this is the work.
+
+**BLOCKED ON W1.** Not partially — there is no path here that does not send
+mail. The whole point is that recovery arrives at an address the admin does not
+control, so building it against a `sendEmail` that returns early would ship a
+reset nobody receives, and the only symptom would be residents who cannot get in.
+B22 is the half of this decision that is **not** blocked, so if W1 lingers, build
+that and leave this.
+
+**What comes out.** `resetPassword` stops being available to `admin` — the
+`canResetPassword` ladder keeps its shape and loses a rung, so an admin gets the
+same refusal an admin already gets for another admin. The temporary-password
+reply (`oneTimePassword` plus `whatsapp`) goes with it, and so does the button in
+`public/js/admin-console.js` that renders them. What the admin sees instead is a
+line telling them to send the resident to `/forgot`, which is the actual
+procedure now.
+
+**What the superadmin gets** is issuing a code, not a password: a row in
+`password_resets` and an email, the same two things `/forgot` already produces.
+This is much smaller than it sounds, because migration 0010 built that table for
+exactly this and it already has the hard parts — the code stored as a PBKDF2
+hash, `expires_at`, an `attempts` cap, `used_at` for single use, and `sent_to` for
+the trail. Reuse it. A second mechanism for "a code that lets you in" is how the
+two drift apart and one of them stops being rate-limited.
+
+**Why the superadmin needs it at all, when `/forgot` exists.** A resident whose
+stored address is wrong cannot use `/forgot` — the code goes to the old address.
+The superadmin path is for that case and for the walk-in, and it is the reason
+this is not simply "delete admin reset and point at `/forgot`".
+
+**"I already have a code" on `/forgot`.** Needed because the emailed code and the
+form that accepts it are now separated by however long it takes someone to open
+their email — possibly on another device, and the superadmin-issued case never
+touched the page at all. Today step 2 is unreachable without step 1: `forgot.js`
+keeps the mobile in a module-level variable assigned only on step 1's success and
+unhides `#finish` at the same moment. So the entry point has to **set the mobile
+too** — the code alone cannot identify the account, since `api.reset(mobile, code,
+password)` and the `ix_resets_owner` lookup are both keyed by owner. Two fields,
+not one: mobile and code.
+
+**The `#code` fragment in the email** prefills the code box. A fragment rather
+than a query string deliberately — it never reaches the server, stays out of
+logs, and out of `Referer`. It prefills only; the resident still types their
+mobile, per the paragraph above. And it must not auto-submit: a prefetching mail
+client would burn the single use before the resident read the message.
+
+Keep step 1's identical reply whichever way in you take. The page cannot say "no
+such resident" even when it is true, and a new entry point that answers
+differently would reintroduce the account-enumeration hole through the side door.
+
+**The other three minting paths** (`postResident`, `postTransfer`,
+`rosterImport`) are the same exposure and are not all fixed here. B10 handles
+`rosterImport`. `postResident` and `postTransfer` are admin-facing and low
+volume — a handful of rows a year — so they keep the temporary password with
+B10's expiry on it, and that is a deliberate stopping point rather than an
+oversight. Revisit if either becomes routine.
+
+## B22 — An admin requests a contact change, the superadmin approves it
+
+Raised and decided 2026-08-12. Reasoning above; **not blocked on anything**, and
+therefore the part of this decision to build if W1 drags.
+
+An admin loses `mobile` and `email` on `PATCH /api/admin/residents/:id` and gains
+a request. Mobile especially: it is the login identity, and B21 is pointless if an
+admin can point a resident's account at a phone they hold and then use `/forgot`
+themselves — `patchResident` already carries that reasoning in a comment and
+enforces it through `canEditResident`, which is the ladder to extend.
+
+Small, and it should stay small: **one table, one form, one approve button, one
+Telegram notification.**
+
+* **One table.** `contact_requests` — owner_id, field, requested_value, reason,
+  requested_by, state, decided_by, decided_at. Its own table for the same reasons
+  0010 gives: a request in flight is a separate short-lived fact, several can be
+  raised and abandoned, and who asked for what is worth keeping after the change
+  itself is applied.
+* **Validate on the way in, not only on approval.** Put the requested value
+  through `validateOwnerField` when it is raised, so a malformed number is
+  refused while the admin is still talking to the resident rather than days later
+  in front of the superadmin, who cannot fix it.
+* **Approving applies the change** — one action, not "approve" then "and now go
+  and edit it". Two steps means a queue of approved requests nobody applied, and
+  the resident still cannot log in.
+* **Reason required**, following B14: the committee turns over at every AGM and
+  "why is 7B's number different" needs an answer somebody can find. `checkReason`
+  is the existing helper.
+* **Re-run the duplicate check at approval**, not just at request time.
+  `duplicateContact` guards the login identity, and an approval can land days
+  after the request — long enough for another row to take the number.
+* **One Telegram notification**, through `postToTelegram`. It should say a
+  request is waiting and who raised it, and **not** carry the resident's new
+  number or address: `TELEGRAM_CHAT_ID` is one shared chat, the same one
+  alerting uses, and this is a resident's personal contact detail going somewhere
+  docs/PRIVACY.md has not accounted for. A nudge to open the console is the whole
+  job.
+
+**The audit groundwork is already done (2026-08-12).** `resident.update` used to
+record only which field *names* were submitted; it now records `{from, to}` per
+field that actually moved, so the approval trail can say what a number was
+changed from. That was worth doing before this rather than during it: an approval
+flow whose log cannot say what the old value was is accountability theatre. The
+old value now comes from the same `SELECT` the edit already needed — verified by
+issuing a real PATCH and reading the row back, because with the narrower select
+it silently logged `"from": null` and looked correct.
+
+**What this is not.** Not a general approvals framework. Two fields, one
+approver, no delegation, no partial approval, no expiry on a pending request. If
+a third field ever needs this, that is the moment to generalise, not before.
 
 ---
 
@@ -117,9 +325,45 @@ mean one account for two people, and that severity would be wrong.
 Which is to say email is where the mobile was before 0009, and 0009 is the
 template if this is ever built: canonicalise the data, route every path through
 one function, then add the unique index and let it start meaning something.
-Two things would be worth doing whatever is decided about login — the index, and
-requiring the current password to change your own email, since a stolen session
-plus `/forgot` is otherwise a permanent takeover.
+Worth doing whatever is decided about login: requiring the current password to
+change your own email, since a stolen session plus `/forgot` is otherwise a
+permanent takeover.
+
+**The index is now deliberately deferred, and that reverses what this entry used
+to say** (2026-08-12). It read that the unique index was worth adding whatever
+was decided. It is not, not yet, and the reason is ordering rather than doubt:
+adding it before the roster is in means adding it to a table where 2 of 107 rows
+have an address at all. It would pass instantly, guard nothing, and then meet 99
+pasted addresses with a `UNIQUE constraint failed` in the middle of the one
+import the cutover depends on — where the failure surfaces as a half-finished
+roster rather than as a duplicate anybody can act on. Import first, find the
+collisions with the doctor warn that already exists, resolve them as data, then
+add the index.
+
+**So B21 ships email as a reset destination without a uniqueness guarantee.**
+That is a known and accepted gap, recorded here so nobody discovers it in the
+code and treats it as a bug: two residents sharing an address means either can
+request a reset that lands in a shared inbox. It is bounded by what the paragraph
+above already describes — one reset inbox for two people, which is what the
+doctor warn has meant since `/forgot` shipped — and it becomes unbounded only if
+email also becomes a login, which is the question this entry is still parked on. **Do not add the index ahead of the roster to close
+it.** The doctor warn is the interim control and is correctly a warn.
+
+**Email becomes a mandatory roster column** (C1, B10). Two things follow that are
+not free:
+
+* `parseRoster` currently treats a missing address as `null` and imports the row.
+  Making it a hard `stop()` means the roster cannot be imported until the last
+  address has been chased out of the last owner, which fights C1 — weeks — and
+  C3, which wants the import done before the meter walk. **Open decision, and it
+  wants an answer before B10's roster half is built:** block the line, or import
+  it and surface it as a worklist state alongside `not-sent`. The second is
+  probably right, since a resident with no email still needs a bill, and B5 is
+  the population that will never have one.
+* `roster.js` lowercases and trims the address inline rather than calling
+  `normaliseEmail`. Harmless today because the two agree — and exactly the shape
+  of the two-spellings bug 0009 was written to end. Fold it into the one function
+  while the column is being made to matter.
 
 Worth knowing before weighing it up: **2 of 107 accounts have any address at
 all** (B5 and W2 are the same fact from other angles), so this is a door almost
@@ -210,8 +454,11 @@ NO-EMAIL-ON-FILE, and onboarding now explains why an address is worth giving,
 so coverage should grow on its own.
 
 **Do not build anything here until the roster is in and the number is known.**
-If it turns out to be two households, an admin reset is the right answer and
-always was.
+If it turns out to be two households, a reset by hand is the right answer and
+always was — **by the superadmin, not an admin**, as of 2026-08-12. That is the
+one correction this entry needed: it used to say "an admin reset", which B21
+removes. The residual temporary-password path in B10 and B21 exists for exactly
+the households counted here.
 
 ## B1 — Language toggle (English ⇄ Malayalam)
 
