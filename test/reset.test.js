@@ -91,12 +91,64 @@ describe('the issue rate limit', () => {
 
 describe('the new password', () => {
   it('rejects anything short', () => {
-    expect(() => validateNewPassword('short')).toThrow(/DDP-AUTH-008/);
+    expect(() => validateNewPassword('short1')).toThrow(/DDP-AUTH-008/);
     expect(() => validateNewPassword('')).toThrow(/DDP-AUTH-008/);
   });
 
   it('accepts a reasonable one unchanged', () => {
     expect(validateNewPassword('correct horse battery')).toBe('correct horse battery');
+  });
+
+  it('rejects letters alone, and counts a space as the symbol', () => {
+    expect(() => validateNewPassword('onlyletters')).toThrow(/DDP-AUTH-013/);
+    // The passphrase above passes on its spaces — that is deliberate, and is
+    // what stops the rule pushing everyone toward the symbol row.
+    expect(validateNewPassword('two blue lemons')).toBe('two blue lemons');
+    expect(validateNewPassword('onlyletters7')).toBe('onlyletters7');
+  });
+
+  it('refuses a password built out of the resident', () => {
+    const user = { name: 'Anoop Nair', mobile: '+919876543210', flat: 'B-402' };
+    expect(() => validateNewPassword('anoop12345', user)).toThrow(/DDP-AUTH-015/);
+    expect(() => validateNewPassword('xxnair99xx', user)).toThrow(/DDP-AUTH-015/);
+    expect(() => validateNewPassword('x543210xx1', user)).toThrow(/DDP-AUTH-015/);
+    expect(() => validateNewPassword('reallyb-402', user)).toThrow(/DDP-AUTH-015/);
+    // A different resident's details are not this resident's problem.
+    expect(validateNewPassword('anoop12345', { name: 'Priya Menon' })).toBe('anoop12345');
+  });
+
+  it('refuses the passwords everyone tries first', () => {
+    expect(() => validateNewPassword('mypassword1')).toThrow(/DDP-AUTH-015/);
+    expect(() => validateNewPassword('diamondpark1')).toThrow(/DDP-AUTH-015/);
+  });
+
+  it('holds admins to a longer minimum and a capital', () => {
+    const admin = { role: 'admin', name: 'Priya Menon' };
+    // Fine for an owner, too short for an admin.
+    expect(validateNewPassword('rutabaga7')).toBe('rutabaga7');
+    expect(() => validateNewPassword('rutabaga7', admin)).toThrow(/DDP-AUTH-008/);
+    expect(() => validateNewPassword('rutabaga wagon', admin)).toThrow(/DDP-AUTH-014/);
+    expect(validateNewPassword('Rutabaga wagon', admin)).toBe('Rutabaga wagon');
+    // A superadmin is held to the same bar as an admin.
+    expect(() => validateNewPassword('rutabaga7', { role: 'superadmin' })).toThrow(/DDP-AUTH-008/);
+  });
+
+  it('reports length before content, so nobody fixes the wrong thing', () => {
+    // Short AND missing a number: the length is what they must hear first.
+    expect(() => validateNewPassword('abc')).toThrow(/DDP-AUTH-008/);
+  });
+
+  it('carries wording specific to the tier that refused it', () => {
+    // guard() surfaces detail.publicMessage; a fixed table cannot know which
+    // minimum applied.
+    expect(() => validateNewPassword('short1', { role: 'admin' }))
+      .toThrow(/DDP-AUTH-008/);
+    try {
+      validateNewPassword('short1', { role: 'admin' });
+    } catch (err) {
+      expect(err.detail.publicMessage).toMatch(/12 characters/);
+      expect(err.detail.role).toBe('admin');
+    }
   });
 });
 

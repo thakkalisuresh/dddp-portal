@@ -12,6 +12,7 @@
 import { api, ApiError } from './api.js';
 import { $, el, showError, withReveal } from './ui.js';
 import { ADMINISTRATOR } from './contact.js';
+import { checkPassword, describePolicy } from './password-rules.js';
 
 const main = $('#main');
 
@@ -63,7 +64,7 @@ function render(me) {
 
     el('div', { class: 'field' },
       el('label', { for: 'pw' }, 'New password'), withReveal(pw),
-      el('span', { class: 'field__hint' }, 'At least 8 characters.')),
+      el('span', { class: 'field__hint' }, describePolicy(me.role))),
 
     el('div', { class: 'field' }, el('label', { for: 'pw2' }, 'Confirm password'), withReveal(pw2)),
 
@@ -74,7 +75,14 @@ function render(me) {
     status.replaceChildren();
 
     if (!name.value.trim()) return showError(status, { message: 'Please give your name.' });
-    if (pw.value.length < 8) return showError(status, { message: 'Use at least 8 characters.' });
+    // Against the name being typed right now, matching what the server will
+    // check — otherwise someone puts their name in both fields and only finds
+    // out after a round trip.
+    const weak = checkPassword(pw.value, {
+      role: me.role, mobile: me.mobile, flat: me.flat,
+      name: name.value, email: email.value,
+    });
+    if (weak) return showError(status, { message: weak.message });
     // Checked here as well as server-side: a mistyped confirmation would
     // otherwise become a password they cannot reproduce.
     if (pw.value !== pw2.value) return showError(status, { message: 'Those two passwords do not match.' });

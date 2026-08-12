@@ -186,12 +186,12 @@ PBKDF2-SHA256 via Web Crypto — native in Workers.
 | fn | `fromBase64` |  |
 | fn | `randomSalt` |  |
 | fn | `derive` |  |
-| fn | `hashPassword` |  |
+| fn | `hashPassword` | Returns the iteration count along with the hash, because the count is part of the hash's meaning: it is only reproducible at the number that made it. |
 | fn | `timingSafeEqual` |  |
 | fn | `verifyPassword` |  |
 | fn | `newSessionToken` |  |
 | fn | `sha256Hex` |  |
-| fn | `generateOneTimePassword` |  |
+| fn | `generateOneTimePassword` | `strong` is for accounts that can administer the building. |
 
 ### `functions/lib/dashboard.js`
 
@@ -426,8 +426,7 @@ Self-service password reset by emailed code.
 | fn | `tempPasswordExpiry` |  |
 | fn | `tempPasswordState` | Has this account's temporary password run out? Two guards, and both are the point rather than defensiveness: `must_change_pw` gates the whole check, so this can never expire a password the resident chose. |
 | fn | `expiredPasswordMessage` | What an expired temporary password says. |
-| const | `MIN_PASSWORD` |  |
-| fn | `validateNewPassword` |  |
+| fn | `validateNewPassword` | The single gate every new password passes through — onboarding, the profile change, and the reset-with-code path all end up here. |
 | fn | `resetEmail` | The email a resident receives. |
 | fn | `tempPasswordEmail` | The email carrying a temporary password the superadmin has just issued. |
 | fn | `neutralReply` | The reply to "I forgot my password". |
@@ -637,6 +636,18 @@ Navigation.
 | fn | `renderNav` | @param me the /api/me payload @param current pathname to mark as the active destination |
 | fn | `renderLogout` |  |
 
+### `public/js/password-rules.js`
+
+What counts as an acceptable password, in one place.
+
+| | Export | What it does |
+|---|---|---|
+| const | `POLICY` | What counts as an acceptable password, in one place. |
+| fn | `policyFor` |  |
+| fn | `personalTokens` | Everything about this account that an attacker could read off the roster. |
+| fn | `checkPassword` | Returns null when the password is acceptable, or `{ code, message }` describing the first thing wrong with it. |
+| fn | `describePolicy` |  |
+
 ### `public/js/qr.js`
 
 Browser QR drawing.
@@ -703,4 +714,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-374 exports. 207 have no doc comment.
+378 exports. 205 have no doc comment.

@@ -1,0 +1,35 @@
+-- Record the iteration count ALONGSIDE the hash it produced.
+--
+-- THE BUG THIS REMOVES. Until now the count lived in exactly one place: the
+-- PBKDF2_ITERATIONS binding, read by `ITER(env)` and used for hashing AND
+-- verifying. A hash is only reproducible at the count that made it, so
+-- changing that variable does not "upgrade" anything — it invalidates every
+-- stored hash simultaneously. Raising it from 100000 to 300000 would have
+-- locked out all 99 residents and every admin in the same deploy, and because
+-- reset CODES are hashed with the same value, the self-service way back in
+-- would have failed at the same moment. The only recovery was a manual edit
+-- to production D1.
+--
+-- That made the one improvement crypto.js's own NOTE asks for — measuring the
+-- iteration count against the real CPU budget and raising it — effectively
+-- undeployable. This column is what makes it a routine change instead.
+--
+-- HOW IT WORKS NOW. Verification uses the count stored on the row, so old
+-- hashes keep verifying forever. A successful login re-hashes at the current
+-- target, so the building migrates itself one login at a time with nobody
+-- typing anything different. Raising PBKDF2_ITERATIONS becomes safe and
+-- reversible: nothing breaks on the way up, and lowering it again only means
+-- new hashes are cheaper.
+--
+-- WHY 100000 IS THE DEFAULT AND NOT THE CURRENT BINDING. Every row that
+-- exists today was hashed at the `ITER` default of 100000. Backfilling with
+-- anything else would describe those hashes wrongly and lock out precisely
+-- the accounts this column exists to protect.
+ALTER TABLE owners ADD COLUMN pw_iterations INTEGER NOT NULL DEFAULT 100000;
+
+-- Reset codes need the same treatment for a smaller but real reason: a code
+-- issued before a deploy and typed after it would fail to verify, and the
+-- resident would spend an attempt on a code that was never wrong. Codes live
+-- 15 minutes, so this only matters during a deploy — which is exactly when
+-- somebody locked out is most likely to be trying.
+ALTER TABLE password_resets ADD COLUMN code_iterations INTEGER NOT NULL DEFAULT 100000;

@@ -29,6 +29,14 @@ export const ERROR_CODES = {
   'DDP-AUTH-010': { severity: 'warn',  message: 'Reset codes requested too often for one account' },
   'DDP-AUTH-011': { severity: 'error', message: 'Reset requested for an account with no email on file' },
   'DDP-AUTH-012': { severity: 'warn',  message: 'Login refused — temporary password had expired' },
+  'DDP-AUTH-013': { severity: 'warn',  message: 'New password rejected — no number or symbol' },
+  'DDP-AUTH-014': { severity: 'warn',  message: 'New password rejected — admin policy needs a capital letter' },
+  'DDP-AUTH-015': { severity: 'warn',  message: 'New password rejected — contains personal or predictable text' },
+  // Not fatal to the resident — they are logged in. It means their stored hash
+  // is still at the old iteration count and will be retried next login. Worth
+  // seeing, because every login failing to upgrade is a silently stalled
+  // migration.
+  'DDP-AUTH-016': { severity: 'warn',  message: 'Password re-hash at the new iteration count failed' },
 
   // ── BILL ───────────────────────────────────────────────────────────────
   'DDP-BILL-001': { severity: 'error', message: 'Bill generation found no reading for an active flat' },

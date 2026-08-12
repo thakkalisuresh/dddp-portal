@@ -14,6 +14,7 @@
 import { api, ApiError } from './api.js';
 import { $, el, showError, withReveal } from './ui.js';
 import { TREASURER } from './contact.js';
+import { checkPassword, describePolicy } from './password-rules.js';
 
 const ask = $('#ask');
 const finish = $('#finish');
@@ -21,6 +22,14 @@ const alertBox = $('#alert');
 
 /** Held in memory across the two steps; never put in the URL. */
 let mobile = '';
+
+// This page never learns who it is talking to — that is the point of the
+// identical replies — so the check here can only apply the owner tier and the
+// generic blocklist. The server, which does have the account row, applies the
+// role's real minimum and refuses a password built from their own name. An
+// admin resetting here can pass this check and still be turned down; the
+// server's message explains why, which is the one place it safely can.
+$('#pwHint').textContent = describePolicy('owner');
 
 function note(text, tone = '') {
   alertBox.replaceChildren(el('div', { class: `note ${tone}` }, text));
@@ -73,8 +82,15 @@ finish.addEventListener('submit', async (event) => {
     showError(alertBox, { message: 'The code is six digits.' });
     return;
   }
-  if (password.length < 8) {
-    showError(alertBox, { message: 'Use at least 8 characters.' });
+  const weak = checkPassword(password);
+  if (weak) {
+    showError(alertBox, { message: weak.message });
+    return;
+  }
+  // Checked before the request, so a mismatch costs nothing. Once the request
+  // goes out and succeeds, the code is spent.
+  if (password !== $('#password2').value) {
+    showError(alertBox, { message: 'Those two passwords do not match.' });
     return;
   }
 

@@ -55,9 +55,24 @@
     </div>
     <div>
       <label for="password">New password</label>
+      <!-- No minlength: the form is novalidate, so it never fired, and it was
+           a second place for the number 8 to go stale. The rule comes from
+           password-rules.js now, in one place. -->
       <input class="input" id="password" name="password" type="password"
-             autocomplete="new-password" minlength="8" required>
-      <p class="small muted">At least 8 characters.</p>
+             autocomplete="new-password" required>
+      <!-- Filled in by forgot.js from the shared policy, so this string cannot
+           drift from the rule the server actually enforces. -->
+      <p class="small muted" id="pwHint">At least 8 characters.</p>
+    </div>
+    <!-- Typed twice, and this is the screen where it matters most. A success
+         consumes the code in the same batch that sets the password, so a typo
+         here does not just set the wrong password — it spends the only code
+         they have, and new ones are capped at three an hour. The cost of
+         getting this wrong is an hour locked out or a call to the treasurer. -->
+    <div>
+      <label for="password2">Confirm new password</label>
+      <input class="input" id="password2" name="password2" type="password"
+             autocomplete="new-password" required>
     </div>
     <button class="btn btn--block btn--lg" id="finishSubmit" type="submit">Set my password</button>
     <button class="btn btn--ghost btn--block" id="again" type="button">Send a new code</button>

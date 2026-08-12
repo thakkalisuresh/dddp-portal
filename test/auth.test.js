@@ -29,6 +29,34 @@ describe('passwords', () => {
     expect(a.salt).not.toBe(b.salt);
   });
 
+  it('reports the iteration count it used, so the row can record it', async () => {
+    const { iterations } = await hashPassword('correct horse battery', ITER);
+    expect(iterations).toBe(ITER);
+  });
+
+  it('does not verify at a different count — the reason 0025 exists', async () => {
+    // This is the lockout the per-row column prevents. Before it, raising
+    // PBKDF2_ITERATIONS made every stored hash look like a wrong password,
+    // for every resident, in the same deploy.
+    const { hash, salt } = await hashPassword('correct horse battery', ITER);
+    expect(await verifyPassword('correct horse battery', hash, salt, ITER * 2)).toBe(false);
+    expect(await verifyPassword('correct horse battery', hash, salt, ITER)).toBe(true);
+  });
+
+  it('re-hashing at a new count keeps the same password working', async () => {
+    // The upgrade-on-login path: verify old, re-hash high, verify high.
+    const old = await hashPassword('correct horse battery', ITER);
+    expect(await verifyPassword('correct horse battery', old.hash, old.salt, old.iterations))
+      .toBe(true);
+
+    const upgraded = await hashPassword('correct horse battery', ITER * 3);
+    expect(upgraded.iterations).toBe(ITER * 3);
+    expect(await verifyPassword('correct horse battery', upgraded.hash, upgraded.salt,
+                                upgraded.iterations)).toBe(true);
+    expect(await verifyPassword('wrong', upgraded.hash, upgraded.salt, upgraded.iterations))
+      .toBe(false);
+  });
+
   it('compares in constant time', () => {
     const a = new Uint8Array([1, 2, 3, 4]);
     expect(timingSafeEqual(a, new Uint8Array([1, 2, 3, 4]))).toBe(true);
@@ -55,6 +83,21 @@ describe('one-time passwords', () => {
   it('does not repeat trivially', () => {
     const seen = new Set(Array.from({ length: 200 }, () => generateOneTimePassword()));
     expect(seen.size).toBeGreaterThan(100);
+  });
+
+  it('gives committee accounts three words and six digits', () => {
+    for (let i = 0; i < 200; i++) {
+      expect(generateOneTimePassword({ strong: true }))
+        .toMatch(/^[a-z]+-[a-z]+-[a-z]+-[2-9]{6}$/);
+    }
+  });
+
+  it('is worth materially more than the short form', () => {
+    // Not a statistical test — a floor. 200 strong codes colliding at all
+    // would mean the extra words are not reaching the output.
+    const strong = new Set(
+      Array.from({ length: 200 }, () => generateOneTimePassword({ strong: true })));
+    expect(strong.size).toBe(200);
   });
 });
 

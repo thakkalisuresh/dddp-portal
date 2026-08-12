@@ -19,6 +19,7 @@
  */
 
 import { fail } from './errors.js';
+import { checkPassword } from '../../public/js/password-rules.js';
 
 export const CODE_LENGTH = 6;
 export const EXPIRY_MINUTES = 15;
@@ -163,12 +164,29 @@ export function expiredPasswordMessage() {
        + 'below to email yourself a new code.';
 }
 
-export const MIN_PASSWORD = 8;
-
-export function validateNewPassword(pw) {
+/**
+ * The single gate every new password passes through — onboarding, the profile
+ * change, and the reset-with-code path all end up here.
+ *
+ * `user` is what the policy needs to judge it: `role` picks the tier, and
+ * name/mobile/email/flat are what it must not contain. Passing nothing
+ * applies the owner tier with no personal blocklist, which is the safe
+ * default for a caller that genuinely has no account in hand.
+ *
+ * The rules themselves live in public/js/password-rules.js so the browser can
+ * apply the same ones before a round trip.
+ */
+export function validateNewPassword(pw, user = {}) {
   const password = String(pw ?? '');
-  if (password.length < MIN_PASSWORD) {
-    fail('DDP-AUTH-008', { length: password.length });
+  const problem = checkPassword(password, user);
+  if (problem) {
+    // publicMessage reaches the resident via guard(); length and role are for
+    // the log. The password itself is never recorded, here or anywhere.
+    fail(problem.code, {
+      publicMessage: problem.message,
+      length: password.length,
+      role: user.role ?? 'owner',
+    });
   }
   return password;
 }

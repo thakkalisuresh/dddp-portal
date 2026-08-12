@@ -394,7 +394,7 @@ async function login(request, env, ctx) {
   }
 
   const owner = await env.DB.prepare(
-    `SELECT id, name, flat, role, pw_hash, pw_salt, must_change_pw, pw_expires_at
+    `SELECT id, name, flat, role, pw_hash, pw_salt, pw_iterations, must_change_pw, pw_expires_at
        FROM owners WHERE mobile = ? AND active = 1`
   ).bind(mobile).first();
 
@@ -404,7 +404,9 @@ async function login(request, env, ctx) {
     return problem(401, 'DDP-AUTH-002', 'Mobile number or password is incorrect.');
   }
 
-  const ok = await verifyPassword(password, owner.pw_hash, owner.pw_salt, ITER(env));
+  // At the count that MADE this hash, not the current target — otherwise
+  // raising the target locks out everyone who has not logged in since.
+  const ok = await verifyPassword(password, owner.pw_hash, owner.pw_salt, owner.pw_iterations);
   if (!ok) {
     await reportError(env, 'DDP-AUTH-002', { mobile }, ctx);
     return problem(401, 'DDP-AUTH-002', 'Mobile number or password is incorrect.');
@@ -422,6 +424,28 @@ async function login(request, env, ctx) {
   }
 
   await clearRateLimit(env, mobile);
+
+  // A correct login is the only moment the plaintext password is in hand AND
+  // known to be right, so it is the only moment the stored hash can be moved
+  // to a new cost. This is what turns raising PBKDF2_ITERATIONS from a
+  // building-wide lockout into a migration that runs itself, one login at a
+  // time, with nobody typing anything different.
+  //
+  // It costs a second derive on this request — only for accounts not yet
+  // upgraded, and only once each. The try/catch is the point: someone who
+  // typed their password correctly must be let in even if the upgrade fails,
+  // and their next login will simply try again.
+  if (owner.pw_iterations !== ITER(env)) {
+    try {
+      const upgraded = await hashPassword(password, ITER(env));
+      await env.DB.prepare(
+        'UPDATE owners SET pw_hash = ?, pw_salt = ?, pw_iterations = ? WHERE id = ?'
+      ).bind(upgraded.hash, upgraded.salt, upgraded.iterations, owner.id).run();
+    } catch (err) {
+      await reportError(env, 'DDP-AUTH-016',
+        { ownerId: owner.id, from: owner.pw_iterations, to: ITER(env), err: String(err) }, ctx);
+    }
+  }
 
   // Remember me, and what it actually changes. The session ROW is short-lived
   // either way when unticked; the cookie is what decides whether closing the
@@ -468,22 +492,30 @@ async function changePassword(request, env, session) {
   const body = await readJson(request);
   const current = String(body?.currentPassword ?? '');
   const next = String(body?.newPassword ?? '');
-  if (next.length < 8) return problem(400, 'DDP-AUTH-002', 'Choose a password of at least 8 characters.');
 
-  const row = await env.DB.prepare('SELECT pw_hash, pw_salt, must_change_pw FROM owners WHERE id = ?')
-    .bind(session.actor.id).first();
+  // Name, mobile and email come back too: the policy refuses a password built
+  // out of them, and it cannot check what it has not been given.
+  const row = await env.DB.prepare(
+    `SELECT pw_hash, pw_salt, pw_iterations, must_change_pw, name, mobile, email, flat, role
+       FROM owners WHERE id = ?`
+  ).bind(session.actor.id).first();
 
   // A forced first-login change doesn't re-ask for the temporary password.
   if (!row.must_change_pw) {
-    const ok = await verifyPassword(current, row.pw_hash, row.pw_salt, ITER(env));
+    const ok = await verifyPassword(current, row.pw_hash, row.pw_salt, row.pw_iterations);
     if (!ok) return problem(403, 'DDP-AUTH-002', 'Your current password is incorrect.');
   }
 
-  const { hash, salt } = await hashPassword(next, ITER(env));
+  // After the current-password check, so a stranger holding the session but
+  // not the password learns nothing about the policy or the account.
+  validateNewPassword(next, row);   // throws DDP-AUTH-008/012/013/014
+
+  const { hash, salt, iterations } = await hashPassword(next, ITER(env));
   await env.DB.prepare(
-    `UPDATE owners SET pw_hash = ?, pw_salt = ?, must_change_pw = 0, pw_expires_at = NULL
+    `UPDATE owners SET pw_hash = ?, pw_salt = ?, pw_iterations = ?, must_change_pw = 0,
+            pw_expires_at = NULL
       WHERE id = ?`
-  ).bind(hash, salt, session.actor.id).run();
+  ).bind(hash, salt, iterations, session.actor.id).run();
 
   await destroyAllSessionsFor(env, session.actor.id);
   await audit(env, session, 'password.change');
@@ -535,11 +567,20 @@ async function resetPassword(request, env, session, path) {
   }
 
   // Nobody reads an existing password — it is a hash and is gone. This mints one.
-  const otp = generateOneTimePassword();
-  const { hash, salt } = await hashPassword(otp, ITER(env));
+  //
+  // A committee account gets the long form. Resetting one hands out a working
+  // credential for an account that can impersonate residents and reach the god
+  // console, over WhatsApp, and the stricter password policy it is subject to
+  // does not apply to the password it is holding right now. The expiry below
+  // bounds how long that matters; the extra entropy bounds how guessable it is
+  // while it lasts.
+  const otp = generateOneTimePassword({ strong: target.role !== 'owner' });
+  const { hash, salt, iterations } = await hashPassword(otp, ITER(env));
   await env.DB.prepare(
-    'UPDATE owners SET pw_hash = ?, pw_salt = ?, must_change_pw = 1, pw_expires_at = ? WHERE id = ?'
-  ).bind(hash, salt, tempPasswordExpiry(TEMP_PW_HOURS), ownerId).run();
+    `UPDATE owners SET pw_hash = ?, pw_salt = ?, pw_iterations = ?, must_change_pw = 1,
+            pw_expires_at = ?
+      WHERE id = ?`
+  ).bind(hash, salt, iterations, tempPasswordExpiry(TEMP_PW_HOURS), ownerId).run();
   await destroyAllSessionsFor(env, ownerId);
   await audit(env, session, 'password.reset', { ownerId, flat: target.flat });
 
@@ -758,19 +799,25 @@ async function onboard(request, env, session) {
   const password = String(b?.password ?? '');
 
   if (!name) return problem(400, 'DDP-NOTICE-003', 'Please give your name.');
-  if (password.length < 8) {
-    return problem(400, 'DDP-AUTH-002', 'Choose a password of at least 8 characters.');
-  }
   if (email && !/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)) {
     return problem(400, 'DDP-NOTICE-003', 'That email address looks wrong. Check it, or leave it blank.');
   }
 
-  const { hash, salt } = await hashPassword(password, ITER(env));
+  // The name and email being checked against are the ones arriving in THIS
+  // request, not the roster's guesses — onboarding is the one place where the
+  // account's own details are set in the same breath as the password, and
+  // reading the stored row here would let someone type their name into both
+  // fields and sail through.
+  const account = await env.DB.prepare('SELECT mobile, flat, role FROM owners WHERE id = ?')
+    .bind(session.actor.id).first();
+  validateNewPassword(password, { ...account, name, email });
+
+  const { hash, salt, iterations } = await hashPassword(password, ITER(env));
   await env.DB.prepare(
-    `UPDATE owners SET name = ?, email = ?, pw_hash = ?, pw_salt = ?, must_change_pw = 0,
-            pw_expires_at = NULL
+    `UPDATE owners SET name = ?, email = ?, pw_hash = ?, pw_salt = ?, pw_iterations = ?,
+            must_change_pw = 0, pw_expires_at = NULL
       WHERE id = ?`
-  ).bind(name, email, hash, salt, session.actor.id).run();
+  ).bind(name, email, hash, salt, iterations, session.actor.id).run();
 
   await destroyAllSessionsFor(env, session.actor.id);
   await audit(env, session, 'onboard.complete', { name, email: Boolean(email) });
@@ -1173,12 +1220,13 @@ async function postResident(request, env, session) {
 
   // Issued, not chosen: the resident replaces it on first login.
   const otp = generateOneTimePassword();
-  const { hash, salt } = await hashPassword(otp, ITER(env));
+  const { hash, salt, iterations } = await hashPassword(otp, ITER(env));
   const row = await env.DB.prepare(
-    `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, must_change_pw,
-                         pw_expires_at, role, relationship, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'owner', ?, ?) RETURNING id`
-  ).bind(flat, name, mobile, email, hash, salt, tempPasswordExpiry(TEMP_PW_HOURS), relationship,
+    `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, pw_iterations,
+                         must_change_pw, pw_expires_at, role, relationship, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'owner', ?, ?) RETURNING id`
+  ).bind(flat, name, mobile, email, hash, salt, iterations,
+         tempPasswordExpiry(TEMP_PW_HOURS), relationship,
          new Date().toISOString()).first();
 
   await audit(env, session, 'resident.create', { id: row.id, flat, relationship });
@@ -1639,7 +1687,7 @@ async function postTransfer(request, env, session) {
 
   const now = new Date().toISOString();
   const otp = generateOneTimePassword();
-  const { hash, salt } = await hashPassword(otp, ITER(env));
+  const { hash, salt, iterations } = await hashPassword(otp, ITER(env));
   let mobile;
   try {
     mobile = normaliseMobile(b.mobile);   // see the note on resident creation
@@ -1648,10 +1696,10 @@ async function postTransfer(request, env, session) {
   }
 
   const incoming = await env.DB.prepare(
-    `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, must_change_pw,
-                         pw_expires_at, role, active, moved_in_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'owner', 1, ?, ?) RETURNING id`
-  ).bind(flat, String(b.name).trim(), mobile, b?.email ?? null, hash, salt,
+    `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, pw_iterations,
+                         must_change_pw, pw_expires_at, role, active, moved_in_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'owner', 1, ?, ?) RETURNING id`
+  ).bind(flat, String(b.name).trim(), mobile, b?.email ?? null, hash, salt, iterations,
          tempPasswordExpiry(TEMP_PW_HOURS), now, now).first();
 
   await env.DB.batch([
@@ -2803,13 +2851,15 @@ async function forgotPassword(request, env, ctx) {
   }
 
   const code = generateCode();
-  const { hash, salt } = await hashPassword(code, ITER(env));
+  const { hash, salt, iterations } = await hashPassword(code, ITER(env));
   const now = new Date();
 
   await env.DB.prepare(
-    `INSERT INTO password_resets (owner_id, code_hash, code_salt, sent_to, expires_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(owner.id, hash, salt, owner.email, expiryFrom(now), now.toISOString()).run();
+    `INSERT INTO password_resets
+       (owner_id, code_hash, code_salt, code_iterations, sent_to, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(owner.id, hash, salt, iterations, owner.email,
+         expiryFrom(now), now.toISOString()).run();
 
   const { subject, text } = resetEmail({ code, name: owner.name, flat: owner.flat });
   const result = await sendEmail(env, { to: owner.email, subject, text });
@@ -2839,10 +2889,10 @@ async function resetWithCode(request, env, ctx) {
     return problem(400, 'DDP-AUTH-009', 'That code is not right, or it has expired.');
   }
   const code = normaliseCode(body?.code);
-  const password = validateNewPassword(body?.password);   // throws DDP-AUTH-008
+  const password = String(body?.password ?? '');
 
   const owner = await env.DB.prepare(
-    'SELECT id, flat FROM owners WHERE mobile = ? AND active = 1'
+    'SELECT id, flat, name, mobile, email, role FROM owners WHERE mobile = ? AND active = 1'
   ).bind(mobile).first();
 
   // Same reply as a wrong code. An unknown number must not be distinguishable
@@ -2863,7 +2913,9 @@ async function resetWithCode(request, env, ctx) {
     return problem(400, 'DDP-AUTH-009', failureMessage(state.reason));
   }
 
-  const ok = await verifyPassword(code, row.code_hash, row.code_salt, ITER(env));
+  // The count this code was issued at: a deploy that raises the target must
+  // not invalidate codes already sitting in residents' inboxes.
+  const ok = await verifyPassword(code, row.code_hash, row.code_salt, row.code_iterations);
   if (!ok) {
     // Counted BEFORE replying, so a client that gives up mid-request still
     // spends the attempt. Otherwise the limit is bypassed by disconnecting.
@@ -2873,14 +2925,26 @@ async function resetWithCode(request, env, ctx) {
     return problem(400, 'DDP-AUTH-009', failureMessage('wrong', state.remaining - 1));
   }
 
-  const { hash, salt } = await hashPassword(password, ITER(env));
+  // Checked HERE, not on the way in, and the ordering is the whole point.
+  //
+  // The policy needs the owner row to refuse a password built from their own
+  // name — but the moment a policy refusal can be triggered before the code is
+  // verified, this endpoint answers "does this mobile have an account?": a
+  // known number would return DDP-AUTH-008 where an unknown one returns
+  // DDP-AUTH-009. That is precisely the directory the neutral replies above
+  // exist to deny. Behind a verified code there is nothing left to leak —
+  // whoever got this far already holds the account.
+  validateNewPassword(password, owner);   // throws DDP-AUTH-008/012/013/014
+
+  const { hash, salt, iterations } = await hashPassword(password, ITER(env));
   const now = new Date().toISOString();
 
   await env.DB.batch([
     env.DB.prepare(
-      `UPDATE owners SET pw_hash = ?, pw_salt = ?, must_change_pw = 0, pw_expires_at = NULL
-        WHERE id = ?`)
-      .bind(hash, salt, owner.id),
+      `UPDATE owners SET pw_hash = ?, pw_salt = ?, pw_iterations = ?, must_change_pw = 0,
+              pw_expires_at = NULL
+        WHERE id = ?`
+    ).bind(hash, salt, iterations, owner.id),
     // Single use, marked in the same batch as the password change so the two
     // cannot come apart and leave a spent code still live.
     env.DB.prepare('UPDATE password_resets SET used_at = ? WHERE id = ?').bind(now, row.id),
@@ -2947,12 +3011,12 @@ async function rosterImport(request, env, session) {
     if (row.vacant) continue;
 
     const otp = generateOneTimePassword();
-    const { hash, salt } = await hashPassword(otp, ITER(env));
+    const { hash, salt, iterations } = await hashPassword(otp, ITER(env));
     const inserted = await env.DB.prepare(
-      `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, must_change_pw,
-                           pw_expires_at, role, relationship, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'owner', ?, ?) RETURNING id`
-    ).bind(row.flat, row.name, row.mobile, row.email, hash, salt,
+      `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, pw_iterations,
+                           must_change_pw, pw_expires_at, role, relationship, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'owner', ?, ?) RETURNING id`
+    ).bind(row.flat, row.name, row.mobile, row.email, hash, salt, iterations,
            tempPasswordExpiry(INVITE_PW_HOURS), row.relationship, now).first();
 
     const text =

@@ -118,7 +118,13 @@ const EXPECTED = {
   'DDP-BILL-002': [409, 'A reading is lower than last month. Meters do not run backwards.'],
   'DDP-BILL-008': [409, 'A late fee must be a whole number of rupees.'],
   'DDP-AUTH-007': [403, 'Credentials cannot be changed while viewing as another resident.'],
-  'DDP-AUTH-008': [400, 'Use at least 8 characters.'],
+  // The four password-policy refusals carry their own wording — the minimum
+  // length differs by role, so a fixed string here would be wrong for someone.
+  // See `publicMessage` in guard(); these are the fallbacks.
+  'DDP-AUTH-008': [400, 'That password is too short.'],
+  'DDP-AUTH-013': [400, 'Include a number or a symbol.'],
+  'DDP-AUTH-014': [400, 'Admin accounts need at least one capital letter.'],
+  'DDP-AUTH-015': [400, 'That password contains something easy to guess.'],
   'DDP-AUTH-009': [400, 'That code is not right, or it has expired.'],
   'DDP-AUTH-010': [429, 'Too many codes requested. Try again in an hour.'],
   'DDP-ADMIN-001': [400, 'That flat or resident is not on the register.'],
@@ -145,6 +151,10 @@ export async function guard(env, ctx, fn) {
     const code = err?.code && String(err.code).startsWith('DDP-') ? err.code : 'DDP-SYS-001';
     await reportError(env, code, err, ctx);
     const [status, message] = EXPECTED[code] ?? [500, 'Something went wrong. It has been logged.'];
-    return problem(status, code, message);
+    // A thrower may supply wording the static table cannot know — the password
+    // rules vary the minimum by role. Only honoured for codes already in
+    // EXPECTED, so an unexpected failure can never talk to the user.
+    const specific = EXPECTED[code] ? err?.detail?.publicMessage : null;
+    return problem(status, code, specific || message);
   }
 }
