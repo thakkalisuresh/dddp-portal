@@ -32,7 +32,7 @@ You are picking up the DD Diamond Park gas billing portal.
   /Users/sabarish/Downloads/Claude/dddp-portal
 
 It is live at https://diamondpark.pages.dev and runs at zero cost on
-Cloudflare Pages + Workers + D1 + R2. 472 tests. The user is Sabarish, the
+Cloudflare Pages + Workers + D1 + R2. 786 tests. The user is Sabarish, the
 association's superadmin, and he is often on a phone with no terminal.
 
 READ FIRST, in this order:
@@ -81,9 +81,11 @@ Never handle the user's passwords, tokens or API keys. He does those himself;
 scripts/reset-my-password.mjs and scripts/telegram-test.mjs are built so the
 secret never passes through the assistant.
 
-WHAT IS ACTUALLY BLOCKING: the roster (~99 flats of names and mobiles), the
-meter walk, and a Gmail account for password-reset email and the off-site
-backup. All three are the user's, not code.
+WHAT IS ACTUALLY BLOCKING: the roster (~99 flats of names, mobiles and now
+EMAIL), the meter walk, and a Gmail account. All three are the user's, not
+code. The Gmail is no longer a small errand: B21 made email the way a resident
+recovers their own account, and it is built, so nothing can be sent to
+residents until the account exists.
 ```
 
 ---
@@ -114,11 +116,11 @@ functions/
 public/
   js/               plain ES modules, no build step, no framework
   admin/            admin console pages
-migrations/         0001..0013, applied in order
+migrations/         0001..0025, applied in order
 scripts/            run by hand; several touch production
 docs/               this, plus PRD, STATE, BACKLOG, COSTS, PRIVACY,
                     ERROR_CODES and FUNCTIONS (the last two generated)
-test/               472 tests
+test/               786 tests
 ```
 
 ## Commands worth knowing

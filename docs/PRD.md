@@ -30,6 +30,15 @@ That single fact drove most of what follows.
 4. **Be usable by everyone in the building,** including residents who use only
    WhatsApp, and owners who live abroad.
 
+> **Goal 4 is in tension with a decision taken 2026-08-12**, and the tension is
+> resolved by an exception rather than dissolved. Making email mandatory (B21)
+> is what allows password reset to leave the admins, but a resident who uses
+> only WhatsApp is exactly who has no address to make mandatory. They are
+> onboarded without one and the superadmin resets them by hand — so the goal
+> holds, at the cost of one manual path that does not scale and is not meant to.
+> If that group turns out to be large rather than a handful, B21 is the decision
+> to revisit, not the goal.
+
 ## Non-goals
 
 Each of these was considered and rejected. Reopening one is fine; doing so
@@ -185,6 +194,9 @@ because comments rot and assertions do not.
 |---|---|
 | Mobile is the login, stored E.164 | Everyone has one; email coverage is patchy. Mixed formats broke both the UNIQUE index and login. |
 | Six-digit reset codes, no link | A link in an email is a bearer token that survives in inboxes, and scanners follow links and consume them. |
+| Reset is the superadmin's, not the admins' | An admin who can reset a resident is handed the credential, so they can become that resident. Softer measures raise cost and visibility; only removing the power removes the capability. Affordable once email is mandatory and `/forgot` is the ordinary path. (B21) |
+| Contact edits by request and approval | Admins collect a corrected number, the superadmin writes it, and approving applies the change so nobody retypes it. The reason field outlives the committee that recorded it. (B22) |
+| Invite by announcement, not by credential | A temporary password sent to 99 people at cutover is 99 live credentials sitting in chat threads. An announcement pointing at `/forgot` carries no secret, so the channel stops mattering. (B10) |
 | Bills follow the occupant | Gas is metered consumption. Maintenance systems bill the owner because maintenance is a charge against the property. |
 | Exemptions expire | A boolean gets set during a dispute and never unset. A date makes forgetting the safe direction. |
 | Late fee is flat and charged once | Compounding on a ₹300 bill is a dispute nobody in a 99-flat building wants. |
