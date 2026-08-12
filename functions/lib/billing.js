@@ -275,6 +275,19 @@ export function lateFeeDecision(bill, {
   if (bill.status === 'paid' || bill.status === 'waived') return { action: 'skip', reason: 'settled' };
   if (bill.status === 'awaiting') return { action: 'skip', reason: 'proof-under-review' };
 
+  // NOTHING OWED IS NOT LATE. A flat that consumed nothing — empty for the
+  // month, or between tenants — bills at zero, which is correct and stays
+  // visible so the flat is still accounted for. But an unpaid zero sailed
+  // straight past every guard above and was charged like any other overdue
+  // bill: applyLateFee(0, 50) is 50. The resident who used no gas got a bill
+  // for nothing on the 1st and a bill for ₹50 on the 11th, and vacant flats
+  // are precisely the ones nobody is watching.
+  //
+  // Checked here rather than in the cron's SELECT because this function is
+  // where every other "do not charge this" rule already lives, and because a
+  // decision that can be tested directly is how B13's hold was fixed too.
+  if (!(Number(bill.total) > 0)) return { action: 'skip', reason: 'nothing-owed' };
+
   // An exemption the committee granted, and dated so it cannot become
   // permanent by neglect. Checked before the due date so the reason recorded
   // is the real one — "exempt" rather than "not yet due".

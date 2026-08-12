@@ -141,6 +141,10 @@ export const api = {
     saveReadings:  (period, readings) =>
                                request('PUT',  `/api/admin/readings?period=${period}`, { readings }),
     parseReadings: (text)   => request('POST', '/api/admin/readings/parse', { text }),
+    /** Take a flat out of billing, or put it back. A reason is required. */
+    setFlatActive: (flat, active, reason) =>
+                               request('PATCH', `/api/admin/flats/${encodeURIComponent(flat)}`,
+                                       { active, reason }),
     preview:       (period) => request('GET',  `/api/admin/preview?period=${period}`),
     openPeriod:    (body)   => request('POST', '/api/admin/periods', body),
     /** dryRun first, always: the caveat is built from what it returns. */

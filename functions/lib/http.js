@@ -133,7 +133,9 @@ const EXPECTED = {
   'DDP-ADMIN-006': [409, 'That would leave no superadmin. Promote someone else first.'],
   'DDP-ADMIN-009': [400, 'That does not look like a mobile number. Include the country code for a number outside India.'],
   'DDP-ADMIN-010': [400, 'That field or value cannot be set.'],
-  'DDP-ADMIN-011': [400, 'Give a short reason for changing an amount — it is recorded with the change.'],
+  // Deliberately not "for changing an amount" any more: this code now also
+  // covers taking a flat out of billing, where an amount is not what changed.
+  'DDP-ADMIN-011': [400, 'Give a short reason — it is recorded with the change.'],
   'DDP-ADMIN-012': [409, 'That change would lock you out of your own account.'],
   'DDP-ADMIN-013': [409, 'That mobile or email already belongs to someone else.'],
   'DDP-ADMIN-014': [403, 'You cannot reset the password of an account at or above your own level.'],

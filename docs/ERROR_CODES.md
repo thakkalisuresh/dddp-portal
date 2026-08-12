@@ -121,7 +121,7 @@ Ask the bot a code and it will explain it.
 | `DDP-ADMIN-008` | **fatal** | retired | Flat limit reached — the retired paise column capped the table at 99 (retired) |
 | `DDP-ADMIN-009` | warn | live | Mobile number is not a valid E.164 number |
 | `DDP-ADMIN-010` | warn | live | God edit rejected — field or value not allowed |
-| `DDP-ADMIN-011` | warn | live | God edit to money rejected — no reason given |
+| `DDP-ADMIN-011` | warn | live | Change needing a reason rejected — no reason given |
 | `DDP-ADMIN-012` | error | live | God edit would lock the superadmin out of their own account |
 | `DDP-ADMIN-013` | warn | live | God edit rejected — mobile or email already belongs to someone else |
 | `DDP-ADMIN-014` | error | live | Password reset attempted against an equal or higher role |

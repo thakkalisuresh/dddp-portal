@@ -215,6 +215,9 @@ export default {
         if (route.startsWith('POST /api/admin/roster/sent/')) {
           return rosterMarkSent(request, env, session, path);
         }
+        if (request.method === 'PATCH' && /^\/api\/admin\/flats\/[^/]+$/.test(path)) {
+          return patchFlat(request, env, session, path);
+        }
         if (route === 'GET /api/admin/readings')  return getReadings(env, url);
         if (route === 'PUT /api/admin/readings')  return putReadings(request, env, session, url);
         if (route === 'POST /api/admin/readings/parse') return parseImport(request, env, url);
@@ -2389,6 +2392,69 @@ async function markPaid(request, env, session, path) {
 function periodFrom(url) {
   const p = url.searchParams.get('period');
   return /^\d{4}-\d{2}$/.test(p ?? '') ? p : null;
+}
+
+/**
+ * Take a flat out of billing, or put it back.
+ *
+ * WHAT THIS IS FOR, and what it is not. `flats.active` has been in the schema
+ * since 0001 and read by the reading grid all along, but nothing could ever
+ * set it — so every flat was billable for ever, and a month could not close
+ * until all 99 had a reading. That is wrong for the flats nobody has bought:
+ * they consumed nothing because there is nobody there and, per the brochure,
+ * possibly no gas connection at all.
+ *
+ * It is NOT for a flat that is merely empty this month. An owned flat that
+ * burned nothing bills at zero — the meter genuinely did not move — and stays
+ * on the roll where somebody is accountable for it. Excluding it would hide a
+ * real home. The screen says so at the point of the decision rather than here,
+ * because that is where somebody is choosing.
+ *
+ * ADMIN, not superadmin — Sabarish's call, 2026-08-12. The admins walk the
+ * building and are the ones who know 12F is still unsold.
+ *
+ * A reason is required. An excluded flat is invisible by construction: it
+ * vanishes from the grid AND lowers the count generation demands, so nothing
+ * about a closed month hints that a flat was left out of it. "Why has 12F not
+ * been billed since August" needs an answer that outlives the committee that
+ * decided it — the same argument B14 makes for late-fee exemptions.
+ */
+async function patchFlat(request, env, session, path) {
+  const flat = decodeURIComponent(path.split('/')[4] ?? '').toUpperCase();
+  const body = await readJson(request);
+  const active = body?.active ? 1 : 0;
+  const reason = checkReason('flat.active', body?.reason);
+
+  const row = await env.DB.prepare('SELECT flat, active FROM flats WHERE flat = ?')
+    .bind(flat).first();
+  if (!row) return problem(404, 'DDP-ADMIN-009', 'That flat is not part of this building.');
+  if (row.active === active) {
+    // Not an error worth logging, but not a silent success either: replying OK
+    // to a no-op writes an audit row claiming a change that did not happen.
+    return problem(409, 'DDP-ADMIN-010',
+      active ? 'That flat is already being billed.' : 'That flat is already excluded.');
+  }
+
+  // Refused while the month is open and already has a reading for it, because
+  // the reading and the exclusion contradict each other and the grid would
+  // simply stop showing the disagreement.
+  if (!active) {
+    const reading = await env.DB.prepare(
+      `SELECT r.period FROM readings r JOIN periods p ON p.period = r.period
+        WHERE r.flat = ? AND p.status = 'open' LIMIT 1`
+    ).bind(flat).first();
+    if (reading) {
+      return problem(409, 'DDP-BILL-001',
+        `${flat} has a reading entered for ${reading.period}. Clear it first, or `
+        + 'leave the flat billed and enter the same reading as last month, which '
+        + 'bills it at zero.');
+    }
+  }
+
+  await env.DB.prepare('UPDATE flats SET active = ? WHERE flat = ?').bind(active, flat).run();
+  await audit(env, session, 'flat.active', { flat, from: row.active, to: active, reason });
+
+  return json({ flat, active: Boolean(active), reason });
 }
 
 async function getReadings(env, url) {

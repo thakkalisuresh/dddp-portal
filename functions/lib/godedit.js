@@ -36,9 +36,18 @@ export const BILL_FIELDS = [...BILL_COMPONENTS, 'total', 'status'];
 
 export const BILL_STATUSES = ['unpaid', 'initiated', 'awaiting', 'paid', 'waived'];
 
-/** Editing an amount or a payment status needs a reason; fixing a typo does not. */
+/**
+ * Acts that need a reason on the record.
+ *
+ * Editing an amount or a payment status; fixing a typo does not.
+ *
+ * `flat.active` joins them because excluding a flat from billing is invisible
+ * by construction — the flat leaves the reading grid AND the count generation
+ * checks against, so a closed month looks complete either way. Nothing else in
+ * the system would ever say why 12F stopped being billed.
+ */
 export function reasonRequired(field) {
-  return BILL_FIELDS.includes(field);
+  return BILL_FIELDS.includes(field) || field === 'flat.active';
 }
 
 export const MAX_REASON = 300;

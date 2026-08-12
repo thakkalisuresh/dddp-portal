@@ -62,6 +62,7 @@ function render() {
   setChildren(main,
     header(),
     importPanel(),
+    excludedPanel(),
     el('div', { class: 'scroll-x' }, table()),
     // The preview is a normal block, NOT part of the sticky bar: when it grew
     // it covered the last flats in the building, which is precisely where an
@@ -277,11 +278,80 @@ function row(f) {
   if (f.reading != null) validate();
 
   return el('tr', {},
-    el('td', { class: 'flat' }, f.flat),
+    el('td', { class: 'flat' }, f.flat,
+      // Offered on every row rather than only on empty ones: which flats are
+      // unsold is knowledge the admin brings to the screen, not something the
+      // screen can work out.
+      el('button', {
+        class: 'linkish cell-action', type: 'button',
+        title: `Stop billing flat ${f.flat}`,
+        onclick: () => excludeFlat(f),
+      }, 'not billed')),
     el('td', { class: 'prev' }, f.previous == null ? '—' : f.previous),
     el('td', {}, input),
     used,
     status);
+}
+
+/**
+ * Take a flat out of billing, after saying plainly what that means.
+ *
+ * The prompt distinguishes the two cases the treasurer will confuse, because
+ * they arrive looking identical — an empty column on the readings screen:
+ *
+ *   unsold, nobody has ever lived there  -> exclude it, this
+ *   owned but empty this month           -> a zero reading, NOT this
+ *
+ * A flat with a resident says so by name before anything happens. Excluding
+ * somebody's home is not a thing to discover a month later from a bill that
+ * never arrived.
+ */
+async function excludeFlat(f) {
+  const who = f.resident ? `\n\n${f.flat} is listed to ${f.resident}.` : '';
+  const reason = prompt(
+    `Stop billing ${f.flat}?\n\n`
+    + 'For a flat nobody has bought yet. It leaves the readings screen and the '
+    + 'month can close without it.\n\n'
+    + 'If somebody owns it and it was simply empty this month, cancel and enter '
+    + 'the same reading as last month instead — that bills it at zero and keeps '
+    + `the flat on the roll.${who}\n\n`
+    + 'Reason (recorded against the flat):');
+  if (reason == null) return;
+  try {
+    await api.admin.setFlatActive(f.flat, false, reason);
+    location.reload();
+  } catch (err) {
+    alert(err.message ?? 'That could not be saved.');
+  }
+}
+
+/** The flats currently taken out of billing, and the way back. */
+function excludedPanel() {
+  if (!grid.excluded?.length) return null;
+  return el('details', { class: 'import' },
+    el('summary', { style: 'font-family:var(--font-ui);cursor:pointer' },
+      `${grid.excluded.length} flat${grid.excluded.length > 1 ? 's' : ''} not being billed`),
+    el('div', { class: 'stack', style: 'margin-top:var(--s-3)' },
+      el('p', { class: 'small muted' },
+        'These are left out of this month and out of the count that has to be '
+        + 'complete before bills generate. They stay out until they are put back.'),
+      ...grid.excluded.map((f) => el('div', { class: 'rowitem' },
+        el('div', { class: 'rowitem__main' },
+          el('b', {}, f.flat),
+          el('div', { class: 'small muted' }, f.resident ?? 'No resident on file')),
+        el('button', {
+          class: 'btn btn--sm btn--quiet', type: 'button',
+          onclick: async () => {
+            const reason = prompt(`Bill ${f.flat} again?\n\nReason (recorded against the flat):`);
+            if (reason == null) return;
+            try {
+              await api.admin.setFlatActive(f.flat, true, reason);
+              location.reload();
+            } catch (err) {
+              alert(err.message ?? 'That could not be saved.');
+            }
+          },
+        }, 'Bill it again')))));
 }
 
 /** Autosave per row. A corridor is a dead spot, so failures queue and retry. */
