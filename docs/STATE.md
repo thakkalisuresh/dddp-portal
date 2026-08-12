@@ -356,7 +356,7 @@ which this run therefore does not establish.
 
 | Link shape | Tap outcome | Reads as |
 |---|---|---|
-| `upi://` plain | opened | resolved, chooser path works |
+| `upi://` plain | opened, **OS chooser shown** | resolved; chooser path proven |
 | `intent://` bare | opened | resolved |
 | `intent://` → gpay | opened | Google Pay's component ENABLED |
 | `intent://` → phonepe | **Play Store**, app INSTALLED, no account registered | component NOT resolvable |
@@ -421,11 +421,31 @@ all work end to end. The payee name in particular is what makes this run
 unambiguous — it is the reason a resolving VPA was used instead of the
 unresolvable default.
 
-**One thing this run did NOT establish: that the chooser appears.** Only one app
-on the device could answer, and Android launches directly rather than offering a
-choice when a single handler resolves. So `upi://` resolving is proven; the
-chooser UI that the Android pay screen leads with is not, and a handset with two
-or more registered UPI apps is what would prove it.
+**The OS chooser DID appear**, reported after the run. That is the single most
+load-bearing observation here, because the Android pay screen leads with the
+plain `upi://` link on the argument that the chooser is the mechanism NPCI
+defines — and until now that first route rested on behaviour nobody had watched.
+It works.
+
+This was first written up in this document as unobserved, on the reasoning that
+only one app on the device could answer and Android launches straight into a
+single handler. **The reasoning was sound and the premise was invented.** That
+only Google Pay could answer was an inference from the four apps this page
+happens to test, never an observation, and a chooser appearing proves at least
+two handlers resolved. The correction is left visible rather than tidied away,
+because the mistake is instructive: the page tests four packages, the DEVICE has
+whatever it has, and reading "the apps we asked about" as "the apps installed"
+is exactly the sort of quiet substitution that produced the original wrong
+conclusion about this bug.
+
+So the device carries at least one more UPI-capable app than the four tested —
+WhatsApp Pay, Amazon Pay, Cred and bank apps such as iMobile or SBI Pay all
+register for `upi://` and are ordinary things to have. **Which apps the chooser
+listed is not recorded, and it matters**: if PhonePe appeared in it, that sits
+awkwardly against the same PhonePe failing to answer a package-addressed intent
+minutes earlier, and the account-state finding would need re-examining. If the
+list was other apps entirely, the finding stands untouched. Noted in "Not
+verified by me" rather than guessed at.
 
 **A real UX defect fell out of this.** An `intent://` addressed to an installed
 but unregistered app sends the resident to the Play Store to install software
@@ -442,12 +462,13 @@ Things I could not check and someone should:
   Google Pay reportedly works, which is the one thing the account-state finding
   does not account for. The page is already deployed and the run takes ten
   minutes, so this is the cheapest unanswered question in this document.
-- **Whether the OS chooser actually appears.** Run 1 could not show it: only one
-  app on that handset could answer, and Android launches straight into a single
-  handler. The Android pay screen LEADS with the plain link on the argument that
-  the chooser is the mechanism NPCI defines, so the screen's first route rests on
-  behaviour still unobserved. Any handset with two registered UPI apps settles
-  it.
+- **WHICH apps the chooser listed** in run 1. That it appeared at all is now
+  settled and was the bigger question; its contents are the loose end. If
+  PhonePe was among them, that sits badly against the same PhonePe refusing a
+  package-addressed intent minutes earlier, and the account-state conclusion
+  would need re-examining rather than defending. If the list was other apps —
+  WhatsApp Pay, Amazon Pay, a bank app — the conclusion stands and the only news
+  is that the device has more UPI apps than this page tests.
 - The god-mode Health tab rendering against production.
 - That an impersonated admin genuinely cannot reset the superadmin's password
   on the live site. Proven locally with a real admin session, never on prod.
