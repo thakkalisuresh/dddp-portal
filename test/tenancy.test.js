@@ -184,6 +184,61 @@ describe('canResetPassword', () => {
       }
     }
   });
+
+  /* ── the mailbox gate ──────────────────────────────────────────────────
+     B21 is only safe because residents can recover without an admin, and that
+     route is email. With no mailbox the restriction does not move recovery to
+     the resident, it moves all 99 flats to one person. So the admin rung stays
+     open until the mailbox exists — and not one rung further.               */
+
+  it('defaults to the strict behaviour when nobody says whether mail works', () => {
+    // The default matters more than the gate: a caller that forgets the flag
+    // must get B21, never the open door.
+    expect(canResetPassword({ actor: admin, target: resident }).ok).toBe(false);
+    expect(canResetPassword({ actor: admin, target: resident, mailConfigured: true }).ok)
+      .toBe(false);
+  });
+
+  it('lets an admin reset an ordinary resident while there is no mailbox', () => {
+    const v = canResetPassword({ actor: admin, target: resident, mailConfigured: false });
+    expect(v.ok).toBe(true);
+    // Flagged, so the caller can say out loud that this is on loan.
+    expect(v.degraded).toBe(true);
+  });
+
+  it('closes the moment the mailbox appears, with no deploy', () => {
+    const open = canResetPassword({ actor: admin, target: resident, mailConfigured: false });
+    const shut = canResetPassword({ actor: admin, target: resident, mailConfigured: true });
+    expect([open.ok, shut.ok]).toEqual([true, false]);
+    expect(shut.message).toMatch(/forgotten your password/i);
+  });
+
+  it('STILL refuses an admin resetting the superadmin with no mailbox', () => {
+    // The original hole, and the one thing no outage may reopen.
+    const v = canResetPassword({ actor: admin, target: superadmin, mailConfigured: false });
+    expect(v.ok).toBe(false);
+    expect(v.message).toMatch(/break-glass/i);
+  });
+
+  it('STILL refuses one admin resetting another with no mailbox', () => {
+    // Lateral movement into an account with the same powers. Pre-B21 this was
+    // already refused, so the gate restoring it would be a regression dressed
+    // up as a fallback.
+    expect(canResetPassword({ actor: admin, target: otherAdmin, mailConfigured: false }).ok)
+      .toBe(false);
+  });
+
+  it('STILL refuses a resident resetting anyone with no mailbox', () => {
+    // The gate holds open the ADMIN rung. A resident has no rung.
+    for (const role of ['owner', 'tenant', 'treasurer', '', null, undefined]) {
+      for (const t of [resident, admin, superadmin]) {
+        expect(
+          canResetPassword({ actor: { id: 9, role }, target: t, mailConfigured: false }).ok,
+          `${role}`
+        ).toBe(false);
+      }
+    }
+  });
 });
 
 /* ── who may edit whose contact details ──────────────────────────────────── */

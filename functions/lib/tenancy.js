@@ -207,8 +207,18 @@ export const ADMINISTRATOR = { name: 'Sabarish' };
  * an endpoint that can rewrite the top credential is exactly what an attacker
  * with a stolen admin session would reach for. Recovery is the break-glass
  * script, which requires the Cloudflare credentials rather than a login.
+ *
+ * ONE CONDITION, and it is the sentence the whole decision rests on: taking
+ * reset away from admins is safe *because residents can recover without them*.
+ * That clause is not decoration. With no mailbox configured, `/forgot` sends
+ * nothing, and enforcing the restriction does not hand recovery to the
+ * resident — it hands all 99 flats to one person, who is also the person most
+ * likely to be unreachable when it matters. So `mailConfigured` gates the
+ * admin rung, and the restriction arrives with the mailbox rather than with a
+ * deploy. It defaults to `true` so a caller that forgets to pass it gets the
+ * strict behaviour, never the open one.
  */
-export function canResetPassword({ actor, target }) {
+export function canResetPassword({ actor, target, mailConfigured = true }) {
   if (!actor || !target) return { ok: false, message: 'Unknown account.' };
 
   if (target.role === 'superadmin') {
@@ -220,6 +230,36 @@ export function canResetPassword({ actor, target }) {
   }
 
   if (actor.role !== 'superadmin') {
+    // A resident never resets anybody, mail or no mail. Only the admin rung is
+    // held open below, and only because it has somewhere to hand the job back to.
+    if (actor.role !== 'admin') {
+      return {
+        ok: false,
+        message: `Only ${ADMINISTRATOR.name} can reset a password.`,
+      };
+    }
+
+    // THE GATE. Taking reset away from admins is only safe because residents
+    // gained a way to recover without them — and that way is email. Until the
+    // mailbox exists, `/forgot` cannot send anything, so enforcing the
+    // restriction would not move the capability to the resident: it would
+    // move it to one person for all 99 flats, including while he is asleep,
+    // abroad, or the one who is locked out.
+    //
+    // So the restriction switches itself on with the mailbox rather than with
+    // a deploy. This is not a softening of B21; it is B21's precondition,
+    // written down where it is enforced instead of assumed. The day the
+    // GOOGLE_* and MAIL_FROM secrets are set, admins lose this with no code
+    // change and no deploy — which is also why this must never be relaxed to
+    // a hand-set flag somebody can forget to clear.
+    // Ordinary residents ONLY. Before B21 the ladder already stopped an admin
+    // resetting another admin — that is lateral movement into an account with
+    // the same powers, and no mailbox outage makes it necessary. The gate
+    // restores what B21 removed and not one rung more.
+    if (!mailConfigured && target.role === 'owner') {
+      return { ok: true, degraded: true };
+    }
+
     return {
       ok: false,
       message: `Only ${ADMINISTRATOR.name} can reset a password. Ask the resident to use `

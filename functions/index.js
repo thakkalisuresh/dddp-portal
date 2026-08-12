@@ -6,7 +6,7 @@
 
 import { json, problem, readJson, audit, rateLimit, clearRateLimit, guard, withSecurityHeaders } from './lib/http.js';
 import { reportError, assertAlerting, postToTelegram } from './lib/errors.js';
-import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex } from './lib/crypto.js';
+import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex, derive } from './lib/crypto.js';
 import { dashboardPayload } from './lib/dashboard.js';
 import {
   readingGrid, saveReadings, generateBills, openPeriod, parseReadings,
@@ -60,6 +60,22 @@ import {
 } from './lib/session.js';
 
 const ITER = (env) => Number(env.PBKDF2_ITERATIONS ?? 100_000);
+
+/**
+ * Salt for the throwaway derive an unknown mobile pays for, so that failing to
+ * exist costs the same as failing to guess. Fixed and public on purpose: it
+ * never protects anything, it only burns the same CPU a real verify would.
+ *
+ * Honest limit — it is exact only once every row sits at the current target.
+ * Mid-migration a stored hash may still be at 100000 while this derives at the
+ * new number, so the gap inverts rather than closes until logins have carried
+ * everyone across. Bounded and much smaller than the 27 ms it replaces, but it
+ * is not zero, and pretending otherwise is how a mitigation stops being checked.
+ */
+const DUMMY_SALT = new Uint8Array([
+  0x9c, 0x1e, 0x4b, 0x77, 0x2a, 0xd5, 0x68, 0x03,
+  0xbf, 0x41, 0x96, 0xe7, 0x5a, 0x2c, 0xd0, 0x8e,
+]);
 
 export default {
   async fetch(request, env, ctx) {
@@ -399,7 +415,20 @@ async function login(request, env, ctx) {
   ).bind(mobile).first();
 
   // Same response either way — don't leak which mobiles are registered.
+  //
+  // The wording was never the whole story: the CLOCK was answering a question
+  // the message refused. A registered number pays for a PBKDF2 derive, an
+  // unregistered one used to return immediately, and that gap is measured at
+  // 27 ms on the edge — a reliable "does this flat exist" oracle over the
+  // network, against a building whose mobile numbers are a small guessable
+  // range. Raising PBKDF2_ITERATIONS makes it WORSE, not better: at 300000 the
+  // gap is ~81 ms, which is why this lands with that change rather than after.
+  //
+  // So an unknown mobile buys the same derive. Cost is one wasted hash on a
+  // request that was going to fail anyway, already behind the login rate
+  // limiter — and the result is deliberately discarded.
   if (!owner) {
+    await derive(password, DUMMY_SALT, ITER(env));
     await reportError(env, 'DDP-AUTH-001', { mobile }, ctx);
     return problem(401, 'DDP-AUTH-002', 'Mobile number or password is incorrect.');
   }
@@ -547,7 +576,11 @@ async function listResidents(env, session, url) {
       ${wantsPast ? '' : 'WHERE o.active = 1'}
       ORDER BY f.floor, o.flat, o.active DESC, o.relationship`
   ).all();
-  return json({ residents: results });
+  // The console has to draw the same conclusion the endpoint will reach, or an
+  // admin is shown a button that refuses them — or, worse, told to send someone
+  // to `/forgot` when nothing can be sent. It is the mailbox that decides, so
+  // the mailbox is what gets reported.
+  return json({ residents: results, mailConfigured: mailConfigured(env) });
 }
 
 async function resetPassword(request, env, session, path) {
@@ -558,8 +591,13 @@ async function resetPassword(request, env, session, path) {
   if (!target) return problem(404, 'DDP-AUTH-006', 'No such resident.');
 
   // Superadmin only since 2026-08-12: a reset mints a working credential, so
-  // whoever performs one can log in as that resident. See canResetPassword.
-  const allowed = canResetPassword({ actor: session.actor, target });
+  // whoever performs one can log in as that resident. See canResetPassword —
+  // which holds the admin rung open for as long as there is no mailbox, because
+  // the restriction only relocates the capability to the resident once `/forgot`
+  // can actually reach them.
+  const allowed = canResetPassword({
+    actor: session.actor, target, mailConfigured: mailConfigured(env),
+  });
   if (!allowed.ok) {
     await reportError(env, 'DDP-ADMIN-014',
                       { actor: session.actor.id, target: target.id, targetRole: target.role });
@@ -635,7 +673,9 @@ async function emailTempPassword(request, env, session, path) {
 
   // The same ladder as the reset itself. Without it this is a reset's payload
   // delivered by an endpoint that never asked who was allowed to cause one.
-  const allowed = canResetPassword({ actor: session.actor, target });
+  const allowed = canResetPassword({
+    actor: session.actor, target, mailConfigured: mailConfigured(env),
+  });
   if (!allowed.ok) {
     await reportError(env, 'DDP-ADMIN-014',
                       { actor: session.actor.id, target: target.id, targetRole: target.role });

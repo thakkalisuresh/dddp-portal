@@ -21,6 +21,15 @@ import { prepareUpload, makeThumbnail } from './compress.js';
 const main = $('#main');
 let me = null;
 
+/**
+ * Whether the portal can send email, as the server last reported it.
+ *
+ * Defaults to true — the strict reading — so a render that happens before the
+ * directory loads hides the reset button rather than offering one the endpoint
+ * would refuse. Mirrors the same default in canResetPassword.
+ */
+let mailConfigured = true;
+
 // Ordered by when you actually do them. Rates comes before Readings because
 // the month has to be open, with its rate set, before a reading can be entered
 // against it — saveReadings fails outright on a period that does not exist.
@@ -360,8 +369,9 @@ async function residentsPanel() {
   async function load() {
     list.replaceChildren(el('p', { class: 'muted' }, 'Loading…'));
     try {
-      const { residents } = await api.admin.residents({ past: showPast });
-      groups = groupByFlat(residents);
+      const res = await api.admin.residents({ past: showPast });
+      mailConfigured = res.mailConfigured !== false;
+      groups = groupByFlat(res.residents);
       render();
     } catch (err) { showError(list, err); }
   }
@@ -515,17 +525,30 @@ function personCard(p, status) {
     // admin is the sentence, because they are the one standing in front of the
     // resident and they need to know what to say.
     inactive ? null : el('div', { style: 'margin-top:var(--s-3)' },
-      me.role === 'superadmin'
-        ? el('button', {
-            class: 'btn btn--sm btn--quiet', type: 'button',
-            onclick: async () => {
-              try {
-                const result = await api.admin.resetPassword(p.id);
-                status.replaceChildren(otpPanel(result, p, status));
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              } catch (err) { showError(status, err); }
-            },
-          }, 'Reset password')
+      // Superadmin always; an admin only while there is no mailbox, which is
+      // exactly when the sentence below would be a lie. Kept in step with
+      // canResetPassword — if these two disagree the admin meets a button that
+      // refuses them, or advice that cannot work.
+      (me.role === 'superadmin' || (me.role === 'admin' && !mailConfigured))
+        ? el('div', {},
+            el('button', {
+              class: 'btn btn--sm btn--quiet', type: 'button',
+              onclick: async () => {
+                try {
+                  const result = await api.admin.resetPassword(p.id);
+                  status.replaceChildren(otpPanel(result, p, status));
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                } catch (err) { showError(status, err); }
+              },
+            }, 'Reset password'),
+            // Said plainly, because an admin holding this button should know it
+            // is on loan. It disappears the day the mailbox is set up, and
+            // nobody will deploy anything to make that happen.
+            me.role === 'admin'
+              ? el('p', { class: 'small muted' },
+                  'You can do this only because password-reset email is not set up yet. '
+                  + 'Once it is, residents reset themselves and this button goes away.')
+              : null)
         : el('p', { class: 'small muted' },
             'Forgotten password? Ask them to tap "Forgotten your password?" on the '
             + 'login page — a code goes to their own email, so nobody else ever holds '
