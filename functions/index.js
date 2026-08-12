@@ -215,6 +215,7 @@ export default {
         if (route.startsWith('POST /api/admin/roster/sent/')) {
           return rosterMarkSent(request, env, session, path);
         }
+        if (route === 'GET /api/admin/flats') return listFlats(env);
         if (request.method === 'PATCH' && /^\/api\/admin\/flats\/[^/]+$/.test(path)) {
           return patchFlat(request, env, session, path);
         }
@@ -2395,6 +2396,43 @@ function periodFrom(url) {
 }
 
 /**
+ * Every flat in the building, billed or not, with whoever lives there.
+ *
+ * FLATS, not residents, and that is the point. The Residents tab is built from
+ * `owners`, so a flat nobody has bought has no row there and could never be
+ * managed from it — 5 of the 99 are in exactly that state today. Billing is a
+ * property of the FLAT, so the list that governs it has to start from flats and
+ * join people on, not the other way round.
+ *
+ * `unsold` and `vacant` are derived here rather than stored, because a stored
+ * copy would be a second truth to keep in step with the owners table: a flat
+ * with nobody on file is unsold, one with somebody is not.
+ */
+async function listFlats(env) {
+  const rows = await env.DB.prepare(
+    `SELECT f.flat, f.floor, f.active, f.inactive_reason, f.inactive_since,
+            GROUP_CONCAT(o.name, ', ') AS residents,
+            COUNT(o.id) AS resident_count
+       FROM flats f
+       LEFT JOIN owners o ON o.flat = f.flat AND o.active = 1
+      GROUP BY f.flat
+      ORDER BY f.floor, f.flat`
+  ).all();
+
+  return json({
+    flats: (rows.results ?? []).map((r) => ({
+      flat: r.flat,
+      floor: r.floor,
+      billed: Boolean(r.active),
+      residents: r.residents ?? null,
+      unsold: r.resident_count === 0,
+      reason: r.inactive_reason ?? null,
+      since: r.inactive_since ?? null,
+    })),
+  });
+}
+
+/**
  * Take a flat out of billing, or put it back.
  *
  * WHAT THIS IS FOR, and what it is not. `flats.active` has been in the schema
@@ -2451,7 +2489,12 @@ async function patchFlat(request, env, session, path) {
     }
   }
 
-  await env.DB.prepare('UPDATE flats SET active = ? WHERE flat = ?').bind(active, flat).run();
+  // The reason lives on the flat as well as in the audit log. The log records
+  // what happened; the row is what a screen can show next to 12F a year later,
+  // when the person asking is not the person who decided.
+  await env.DB.prepare(
+    'UPDATE flats SET active = ?, inactive_reason = ?, inactive_since = ? WHERE flat = ?'
+  ).bind(active, active ? null : reason, active ? null : new Date().toISOString(), flat).run();
   await audit(env, session, 'flat.active', { flat, from: row.active, to: active, reason });
 
   return json({ flat, active: Boolean(active), reason });

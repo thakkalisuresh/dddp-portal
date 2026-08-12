@@ -141,6 +141,8 @@ export const api = {
     saveReadings:  (period, readings) =>
                                request('PUT',  `/api/admin/readings?period=${period}`, { readings }),
     parseReadings: (text)   => request('POST', '/api/admin/readings/parse', { text }),
+    /** Every flat, billed or not — includes the ones nobody has bought. */
+    flats:         ()       => request('GET',  '/api/admin/flats'),
     /** Take a flat out of billing, or put it back. A reason is required. */
     setFlatActive: (flat, active, reason) =>
                                request('PATCH', `/api/admin/flats/${encodeURIComponent(flat)}`,
