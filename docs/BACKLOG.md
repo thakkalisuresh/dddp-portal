@@ -131,6 +131,35 @@ number cannot type their own login on a phone. Harmless so far because every
 stored number is `+91`; a text input fixes it in one line, and should not wait
 for the rest of this.
 
+## B23 — The app row sends people to install apps they already have
+
+Raised 2026-08-11, out of the device run recorded in STATE.md under "The Android
+payment failure". Observed, not theorised: on the handset tested, PhonePe was
+installed but registered to no account, and tapping the PhonePe button went to
+the Play Store listing for PhonePe.
+
+That is `intent://` behaving exactly as designed — an addressed intent whose
+package answers nothing falls back to the store — and the fallback was added
+deliberately, because the alternative was a button that did nothing at all. It
+is still the right behaviour for an app that genuinely is not installed. The
+defect is narrower: **the portal cannot tell the two cases apart, and one of
+them insults the resident.** Being told to install software you are already
+looking at reads as the site being broken, which is worse than the silence the
+fallback was introduced to fix.
+
+A web page cannot enumerate installed packages — that is the same wall the whole
+investigation ran into, and no amount of cleverness gets around it. So this
+cannot be fixed by detection, only by wording and ordering. Cheapest honest
+version: the plain `upi://` chooser already leads on Android and only offers
+apps that actually answer, so the named row below it could say what it is for —
+something admitting that a named button may offer to install the app — and the
+existing "did not accept the link" warning could cover the store bounce too,
+since returning from the Play Store is itself a signal the tap failed.
+
+Small, and worth doing before residents see this. It costs a sentence and
+possibly a `pagehide` check, and the failure it prevents is the one that makes
+somebody give up and not pay.
+
 ## B19 — A pay link in the bill email
 
 Raised 2026-08-11. The idea was to put a `upi://` link in the body of the bill
@@ -150,11 +179,25 @@ Android payment failure". Email changes nothing about resolution and usually
 makes it worse, since email links open in an in-app WebView, which refuses
 custom schemes more readily than Chrome.
 
+That second argument is now **dead, and B19 survives it.** The device run on
+2026-08-11 found every link shape resolving on a properly set-up handset, so
+"resolution does not work" can no longer be leaned on here. The verdict does not
+move, because the two arguments were independent and that is exactly why both
+were written down: Gmail's sanitiser strips the scheme before resolution is ever
+reached. The WebView half of the claim also still holds — the run had to route
+around WhatsApp's WebView deliberately to get a valid result at all, which is
+evidence for that point rather than against it.
+
 **The phishing objection was raised and is weaker than it first looks.** UPI
 resolves the payee from the registry and shows the NAME on the confirmation
 screen, so a spoofed mail pointing at a scam VPA announces itself as somebody
 else before any money moves. Banks and utilities send payment links routinely.
 The idea is legitimate; it is the plumbing that refuses, not the ethics.
+
+That paragraph was reasoning from the spec when it was written. It is now
+observed: the device run of 2026-08-11 reached a confirmation screen showing the
+payee name, the amount and the note, from a link built by this codebase. The
+protection it describes is real and works.
 
 **What to build instead**, when there is an account to send from:
 
