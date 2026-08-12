@@ -131,7 +131,7 @@ number cannot type their own login on a phone. Harmless so far because every
 stored number is `+91`; a text input fixes it in one line, and should not wait
 for the rest of this.
 
-## B20 — The app row sends people to install apps they already have
+## B23 — The app row sends people to install apps they already have
 
 Raised 2026-08-11, out of the device run recorded in STATE.md under "The Android
 payment failure". Observed, not theorised: on the handset tested, PhonePe was

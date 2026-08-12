@@ -430,7 +430,7 @@ or more registered UPI apps is what would prove it.
 but unregistered app sends the resident to the Play Store to install software
 they already have. The pay screen shows all four app buttons unconditionally,
 so a resident with a dormant PhonePe taps PhonePe and is told to install
-PhonePe. Filed as B20.
+PhonePe. Filed as B23.
 
 ## Not verified by me
 
