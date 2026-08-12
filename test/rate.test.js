@@ -10,7 +10,7 @@ describe('the rate moves every month', () => {
   });
 
   it('refuses to generate on an inherited rate', () => {
-    // The worst failure this system can have: 52 bills that look completely
+    // The worst failure this system can have: 99 bills that look completely
     // normal and are every one of them wrong.
     expect(() => assertRateSetForPeriod({ period: '2026-08', rate_per_kg: 75, rate_inherited: true }))
       .toThrow(/DDP-BILL-010/);

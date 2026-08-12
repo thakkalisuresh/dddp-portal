@@ -329,7 +329,7 @@ export function committeeFolderSeparate(env) {
  * once residents actually start uploading — invisible today, with one proof in
  * the bucket, and arriving exactly when the building starts using the portal.
  * Twenty leaves room to spare and still moves 600 a month against an expected
- * inflow of about 52. Revisit this if the account ever moves to Workers Paid,
+ * inflow of about 99. Revisit this if the account ever moves to Workers Paid,
  * where the ceiling is 1000.
  */
 export const PROOF_BATCH = 20;

@@ -20,6 +20,20 @@
  * and 15C are not flats — they are the upper halves of flats that already
  * exist, and creating them would bill one household twice.
  *
+ * Verified against the developer's own documents on 2026-08-12 — the
+ * availability chart and the brochure's Key Plan 2 — rather than left as the
+ * reading that produced it. Every line above holds, including the brochure
+ * stating outright that 11, 13 and 15 are the UPPER floors of the duplexes
+ * below them.
+ *
+ * One trap those documents introduce, which is about labels rather than the
+ * model. On floor 16 the brochure calls the 1461 sq.ft unit "Type C", while
+ * the chart puts it in the D position — and the bay actually labelled C on
+ * that floor is recreation. So this file calls that home 16D and REJECTS 16C,
+ * which is correct, but an owner whose paperwork says "16C" will have their
+ * line stopped by the roster import. Expect it and correct the roster; do not
+ * "fix" it by admitting 16C, which would create a flat in a recreation bay.
+ *
  * Pure and exported so the roster import validates against the real building
  * rather than accepting whatever was pasted.
  */
