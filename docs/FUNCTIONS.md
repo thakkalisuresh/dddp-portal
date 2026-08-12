@@ -109,7 +109,7 @@ Pure billing arithmetic.
 | fn | `computeBill` |  |
 | fn | `applyLateFee` | Add a late fee to an existing total, then round up as usual. |
 | fn | `assertRateSetForPeriod` | The rate moves every month, so it is set per period and never carried forward automatically. |
-| const | `RATE_JUMP_THRESHOLD` | Catch a fat-fingered rate before 52 bills are generated from it. |
+| const | `RATE_JUMP_THRESHOLD` | Catch a fat-fingered rate before 99 bills are generated from it. |
 | fn | `rateSanity` |  |
 | fn | `deriveRate` | Many RWAs do not get a published per-kg tariff — they get one bulk invoice and divide it across the sub-metered flats, which is why the effective rate moves every month even when the supplier's tariff hasn't. |
 | fn | `meterReconciliation` | Sub-meters never sum to the bulk meter — there are line losses and unmetered common usage. |

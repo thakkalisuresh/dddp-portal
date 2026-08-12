@@ -1,4 +1,4 @@
-# Where this is, 9 August 2026
+# Where this is, 12 August 2026
 
 What is built, what is live, what is half-done. Figures read from production
 rather than remembered.
@@ -11,22 +11,25 @@ The portal is **built and deployed**. It has never billed a real month.
 
 ## Production right now
 
-**https://diamondpark.pages.dev** · 547 tests · `npm run doctor` reports 0 failing
+**https://diamondpark.pages.dev** · 799 tests · `npm run doctor` reports 0 failing
+
+Figures below read from production on 2026-08-12.
 
 | | |
 |---|---|
 | Flats | 99 |
-| People | 103 — **99 of them demo** |
-| Bills | 880 — all demo |
+| People | 105 — **100 of them demo** |
+| Bills | 898 — all demo (0 belong to a real account) |
+| Readings | 990 |
 | Months | 10 — all demo |
-| Migrations applied | 13 |
-| Error codes | 69 |
+| Migrations applied | 25 |
+| Error codes | 81 |
 
 > ### The demo data is live
 >
-> 99 flats and 880 bills of generated data are in the production database for
-> user testing. **It must come out before the real roster goes in**, or the
-> import meets 99 flats that already exist.
+> 100 generated residents across 89 flats, and all 898 bills, are in the
+> production database for user testing. **It must come out before the real
+> roster goes in**, or the import meets flats that already exist.
 >
 > ```
 > node scripts/seed-demo.mjs --remote --remove
@@ -110,9 +113,28 @@ drift tests.
 nothing. No Google credentials. `doctor` reports `MAIL-NOT-CONFIGURED`.
 
 **Nightly Drive backup** — written in phase 8, and **configured on 2026-08-11**
-after sitting inert since. It has still not run: the first 3am is the one to
-check. Doctor moved from BACKUP-NOT-CONFIGURED to BACKUP-NEVER, which is the
-whole of what has been proven so far.
+after sitting inert since. Doctor moved from BACKUP-NOT-CONFIGURED to
+BACKUP-NEVER, which is the whole of what has been proven so far.
+
+> ### Why it had not run by 2026-08-12, and it is not a fault
+>
+> Checked properly on 2026-08-12 rather than assumed. **The backup has never
+> had a window.** The `0 22 * * *` trigger was committed at 21:36 UTC on
+> 2026-08-11 and the deploy carrying it landed at **22:16 UTC — sixteen minutes
+> after that night's 22:00 window had already passed.** The next 22:00 is
+> 2026-08-12, so the first genuine opportunity is 03:30 IST on the **13th**.
+>
+> Everything downstream of the trigger checks out, so there is nothing to fix
+> while waiting: all four `GOOGLE_BACKUP_*` secrets are on the cron Worker,
+> `BACKUP_CRON` in `lib/backup.js` matches `wrangler.toml` exactly, and cron
+> delivery to this Worker is proven — `last_digest_at` reads
+> `2026-08-12T03:00:25Z`, so the 03:00 UTC trigger fired that morning. A
+> `last_backup_at` key does not exist in `settings` at all, which is the shape
+> of a job that has not run rather than one that ran and failed. `error_log`
+> carries no backup failure, and a failure would have paged Telegram.
+>
+> **So the check is the morning of 2026-08-13**, and BACKUP-NEVER still showing
+> then is the first moment this becomes a fault worth investigating.
 
 What IS proven: the credentials work and the folder is writable, because
 `google:auth` uploaded a real check file (`setup-check-2026-08-11.csv`) before
@@ -150,6 +172,30 @@ reported an all-clear on a backup that never ran; it now names each half.
 > come from the association's address, so `sendEmail` stays on the shared
 > credentials. Only `uploadToDrive` and `backupHealth` take the override.
 
+## The PBKDF2 incident, 2026-08-12 — over, and no account was stranded
+
+Recorded because the git log shows a raise and a revert (PRs #16, #17) without
+showing what happened in between, and the thing worth knowing is what it did to
+the data rather than to the code.
+
+Between 17:59 and 18:04 UTC, production ran with `PBKDF2_ITERATIONS = 200000`.
+Cloudflare's Web Crypto caps it at 100,000 and says so only at runtime, so every
+login in that window threw `NotSupportedError: Pbkdf2 failed: iteration counts
+above 100000 are not supported (requested 200000)` — four fatal DDP-SYS-001 rows
+in `error_log`, then the revert.
+
+**The question the revert did not answer is whether any password was WRITTEN at
+200000 in those five minutes.** One would have been a permanent lockout rather
+than a failed login: verification re-reads `pw_iterations` from the row and
+would throw the same error every time, for ever, with no way back except a
+break-glass reset. Checked on 2026-08-12 — `SELECT pw_iterations, COUNT(*) FROM
+owners GROUP BY pw_iterations` returns a single row, **100000 for all 105
+accounts.** Nothing to repair.
+
+Worth keeping as the shape of the risk: an iteration count is snapshotted onto
+the row, so a bad value does not fail loudly at deploy time and then get fixed —
+it is written into accounts and outlives the revert.
+
 ## Never tested against real data
 
 This is the honest gap, and it is the whole of it.
@@ -181,7 +227,7 @@ is useless and does not come back.
 | | |
 |---|---|
 | **B10** | Half done 2026-08-12: temporary passwords now expire (24h reset, 72h invite). What remains is the roster invite sending an announcement rather than a password where there is an email — not started, and wants doing with the import. |
-| **B12** | Configured 2026-08-11; no off-site backup has run *yet*. First 3am is unproven. |
+| **B12** | Configured 2026-08-11; no off-site backup has run *yet*, because the trigger was deployed 16 minutes after that night's window. First real window is 03:30 IST on 2026-08-13. |
 | **B20** | The nightly backup's three sweeps share one 50-subrequest ceiling, and the later ones would starve silently once residents start uploading. Not failing today. |
 | — | Rejecting a proof gives the resident no reason, so they re-upload the same wrong screenshot. Now that rejection also returns the bill to `unpaid` and the late fee applies (B13), this matters more than it did. |
 | — | Deleting a proof clears R2 but keeps `image_sha256`, so duplicate detection still fires against an image nobody can see. |

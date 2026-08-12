@@ -75,7 +75,7 @@ the cron running old code, and shipping only the Worker leaves the site stale.
 | [docs/COSTS.md](docs/COSTS.md) | Measured usage against the free tier |
 | [docs/PRIVACY.md](docs/PRIVACY.md) | What is recorded, and break-glass recovery |
 
-**99 flats of demo data are in production** for user testing. Remove with
+**100 demo residents across 89 flats are in production** for user testing. Remove with
 `node scripts/seed-demo.mjs --remote --remove` before importing the real roster.
 
 Screen designs for all 19 screens were built before any app code.
@@ -94,7 +94,7 @@ npm run dev
 
 ```bash
 npm run seed      # local dev data: 6 residents, real readings from the old portal
-npm test          # 237 tests, no network or D1 needed
+npm test          # 799 tests, no network or D1 needed
 npm run errdoc    # regenerate docs/ERROR_CODES.md after editing the registry
 npm run doctor    # check the building's invariants against production
 npm run doctor -- --local --md   # ...locally, as markdown you can paste
@@ -105,16 +105,20 @@ Secrets: `npx wrangler secret put TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and
 optionally `GROQ_API_KEY` or `GEMINI_API_KEY` for screenshot OCR.
 Locally they go in `.dev.vars` (see `.dev.vars.example`).
 
-## The five invariants
+## The seven invariants
 
 Everything else is ordinary CRUD. These are the things that will bite.
 
-**0 · The meter counts cubic metres; the bill charges kilograms.** The conversion
+**Numbered to match `docs/PRD.md`, which is the canonical list.** They used to
+run `0, 1, 1b, 1d, 1c, 2, 3, 4` here and `1`–`7` there, which meant "invariant
+3" named two different rules depending on which file you had open.
+
+**1 · The meter counts cubic metres; the bill charges kilograms.** The conversion
 factor is 2.60, derived from the old portal's own history (see test/billing.test.js).
 Treating a meter delta as kilograms under-bills every flat by 2.6x. The factor is
 stored per period and snapshotted onto each bill, like the rate.
 
-**1 · A bill is exactly what the meter and the rate produce, rounded UP.** Nothing is
+**2 · A bill is exactly what the meter and the rate produce, rounded UP.** Nothing is
 added to the amount a resident is asked for and nothing is encoded in it. Ceiling, not
 round-to-nearest: 328.50 bills as 329 and so does 328.01. Verified against the old
 portal, where 314.25 was billed as 315 — ordinary rounding gives 314.
@@ -125,12 +129,26 @@ per-flat identifier into the paise instead; it is gone, and `flats.legacy_paise_
 is a dead column that could not be dropped — see `migrations/0005_retire_paise_tag.sql`
 for why, and use `lib/flats.js` to insert flats so you never have to care.
 
-**1b · Bills and proofs belong to the PERSON, not the flat.** When a flat is sold
+**3 · Bills and proofs belong to the PERSON, not the flat.** When a flat is sold
 the incoming owner must not see the previous owner's bills or open their receipts.
 `bills.owner_id` and `payment_proofs.owner_id` enforce it; readings stay keyed to the
 flat alone, because a meter reading is a property fact. See `docs/PRIVACY.md`.
 
-**1d · The superadmin can change anything, and cannot change anything silently.**
+**4 · The client never sends an identity.** No `?flat=4A`. The subject is always derived
+from the session token server-side. Endpoints that do take a flat id are admin-only and
+re-check the role.
+
+**5 · There is exactly one superadmin, and admins cannot see behavioural data.**
+The role can only be *moved*, never copied. Admins run the building; the activity
+log, click capture, view-as and impersonation are superadmin-only. Recovery from a
+lost superadmin is direct D1 access — see `docs/PRIVACY.md`.
+
+**6 · The tenant is billed; the owner is liable.** One column, `relationship`, set by
+an admin. Most society systems bill the owner because maintenance is a charge against
+the property; gas is metered consumption, so it follows whoever burned it. Notices can
+be scoped to owners alone, because a tenant cannot act on an AGM agenda.
+
+**7 · The superadmin can change anything, and cannot change anything silently.**
 God edit (`/god-edit`) writes any field on any person or bill. Those are one feature,
 not two: unlimited power is only safe to hand someone if the record of using it is
 automatic. Every save is a single field with before, after, actor and — for money — a
@@ -140,20 +158,16 @@ Editing a bill component re-derives the total; editing the total overrides it an
 `manual_total`, which is what stops the fatal DDP-BILL-003 check from firing on a
 deliberate adjustment and burying the real signal.
 
-**1c · There is exactly one superadmin, and admins cannot see behavioural data.**
-The role can only be *moved*, never copied. Admins run the building; the activity
-log, click capture, view-as and impersonation are superadmin-only. Recovery from a
-lost superadmin is direct D1 access — see `docs/PRIVACY.md`.
+### Two more that bite the same way
 
-**2 · The client never sends an identity.** No `?flat=4A`. The subject is always derived
-from the session token server-side. Endpoints that do take a flat id are admin-only and
-re-check the role.
+Not in the PRD's seven — they are properties of the plumbing rather than of the
+building — but they are load-bearing and a change that breaks either is a bug.
 
-**3 · Sessions carry actor and subject separately.** God mode sets `subject_id` without
+**Sessions carry actor and subject separately.** God mode sets `subject_id` without
 touching `actor_id`, so the admin's own session is never overwritten and Exit can't strand
 you. Credential changes stay blocked while impersonating, even in write mode.
 
-**4 · No error escapes unreported.** `reportError` is the only sanctioned exit. The failure
+**No error escapes unreported.** `reportError` is the only sanctioned exit. The failure
 mode being guarded is a code marked `fatal` whose call sites all bypass the reporter —
 invisible to alerts *and* the digest, silently inert since deploy. `test/error-codes.test.js`
 asserts every live code has a call site, that no bare `throw new Error` exists, and that a
@@ -185,7 +199,7 @@ functions/
     upi.js            deep links; iOS needs per-app schemes, Android doesn't
 migrations/           D1 schema
 scripts/              doc generation
-test/                237 tests
+test/                799 tests
 ```
 
 ## Operating it

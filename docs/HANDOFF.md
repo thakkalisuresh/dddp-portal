@@ -32,7 +32,7 @@ You are picking up the DD Diamond Park gas billing portal.
   /Users/sabarish/Downloads/Claude/dddp-portal
 
 It is live at https://diamondpark.pages.dev and runs at zero cost on
-Cloudflare Pages + Workers + D1 + R2. 786 tests. The user is Sabarish, the
+Cloudflare Pages + Workers + D1 + R2. 799 tests. The user is Sabarish, the
 association's superadmin, and he is often on a phone with no terminal.
 
 READ FIRST, in this order:
@@ -47,7 +47,8 @@ invariants against live production and is read-only.
 
 THREE THINGS THAT WILL CATCH YOU OUT:
 
-1. 99 flats and 880 bills of DEMO data are in production for user testing.
+1. 100 residents across 89 flats, and all 898 bills, are DEMO data in
+   production for user testing.
    Remove them before importing the real roster:
      node scripts/seed-demo.mjs --remote --remove
    The four real committee accounts (4A, 10A, 13A, 13E) are untouched by it.
@@ -120,7 +121,7 @@ migrations/         0001..0025, applied in order
 scripts/            run by hand; several touch production
 docs/               this, plus PRD, STATE, BACKLOG, COSTS, PRIVACY,
                     ERROR_CODES and FUNCTIONS (the last two generated)
-test/               786 tests
+test/               799 tests
 ```
 
 ## Commands worth knowing
