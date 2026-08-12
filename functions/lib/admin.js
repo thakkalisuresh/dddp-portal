@@ -330,8 +330,38 @@ export async function saveReadings(env, period, entries, actorId) {
 }
 
 /**
+ * Which columns a header row names, or null when the first line is data.
+ *
+ * THE BUG THIS EXISTS FOR. `downloadTemplate` hands out
+ * `flat,floor,previous,reading` and its docstring promises "column order is
+ * guaranteed on the way back" — and the way back did not honour it. The
+ * heuristic below reads everything before the last number as the flat, so a
+ * filled-in template row `4A,4,5.817,6.900` asked for a flat called
+ * "4A 4 5.817" and every single row failed as unknown-flat. The app's own
+ * export could not be imported by the app. Found on 2026-08-12 while adding
+ * file upload, by round-tripping the template rather than reading the code.
+ *
+ * Recognised only when the line names BOTH columns and carries no number of
+ * its own, so a data row is never mistaken for a header.
+ */
+function headerColumns(line) {
+  const cells = line.split(/[\t,;]/).map((c) => normaliseFlat(c));
+  if (cells.some((c) => /^\d+(\.\d+)?$/.test(c))) return null;
+  const flat = cells.indexOf('FLAT');
+  const reading = cells.indexOf('READING');
+  if (flat === -1 || reading === -1) return null;
+  return { flat, reading };
+}
+
+/**
  * Parse pasted or uploaded readings. Returns a DRAFT — never writes.
  * Unrecognised flats surface as errors rather than being silently dropped.
+ *
+ * Two shapes, and the header decides which. With a header the columns are read
+ * BY NAME, which is what makes the template round-trip and what lets a
+ * spreadsheet carry extra columns in any order. Without one, the original
+ * heuristic still applies, because "4A 5.817" pasted out of a WhatsApp message
+ * has no header and is how this was always used.
  */
 export function parseReadings(text, knownFlats) {
   const known = new Map(knownFlats.map((f) => [normaliseFlat(f), f]));
@@ -339,9 +369,39 @@ export function parseReadings(text, knownFlats) {
   const errors = [];
   const seen = new Set();
 
-  for (const raw of String(text).split(/\r?\n/)) {
+  const lines = String(text).split(/\r?\n/);
+  const firstData = lines.findIndex((l) => l.trim() !== '');
+  const columns = firstData === -1 ? null : headerColumns(lines[firstData].trim());
+
+  for (const [index, raw] of lines.entries()) {
     const line = raw.trim();
     if (!line) continue;
+    // The header itself is not an error. It used to be reported as
+    // "not-a-number", so every template import opened with a failure the
+    // treasurer had to decide to ignore.
+    if (columns && index === firstData) continue;
+
+    if (columns) {
+      // Split WITHOUT collapsing, so an empty cell keeps its position and
+      // column 3 is still column 3 on a row whose reading has not been taken.
+      const cells = line.split(/[\t,;]/).map((c) => c.trim());
+      const label = cells[columns.flat] ?? '';
+      const value = cells[columns.reading] ?? '';
+      // A blank reading is a flat not yet read, not a bad row. The grid shows
+      // it as still empty, which is exactly what it is.
+      if (value === '') continue;
+      if (!/^\d+(\.\d+)?$/.test(value)) {
+        errors.push({ line, flat: label, reason: 'not-a-number' });
+        continue;
+      }
+      const key = normaliseFlat(label);
+      if (!known.has(key)) { errors.push({ line, flat: label, reason: 'unknown-flat' }); continue; }
+      if (seen.has(key)) { errors.push({ line, flat: label, reason: 'duplicate' }); continue; }
+      seen.add(key);
+      rows.push({ flat: known.get(key), reading: Number(value) });
+      continue;
+    }
+
     const parts = line.split(/[\t,;]+|\s+/).filter(Boolean);
     if (parts.length < 2) { errors.push({ line, reason: 'malformed' }); continue; }
 

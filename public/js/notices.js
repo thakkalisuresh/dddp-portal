@@ -9,7 +9,7 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
-import { $, el, esc, renderViewBanner, showError } from './ui.js';
+import { $, el, esc, renderViewBanner, showError, setChildren } from './ui.js';
 import { stampLabel } from './i18n.js';
 import { renderMarkdown } from './markdown.js';
 import { prepareUpload, makeThumbnail } from './compress.js';
@@ -39,7 +39,13 @@ async function init() {
 
 async function renderList() {
   const { notices } = await api.notices();
-  main.replaceChildren(
+  // setChildren, NOT the native replaceChildren: the admin link below is a
+  // `cond ? node : null`, and the native method stringifies null, so a RESIDENT
+  // — the one person who never sees the link — got the word "null" printed
+  // above the notices. Reported from the live site on 2026-08-12. The helper
+  // exists for exactly this and its docstring already recorded the same bug
+  // shipping once before, on the public homepage.
+  setChildren(main,
     el('h1', {}, 'Notices'),
     // The publish form lives in the admin console, which an admin standing on
     // the notice board has no way of guessing. This is the only route to it

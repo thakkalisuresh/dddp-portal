@@ -9,6 +9,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { hashPassword } from '../functions/lib/crypto.js';
+import { normaliseMobile } from '../functions/lib/godedit.js';
 import { computeBill, computeConsumption, meterDelta, DEFAULT_CONVERSION } from '../functions/lib/billing.js';
 
 const DEV_PASSWORD = 'diamond-park-dev';
@@ -95,9 +96,17 @@ for (const flat of FLATS) {
 
 for (const p of PEOPLE) {
   const { hash, salt } = await hashPassword(DEV_PASSWORD, 100_000);
+  // Stored E.164, through the SAME function login uses.
+  //
+  // NOT cosmetic: `login` normalises what is typed and then looks the row up
+  // with `WHERE mobile = ?`, so a bare 10-digit number here matched nothing
+  // and EVERY dev account was unloggable — the seed printed a password that
+  // could not be used, and said so confidently. It dated from before 0009
+  // normalised the column and was never brought forward. Found on 2026-08-12
+  // while trying to verify a fix locally.
   sql.push(
     `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, must_change_pw, role, created_at)
-     VALUES (${q(p.flat)}, ${q(p.name)}, ${q(p.mobile)}, ${q(p.email)}, ${q(hash)}, ${q(salt)}, 0, ${q(p.role)}, datetime('now'));`
+     VALUES (${q(p.flat)}, ${q(p.name)}, ${q(normaliseMobile(p.mobile))}, ${q(p.email)}, ${q(hash)}, ${q(salt)}, 0, ${q(p.role)}, datetime('now'));`
   );
 }
 

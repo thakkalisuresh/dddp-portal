@@ -1,6 +1,6 @@
 /**
  * Meter reading entry — screen 07, and the one that decides whether the
- * treasurer adopts this at all. Someone enters ~52 readings standing in a
+ * treasurer adopts this at all. Someone enters 99 readings standing in a
  * corridor holding a phone.
  *
  * The header states BOTH months on purpose: they walk the building in July and
@@ -102,38 +102,103 @@ function header() {
   );
 }
 
+/**
+ * Paste OR a file, and a sample to start from.
+ *
+ * The file half is CSV/TSV/plain text and deliberately not .xlsx. A real
+ * workbook is a zip of XML that needs a parser, and there is no build step
+ * here — a library would be the first bundled dependency in the project, to
+ * read a format Excel, Numbers and Sheets all export as CSV in two taps. The
+ * file is read IN THE BROWSER and only its text is posted, so it goes through
+ * exactly the same parser the paste box already uses; there is no second code
+ * path that could disagree with the first.
+ *
+ * The sample is generated from the live grid rather than kept as a static
+ * file, so it always carries this building's real flats in reading order, and
+ * the previous month's value beside each one. A sample that drifts from the
+ * building is worse than none: it teaches a format that no longer imports.
+ */
 function importPanel() {
   const box = el('textarea', {
     id: 'paste', placeholder: '4A\t5.817\n4B\t2.940\n…', 'aria-label': 'Paste readings',
   });
   const out = el('div', { class: 'small muted', style: 'margin-top:var(--s-2)' });
 
+  const fill = async (text) => {
+    out.textContent = 'Reading…';
+    try {
+      const parsed = await api.admin.parseReadings(text);
+      // Parsed values fill the grid as a DRAFT. Nothing is written until
+      // Save — one transposed column would otherwise mis-bill everyone.
+      for (const row of parsed.rows) {
+        const input = main.querySelector(`[data-flat="${CSS.escape(row.flat)}"]`);
+        if (input) { input.value = row.reading; input.dispatchEvent(new Event('change')); }
+      }
+      out.replaceChildren(
+        el('span', {}, `${parsed.rows.length} filled in as a draft. `),
+        parsed.errors.length
+          ? el('strong', { style: 'color:var(--overdue)' },
+              `${parsed.errors.length} could not be read: ` +
+              parsed.errors.map((e) => `${e.flat ?? '?'} (${e.reason})`).join(', '))
+          : el('span', { style: 'color:var(--accent)' }, 'Nothing skipped.')
+      );
+    } catch (err) {
+      // Same lesson as the Generate button: an import that fails silently
+      // leaves the treasurer believing the readings went in.
+      showError(out, err);
+    }
+  };
+
+  const file = el('input', {
+    class: 'input', type: 'file', id: 'readings-file',
+    accept: '.csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain',
+    'aria-label': 'Upload a readings file',
+    onchange: async (event) => {
+      // Captured BEFORE the first await. `event.currentTarget` is only valid
+      // while the event is being dispatched and reads back null afterwards, so
+      // touching it below the await threw inside the handler — which is how
+      // the reset silently never happened.
+      const input = event.currentTarget;
+      const chosen = input.files?.[0];
+      if (!chosen) return;
+      try {
+        await fill(await chosen.text());
+      } catch (err) {
+        showError(out, err);
+      }
+      // Cleared so choosing the SAME file again re-fires change. Without this
+      // a corrected re-export of one filename silently does nothing.
+      input.value = '';
+    },
+  });
+
+  // The same template the footer offers, not a second one. Two generators
+  // would be two formats to keep in step, and the import now reads the
+  // template's columns by name — so the file you get here is exactly the file
+  // that goes back in.
+  const sample = el('button', {
+    class: 'linkish', type: 'button',
+    onclick: () => api.admin.downloadTemplate(period, grid),
+  }, 'Download the template');
+
   return el('details', { class: 'import' },
     el('summary', { style: 'font-family:var(--font-ui);cursor:pointer' },
-      'Paste readings from a spreadsheet'),
+      'Import readings from a spreadsheet'),
     el('div', { class: 'stack', style: 'margin-top:var(--s-3)' },
+      el('div', { class: 'field' },
+        el('label', { for: 'readings-file' }, 'Upload a file'), file,
+        el('span', { class: 'field__hint' },
+          'CSV, TSV or plain text. In Excel or Sheets choose File → Save as / '
+          + 'Download → CSV. ',
+          sample,
+          ' — it lists every flat with last month\'s reading beside it, so the '
+          + 'meter walk is a matter of filling the last column in.')),
+      el('p', { class: 'label' }, 'Or paste it'),
       box,
       el('div', { class: 'row' },
         el('button', {
           class: 'btn btn--sm btn--ghost', type: 'button',
-          onclick: async () => {
-            out.textContent = 'Reading…';
-            const parsed = await api.admin.parseReadings(box.value);
-            // Parsed values fill the grid as a DRAFT. Nothing is written until
-            // Save — one transposed column would otherwise mis-bill everyone.
-            for (const row of parsed.rows) {
-              const input = main.querySelector(`[data-flat="${CSS.escape(row.flat)}"]`);
-              if (input) { input.value = row.reading; input.dispatchEvent(new Event('change')); }
-            }
-            out.replaceChildren(
-              el('span', {}, `${parsed.rows.length} filled in as a draft. `),
-              parsed.errors.length
-                ? el('strong', { style: 'color:var(--overdue)' },
-                    `${parsed.errors.length} could not be read: ` +
-                    parsed.errors.map((e) => `${e.flat ?? '?'} (${e.reason})`).join(', '))
-                : el('span', { style: 'color:var(--accent)' }, 'Nothing skipped.')
-            );
-          },
+          onclick: () => fill(box.value),
         }, 'Fill the grid'),
         out))
   );
@@ -259,6 +324,7 @@ function footbar() {
 function previewSummary(p) {
   const blocked = p.blocked.length;
   const missing = p.missing ?? 0;
+  const failure = el('div');
 
   if (!p.canGenerate) {
     return el('div', { class: 'note note--bad' },
@@ -276,12 +342,27 @@ function previewSummary(p) {
     p.rateSanity.level === 'notice'
       ? el('div', { class: 'note' }, p.rateSanity.message)
       : null,
-    el('button', {
-      class: 'btn btn--block', type: 'button',
-      onclick: async () => {
-        const result = await api.admin.generate(period);
-        alert(`Generated ${result.generated} bills totalling ${money(result.totalAmount)}.`);
-        location.reload();
-      },
-    }, `Generate ${p.willBill} bills`));
+    // The catch is the point. Without it a refusal from the server — a locked
+    // month (DDP-BILL-007), a month already generated, a partial month — threw
+    // into an unhandled rejection and the button did NOTHING AT ALL: no
+    // message, no change, while the failure was logged and pushed to Telegram.
+    // The treasurer sees a dead button and the alert reaches somebody else.
+    // Reported from the live site on 2026-08-12, generating a locked month.
+    el('div', { class: 'stack' }, failure,
+      el('button', {
+        class: 'btn btn--block', type: 'button',
+        onclick: async (event) => {
+          const button = event.currentTarget;
+          failure.replaceChildren();
+          button.disabled = true;
+          try {
+            const result = await api.admin.generate(period);
+            alert(`Generated ${result.generated} bills totalling ${money(result.totalAmount)}.`);
+            location.reload();
+          } catch (err) {
+            showError(failure, err);
+            button.disabled = false;
+          }
+        },
+      }, `Generate ${p.willBill} bills`)));
 }

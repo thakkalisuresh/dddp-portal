@@ -80,6 +80,72 @@ describe('parsing a pasted month', () => {
     const result = parseReadings('4A\t5.817', flats);
     expect(Object.keys(result).sort()).toEqual(['errors', 'rows']);
   });
+
+  /**
+   * The template this app hands out has to be importable BY this app.
+   *
+   * It was not. `downloadTemplate` emits flat,floor,previous,reading and the
+   * parser read everything before the last number as the flat name, so a
+   * filled-in template asked for a flat called "4A 4 5.817" and every row
+   * failed. Nothing caught it because every test here pasted two columns,
+   * which is not the shape the app's own export produces.
+   */
+  describe('a filled-in template goes back in', () => {
+    // Exactly the columns api.admin.downloadTemplate writes.
+    const header = 'flat,floor,previous,reading';
+
+    it('round-trips the template the app itself exports', () => {
+      const { rows, errors } = parseReadings(
+        `${header}\n4A,4,5.817,6.900\n4B,4,2.94,3.500`, flats);
+      expect(rows).toEqual([
+        { flat: '4A', reading: 6.900 },
+        { flat: '4B', reading: 3.500 },
+      ]);
+      expect(errors).toEqual([]);
+    });
+
+    it('does not report the header row as a failure', () => {
+      const { errors } = parseReadings(`${header}\n4A,4,5.817,6.900`, flats);
+      expect(errors).toEqual([]);
+    });
+
+    it('treats a blank reading as not-yet-read, not as a bad row', () => {
+      // The meter walk is done in passes; half a template is the normal state.
+      const { rows, errors } = parseReadings(
+        `${header}\n4A,4,5.817,6.900\n4B,4,2.94,`, flats);
+      expect(rows).toEqual([{ flat: '4A', reading: 6.900 }]);
+      expect(errors).toEqual([]);
+    });
+
+    it('reads columns by NAME, so their order does not matter', () => {
+      const { rows } = parseReadings('reading,flat\n6.900,4A', flats);
+      expect(rows).toEqual([{ flat: '4A', reading: 6.900 }]);
+    });
+
+    it('still catches an unknown flat when there is a header', () => {
+      const { rows, errors } = parseReadings(`${header}\n9F,9,1.0,2.110`, flats);
+      expect(rows).toEqual([]);
+      expect(errors[0].reason).toBe('unknown-flat');
+    });
+
+    it('still catches a duplicate when there is a header', () => {
+      const { errors } = parseReadings(
+        `${header}\n4A,4,5.8,6.9\n4A,4,5.8,7.9`, flats);
+      expect(errors[0].reason).toBe('duplicate');
+    });
+
+    it('reports a non-numeric reading in the named column', () => {
+      const { errors } = parseReadings(`${header}\n4A,4,5.817,n/a`, flats);
+      expect(errors[0].reason).toBe('not-a-number');
+    });
+
+    it('does not mistake a data row for a header', () => {
+      // '4A 5.817' names no columns and carries a number; the heuristic path
+      // must still own it, or every headerless paste breaks.
+      const { rows } = parseReadings('4A\t5.817\n4B\t2.940', flats);
+      expect(rows).toHaveLength(2);
+    });
+  });
 });
 
 describe('implausible jump warning', () => {

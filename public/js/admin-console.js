@@ -165,7 +165,7 @@ async function periodsPanel() {
     el('h2', {}, 'Rate per kg'),
     el('p', { class: 'muted small' },
       'Set the rate for every month, even when it has not changed. Nothing is '
-      + 'carried forward: an inherited rate would produce 52 bills that look '
+      + 'carried forward: an inherited rate would produce 99 bills that look '
       + 'normal and are all wrong.'),
 
     ...(months.length
@@ -179,19 +179,33 @@ async function periodsPanel() {
           status,
           el('button', {
             class: 'btn', type: 'button',
-            onclick: async () => {
+            // Opening a month and entering its readings are one errand, and
+            // splitting them left the treasurer on a screen that looked
+            // finished. Reported on 2026-08-12: two months were opened and
+            // then "unsure how to add readings" — the Readings tab defaults to
+            // whatever month it likes and nothing said to go there.
+            //
+            // The rate-sanity warning is not lost by leaving: the readings
+            // screen shows it again on the preview, right beside the total it
+            // would produce, which is the more useful place to read it.
+            onclick: async (event) => {
+              const button = event.currentTarget;
+              button.disabled = true;
               try {
                 const r = await api.admin.openPeriod({
                   period: period.value, ratePerKg: Number(rate.value),
                   dueDate: due.value, lateFee: Number(fee.value),
                 });
                 status.replaceChildren(
-                  el('div', { class: r.sanity.level === 'warn' ? 'note note--warn' : 'note note--good' },
-                    r.sanity.level === 'warn' ? r.sanity.message : `Opened ${periodLabel(r.period)}.`));
-                await show('periods');
-              } catch (err) { showError(status, err); }
+                  el('div', { class: 'note note--good' },
+                    `Opened ${periodLabel(r.period)}. Taking you to its readings…`));
+                location.href = `/admin/readings.html?period=${encodeURIComponent(r.period)}`;
+              } catch (err) {
+                showError(status, err);
+                button.disabled = false;
+              }
             },
-          }, 'Open month'),
+          }, 'Open month and enter readings'),
         ]
       : [el('p', { class: 'note' },
           'Every month of the last year is already open. Nothing to add here.')]),
