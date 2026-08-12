@@ -454,6 +454,131 @@ async function residentsPanel() {
       : null,
 
     el('hr', { class: 'rule' }),
+    list,
+
+    el('hr', { class: 'rule' }),
+    await billingPanel());
+}
+
+/**
+ * Which flats are billed at all — a standing setting, not a monthly one.
+ *
+ * IT LIVES HERE BECAUSE IT IS SET ONCE. `flats.active` was always persistent:
+ * a flat left out stays out of every month until somebody puts it back. But the
+ * control first went on the Readings screen, which is a per-month screen, and
+ * that made a standing decision look like a monthly chore. Sabarish caught it
+ * on 2026-08-12. Nothing about the data changed; it was in the wrong room.
+ *
+ * It has to start from FLATS. The list above is built from `owners`, so a flat
+ * nobody has bought has no row in it — 5 of the 99 today — and the one case
+ * this exists for could not have been reached from the tab it belongs on.
+ *
+ * The two cases are named rather than merged, because they end differently:
+ *
+ *   Unsold — nobody on file. Ends when it is sold: add the resident, bill it.
+ *   Vacant — somebody owns it, nobody is living there. Ends when they move in.
+ *
+ * Neither takes a meter reading and neither gets a bill, not even a zero one.
+ * A zero bill is a different thing entirely: a flat somebody LIVES in that
+ * happened to burn no gas, which still belongs on the roll.
+ */
+async function billingPanel() {
+  const list = el('div');
+  const status = el('div');
+
+  const load = async () => {
+    try {
+      const { flats } = await api.admin.flats();
+      render(flats);
+    } catch (err) { showError(list, err); }
+  };
+
+  const set = async (f, billed) => {
+    const reason = prompt(billed
+      ? `Bill ${f.flat} again?\n\nReason (kept on the flat):`
+      : `Stop billing ${f.flat}?\n\n`
+        + 'It leaves the readings screen and every month can close without it, '
+        + 'until you turn it back on here. This is set once, not monthly.\n\n'
+        + (f.unsold
+            ? 'Nobody is on file for this flat.'
+            : `${f.flat} is listed to ${f.residents}. Use this only if nobody is `
+              + 'living there. If somebody is, and simply burned no gas, enter the '
+              + 'same reading as last month instead.')
+        + '\n\nReason (kept on the flat):');
+    if (reason == null) return;
+    try {
+      await api.admin.setFlatActive(f.flat, billed, reason);
+      await load();
+    } catch (err) { showError(status, err); }
+  };
+
+  const render = (flats) => {
+    const off = flats.filter((f) => !f.billed);
+    const unsold = flats.filter((f) => f.billed && f.unsold);
+
+    list.replaceChildren(
+      el('p', { class: 'muted small' },
+        `${flats.length - off.length} of ${flats.length} flats are being billed. `
+        + 'A flat left out stays out of every month until it is turned back on '
+        + 'here — there is nothing to repeat each month.'),
+
+      off.length
+        ? el('div', { class: 'stack', style: 'gap:0' },
+            el('p', { class: 'label' }, 'Not being billed'),
+            ...off.map((f) => el('div', { class: 'rowitem' },
+              el('div', { class: 'rowitem__main' },
+                el('b', {}, f.flat),
+                el('div', { class: 'small' },
+                  f.unsold ? 'Unsold — nobody on file' : `Vacant — ${f.residents}`),
+                f.reason
+                  ? el('div', { class: 'small muted' },
+                      `${f.reason}${f.since ? ` · since ${dayLabel(f.since)}` : ''}`)
+                  : null),
+              el('button', {
+                class: 'btn btn--sm btn--quiet', type: 'button',
+                onclick: () => set(f, true),
+              }, 'Bill it'))))
+        : el('p', { class: 'note note--good' }, 'Every flat is being billed.'),
+
+      // Surfaced rather than left to be discovered on the readings screen at
+      // the end of a meter walk: a flat with nobody on file is the one that
+      // will hold a month open, and it is knowable now.
+      unsold.length
+        ? el('div', { class: 'stack', style: 'gap:0;margin-top:var(--s-4)' },
+            el('p', { class: 'label' }, 'Billed, but nobody is on file'),
+            el('p', { class: 'small muted' },
+              'Each of these will need a reading before a month can close. If '
+              + 'the flat is unsold, stop billing it.'),
+            ...unsold.map((f) => el('div', { class: 'rowitem' },
+              el('div', { class: 'rowitem__main' }, el('b', {}, f.flat)),
+              el('button', {
+                class: 'btn btn--sm btn--quiet', type: 'button',
+                onclick: () => set(f, false),
+              }, 'Stop billing'))))
+        : null,
+
+      el('details', { style: 'margin-top:var(--s-4)' },
+        el('summary', { style: 'font-family:var(--font-ui);cursor:pointer' },
+          'Every flat'),
+        el('div', { class: 'stack', style: 'gap:0;margin-top:var(--s-3)' },
+          ...flats.map((f) => el('div', { class: 'rowitem' },
+            el('div', { class: 'rowitem__main' },
+              el('b', {}, f.flat),
+              el('div', { class: 'small muted' },
+                f.residents ?? 'Nobody on file')),
+            el('span', { class: `chip ${f.billed ? 'chip--paid' : 'chip--awaiting'}` },
+              f.billed ? 'Billed' : 'Not billed'),
+            el('button', {
+              class: 'btn btn--sm btn--quiet', type: 'button',
+              onclick: () => set(f, !f.billed),
+            }, f.billed ? 'Stop billing' : 'Bill it'))))));
+  };
+
+  await load();
+
+  return el('div', { class: 'stack' },
+    el('h2', {}, 'Which flats are billed'),
+    status,
     list);
 }
 
