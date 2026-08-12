@@ -628,8 +628,9 @@ budget, because the ceiling is per invocation and nothing forces this into one:
 
 * Nightly at `0 22 * * *` — the CSV bundle, the proof images, and the notice
   attachments. Separate constants, sized so the worst-case night fits with
-  room: roughly 12 proofs and 6 attachments. At an expected inflow near two
-  proofs a night that is still several times more than needed.
+  room: roughly 12 proofs and 6 attachments. At an expected inflow near three
+  proofs a night — 99 flats, most paying once a month — that is still several
+  times more than needed.
 * Weekly at `0 21 * * 0` (02:30 IST Sunday) — the notice Docs, with a cap of
   their own around fifteen. A different hour on purpose: `0 22 * * 0` would
   fire alongside the nightly job every Sunday and race it for the same folders.

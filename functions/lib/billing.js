@@ -103,7 +103,7 @@ export function applyLateFee(currentTotal, lateFee) {
 /**
  * The rate moves every month, so it is set per period and never carried
  * forward automatically. A silently inherited rate is the worst failure this
- * system can have: 52 bills go out looking completely normal and every one of
+ * system can have: 99 bills go out looking completely normal and every one of
  * them is wrong, and nobody notices until someone checks a supplier invoice.
  *
  * Generation is therefore blocked until the rate has been set FOR THAT PERIOD.
@@ -189,7 +189,7 @@ export function meterReconciliation(bulkKg, sumOfFlatsKg) {
  * written. The rate and the readings arrive together each month, so the
  * treasurer confirms one number they can check against the supplier invoice:
  * if that invoice is ~₹15,000 and this says ₹150,000, the rate has an extra
- * zero and 52 wrong bills are avoided.
+ * zero and 99 wrong bills are avoided.
  *
  * Pure. `rows` are { flat, reading, previous }.
  */

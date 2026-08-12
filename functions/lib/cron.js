@@ -3,7 +3,7 @@
  *
  * The single most important property here is IDEMPOTENCE. This runs nightly,
  * Cloudflare may invoke it more than once, and a treasurer may trigger it by
- * hand. Charging twice would mean 52 wrong bills and a lot of explaining, so
+ * hand. Charging twice would mean 99 wrong bills and a lot of explaining, so
  * `late_fee_at IS NULL` is the guard and there is a test for exactly that.
  */
 

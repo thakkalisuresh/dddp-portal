@@ -17,7 +17,7 @@
  * function, not a search. If that day comes, the free tiers worth looking at
  * are Brevo and Resend; the caller contract below is deliberately generic.
  *
- * Gmail's free send limit is ~500/day, against a building of 52 flats where a
+ * Gmail's free send limit is ~500/day, against a building of 99 flats where a
  * password reset is a rare event. Volume is not the constraint here.
  */
 
