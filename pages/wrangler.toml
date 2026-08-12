@@ -23,7 +23,10 @@ bucket_name = "dddp-proofs"
 [vars]
 UPI_VPA = "qr.ddwelfare@sib"
 UPI_PAYEE = "DD Diamond Park RWA"
-PBKDF2_ITERATIONS = "100000"
+# MUST match ../wrangler.toml — see the note there. This is the copy that
+# matters for residents: the site runs here, the cron Worker runs there, and
+# both hash against the same D1.
+PBKDF2_ITERATIONS = "200000"
 
 # GOOGLE_MAPS_KEY — optional, and the map works without it.
 #
