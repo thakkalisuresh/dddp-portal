@@ -54,14 +54,43 @@ const PERIODS = [
 const FLATS = ['4A', '4B', '4C', '5A', '5B', '13A'];
 const q = (v) => (v == null ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`);
 
+/**
+ * Every table that points at one being reseeded, children before parents.
+ *
+ * The short list this replaced ended at owners and flats, which was true when
+ * six tables existed and has been wrong since the statement, attachment and
+ * contact features landed: `DELETE FROM owners` hit FOREIGN KEY constraint
+ * failed and the whole seed aborted, leaving whatever was already there.
+ *
+ * Order is the point. SQLite checks each statement as it runs, so a parent
+ * deleted before its children fails even though the end state would be legal.
+ * Anything added here that references another row goes ABOVE its parent.
+ *
+ * The log tables (error_log, login_attempts, message_attempts) are deliberately
+ * absent: nothing constrains them, and they are the record of what the last run
+ * did. Clear them by hand when a stale lockout gets in the way.
+ */
+const WIPE = [
+  // statements → their credits and reconciliations
+  'reconciliations', 'statement_credits', 'statement_sessions',
+  // notices → comments → attachments (attachments point at both)
+  'attachments', 'comments',
+  // bills → the money attached to them
+  'payment_intents', 'payment_proofs',
+  // everything else hanging off owners
+  'sessions', 'audit_log', 'messages', 'activity', 'settings', 'click_log',
+  'password_resets', 'contact_requests',
+  // the rows the seed actually rewrites
+  'bills', 'readings', 'periods', 'notices', 'owners', 'flats',
+];
+
 const sql = [];
-sql.push('DELETE FROM sessions;', 'DELETE FROM bills;', 'DELETE FROM readings;',
-         'DELETE FROM periods;', 'DELETE FROM owners;', 'DELETE FROM flats;');
+sql.push(...WIPE.map((t) => `DELETE FROM ${t};`));
 
 for (const flat of FLATS) {
-  // legacy_paise_tag is dead but still NOT NULL UNIQUE — see lib/flats.js.
-  sql.push(`INSERT INTO flats (flat, floor, legacy_paise_tag) VALUES (${q(flat)}, ${parseInt(flat, 10)}, ` +
-           `(SELECT COALESCE(MAX(legacy_paise_tag), 0) + 1 FROM flats));`);
+  // The paise tag is gone for real — 0005 explains why the migration is a
+  // no-op and scripts/rebuild-flats.mjs is what actually dropped the column.
+  sql.push(`INSERT INTO flats (flat, floor) VALUES (${q(flat)}, ${parseInt(flat, 10)});`);
 }
 
 for (const p of PEOPLE) {
