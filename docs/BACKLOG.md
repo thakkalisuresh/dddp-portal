@@ -358,6 +358,96 @@ waits on the association Gmail at all:
 `/forgot` is still blocked on W1 and the association Gmail, which is now a
 separate errand: `npm run google:auth -- mail`.
 
+## B20 — The nightly backup outgrows one invocation
+
+Raised 2026-08-11, while checking the batch size against `docs/COSTS.md`. Not
+failing today and it will not fail this month; it fails the month residents
+actually start uploading, which is the month the portal goes live.
+
+**The ceiling.** This account is on the Workers free plan, which allows **50
+subrequests per invocation**. Calls to R2 and D1 do NOT compete for those —
+Cloudflare counts internal services against a separate allowance of 1,000, which
+this job comes nowhere near. So the 50 is, in practice, "calls to the Google
+Drive API in one night". Workers Paid raises it to 10,000, and buying the $5
+plan is a legitimate alternative to everything below.
+
+**The arithmetic that matters** is that an item costs more than its upload. A
+folder lookup is one fetch when the folder exists and two when it must be
+created, and a night can need a folder per period and a folder per notice. The
+worst realistic night — a backlog spanning months, attachments on different
+notices — is `5 + 2 × (proofs + attachments)`. At the batch sizes shipped in
+PR #8 that is 65, over the ceiling; the arithmetic only stayed under 50 while
+you counted the proof sweep alone.
+
+Three separate problems, in the order they bite:
+
+1. **`PROOF_BATCH` is shared.** `backupAttachments` defaults to the same
+   constant as `backupProofs`, so "twenty" is really forty uploads, and the
+   comment defending the number reasons about one sweep of the two.
+2. **`backupNotices` has no cap at all.** Its docstring is right that the
+   signature check makes most notices free — and wrong about the day that
+   stops being true. `noticeSignature` hashes a fixed list of fields; add one
+   or reorder it and every notice in the building goes dirty on the same run.
+   Weekly cadence does not help, because they all come due at once.
+3. **The starvation is silent, and it is what makes this urgent.** The sweeps
+   run in a fixed order and each catches per item, so a subrequest error is
+   swallowed as a `failed` count and the row is left unmarked for tomorrow.
+   Proofs spend the budget, attachments get the remainder, notice Docs get
+   nothing — every night, for ever, while the watermark advances and
+   `checkBackup` reports a healthy backup. This feature has now twice nearly
+   shipped a signal that reports the reassuring half.
+
+**The agreed shape, decided 2026-08-11.** Split by schedule rather than by
+budget, because the ceiling is per invocation and nothing forces this into one:
+
+* Nightly at `0 22 * * *` — the CSV bundle, the proof images, and the notice
+  attachments. Separate constants, sized so the worst-case night fits with
+  room: roughly 12 proofs and 6 attachments. At an expected inflow near two
+  proofs a night that is still several times more than needed.
+* Weekly at `0 21 * * 0` (02:30 IST Sunday) — the notice Docs, with a cap of
+  their own around fifteen. A different hour on purpose: `0 22 * * 0` would
+  fire alongside the nightly job every Sunday and race it for the same folders.
+  Cron triggers are limited to five per account on the free plan and two are in
+  use, so the third is free.
+
+A shared budget counter threaded through the three sweeps was the other
+candidate and was rejected: it is accounting code to make one invocation fit,
+when two invocations make the problem disappear. Alternate nights by date
+parity was rejected too — the 31st and the 1st are both odd, so it silently
+runs twice in a row and then gaps.
+
+Attachments deliberately stay nightly rather than joining the weekly job.
+Moving them would widen the window in which a photograph exists in exactly one
+bucket from a day to a week, which is the single point of failure
+`backupAttachments` exists to close.
+
+**Two things the split needs that the current code has no place for.** The
+weekly job needs its own watermark — `last_backup_at` is written by the CSV
+path, so a weekly sweep that quietly stops looks exactly like a weekly sweep
+with nothing to do — and doctor needs a staleness threshold for it near nine
+days, so one missed Sunday is not an alarm and two are.
+
+**And a test that would have caught the original mistake.** `BACKUP_CRON`'s own
+comment calls a mismatch with `wrangler.toml` this feature's signature failure,
+but the test asserts the constant equals a literal, which passes happily while
+`wrangler.toml` says something else. It should parse `wrangler.toml` and assert
+the constants match what is actually deployed. That is worth doing before a
+third trigger exists, not after.
+
+**Left alone deliberately:** the folder a notice's attachments go into is named
+from its title, so a title edited between the nightly attachment run and the
+weekly Doc run sends the two to different folders. Latent — nothing in the
+interface sends a title change today (see the open problems in `STATE.md`) —
+but the split widens the window from one invocation to a week.
+
+**Not a fix for this:** the manual export. `Download everything` in the Export
+tab already produces the identical bundle the nightly job uploads, makes no
+Drive calls at all, and was never at risk from this ceiling. It carries no
+images, and it depends on somebody remembering — which is the dependency this
+whole feature exists to remove. It is worth keeping as the one copy that does
+not depend on Google, and a quarterly download before the AGM is a habit worth
+having, but it does not relieve the automated path.
+
 ---
 
 # Done
