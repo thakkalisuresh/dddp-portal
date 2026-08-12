@@ -140,10 +140,52 @@ function selectableMonths(periods) {
   return out;
 }
 
+/** How many months from this one the testing list runs. */
+const UNENDED_MONTHS = 5;
+
+/**
+ * This month and the next few — months that have NOT ended.
+ *
+ * Offered only while the demo data is loaded, and that is the whole design.
+ * Billing a month that has not finished is meaningless: the meter closing it
+ * is read in the month after, so there is nothing to read yet. But a test
+ * cannot wait for September to arrive to find out whether September works, and
+ * before this the only openable months were ones already full of demo history.
+ *
+ * The gate is `demoData` rather than a flag or an environment check because it
+ * expires by itself. `seed-demo.mjs --remove` must run before the real roster
+ * — it is a documented step and doctor reports DEMO-DATA-PRESENT until it
+ * happens — and the moment it does, these months stop being offered. Nobody
+ * has to remember to turn anything off, which is the only kind of switch that
+ * survives a handover.
+ *
+ * The server does not refuse these independently, and did not refuse them
+ * before either: the "months that have ended" rule has always lived in this
+ * dropdown alone. So this changes what is easy, not what is possible.
+ */
+function unendedMonths(periods) {
+  const taken = new Set(periods.map((p) => p.period));
+  const now = new Date();
+  let year = now.getUTCFullYear();
+  let month = now.getUTCMonth() + 1;      // 1-indexed CURRENT month
+  const out = [];
+  for (let i = 0; i < UNENDED_MONTHS; i += 1) {
+    const period = `${year}-${String(month).padStart(2, '0')}`;
+    if (!taken.has(period)) out.push(period);
+    month += 1;
+    if (month === 13) { month = 1; year += 1; }
+  }
+  return out;
+}
+
 async function periodsPanel() {
-  const { periods } = await api.admin.periods();
+  const { periods, demoData } = await api.admin.periods();
   const status = el('div');
-  const months = selectableMonths(periods);
+  const ended = selectableMonths(periods);
+  const unended = demoData ? unendedMonths(periods) : [];
+  // Ended months first: on any ordinary day that is the one you want, and it
+  // stays the default selection. The unended ones sit below, named as such.
+  const months = [...ended, ...unended];
 
   const rate = el('input', { class: 'input num', placeholder: '78.00', id: 'p-rate', inputmode: 'decimal' });
   const fee = el('input', { class: 'input num', value: '50', id: 'p-fee', inputmode: 'numeric' });
@@ -157,7 +199,11 @@ async function periodsPanel() {
     // The due date follows the month rather than being typed twice. Still
     // editable — this sets a sensible default, it does not lock it.
     onchange: () => { due.value = defaultDue(period.value); },
-  }, ...months.map((p) => el('option', { value: p }, periodLabel(p))));
+  }, ...months.map((p) => el('option', { value: p },
+    // Said on the option itself, not only in a note above it. The note is read
+    // once; the dropdown is read every time, and "December 2026" sitting in a
+    // list of past months is otherwise indistinguishable from a real choice.
+    unended.includes(p) ? `${periodLabel(p)} — not ended yet` : periodLabel(p))));
 
   if (months.length) due.value = defaultDue(months[0]);
 
@@ -172,6 +218,16 @@ async function periodsPanel() {
       ? [
           el('div', { class: 'field' }, el('label', { for: 'p-period' }, 'Usage month'), period,
             el('span', { class: 'field__hint' }, 'The month the gas was used. Meters are read the month after.')),
+          unended.length
+            ? el('div', { class: 'note note--warn' },
+                el('b', {}, 'Months that have not ended are listed, for testing.'),
+                el('p', { style: 'margin:var(--s-2) 0 0' },
+                  'They are there because demo data is still loaded, and they '
+                  + 'stop being offered the moment it is removed. A month that '
+                  + 'has not finished has no meter reading to close it, so '
+                  + 'opening one is only useful for trying the flow — never for '
+                  + 'billing anybody.'))
+            : null,
           el('div', { class: 'field' }, el('label', { for: 'p-rate' }, 'Rate per kg'), rate),
           el('div', { class: 'field' }, el('label', { for: 'p-due' }, 'Payment due'), due),
           el('div', { class: 'field' }, el('label', { for: 'p-fee' }, 'Late fee (whole rupees)'), fee,
