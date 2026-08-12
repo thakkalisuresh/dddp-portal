@@ -176,13 +176,21 @@ rather than to the state the cron protects.
 
 Full list with reasoning in `docs/BACKLOG.md`.
 
-## The Android payment failure — REOPENED, testing underway
+## The Android payment failure — REOPENED, one run done
 
 **Reopened 2026-08-11**, hours after being written up as closed. The handoff
 note said do not reopen; that is superseded. Nothing new broke — what changed is
 that a second look found the closing argument rests on two handsets, and one of
 them contradicts it. Read the section below as the leading hypothesis, not as a
 finding.
+
+**The first run has since happened, and it moved things.** Every link shape
+tried resolved on a third handset, so the failure is not universal; and Google
+Pay resolving while an installed-but-unregistered PhonePe did not — same phone,
+same minute — is the first controlled evidence that account state is what
+decides. Jump to "Results" below for the table and the reasoning. The paragraphs
+between here and there are the ORIGINAL write-up, left unedited so it can be
+read against what the run actually showed.
 
 Investigated 2026-08-11 on real hardware. **The links were never the problem,
 and no change to them can fix this.**
@@ -337,19 +345,79 @@ skip the chooser on every later tap, which would turn the single most
 informative test into one that cannot be repeated without clearing app defaults
 in system settings.
 
-### Results
+### Results — run 1, 2026-08-11
 
-Nothing recorded yet — no run has happened. The table below is the shape the
-findings go in, and an empty row is not a failed test, it is an untested one.
+One handset, in India, over a shared screen. Chrome confirmed genuine
+(`webview-detected: false`), so the WebView false negative did not occur. UA
+`Mozilla/5.0 (Linux; Android 10; K) … Chrome/150.0.0.0 Mobile Safari/537.36` —
+the `Android 10; K` is Chrome's reduced user agent, not the real OS version,
+which this run therefore does not establish.
 
-| Handset | App | App version | Bank linked | Component enabled | Tap outcome |
-|---|---|---|---|---|---|
-| _(pending)_ | | | | | |
+| Link shape | Tap outcome | Reads as |
+|---|---|---|
+| `upi://` plain | opened | resolved, chooser path works |
+| `intent://` bare | opened | resolved |
+| `intent://` → gpay | opened | Google Pay's component ENABLED |
+| `intent://` → phonepe | **Play Store**, app installed but no account registered | component NOT resolvable |
+| `intent://` → paytm | Play Store | uninterpretable — install state unknown |
+| `intent://` → bhim | Play Store | uninterpretable — install state unknown |
+| `gpay://` scheme | opened | resolved |
+| `phonepe://` scheme | not tried | — |
+| `paytm://` scheme | not tried | — |
+| `bhim://` scheme | not tried | — |
+| `tez://` legacy | opened | resolved, still alive on this install |
+
+**The headline: resolution WORKS on this device, for every shape tried.** The
+closed write-up above says Android refuses these links. On a third handset it
+does not refuse them at all. Whatever is wrong, it is not universal — which
+means the portal's Android pay screen is very likely fine for a resident whose
+UPI app is properly set up, and that is most residents.
+
+**The PhonePe row is the whole finding, and it is a controlled one.** Same
+phone, same Chrome, same minute: Google Pay — registered, bank linked —
+resolved. PhonePe — *installed* but registered to nobody — did not resolve, and
+Chrome fell back to the Play Store, which is precisely what an addressed intent
+does when no component answers. Device, OEM build and browser version are held
+constant across those two rows, so they cannot explain the difference. Account
+state is the only variable left standing.
+
+That is the strongest evidence yet for the onboarding-state theory, and it was
+obtained without the `adb` command that could not be run. The inference works
+because the direction is the sound one: an app that opens proves its component
+was enabled.
+
+**What it still does not explain** is the phone that started all of this, which
+reportedly has a working Google Pay and failed anyway. That was the reason for
+reopening and it remains unanswered. The likeliest resolutions are that its
+Google Pay was less set up than remembered, that it failed for a different
+reason entirely, or that the original report described something other than
+what we now think it did. Re-testing THAT handset against this same page is the
+obvious next move, and it is now a cheap one.
+
+The Paytm and BHIM rows are recorded as uninterpretable rather than quietly
+counted as failures. The Play Store fallback is the correct and documented
+behaviour for a package that is not installed, so without knowing whether those
+two apps are on the device the rows carry no information. Treating them as
+evidence would be counting an expected result as a surprising one.
+
+**A real UX defect fell out of this.** An `intent://` addressed to an installed
+but unregistered app sends the resident to the Play Store to install software
+they already have. The pay screen shows all four app buttons unconditionally,
+so a resident with a dormant PhonePe taps PhonePe and is told to install
+PhonePe. Filed as B20.
 
 ## Not verified by me
 
 Things I could not check and someone should:
 
+- **Whether the handset that ORIGINALLY failed still fails**, against the same
+  test page. After run 1 this is the open question rather than a loose end: its
+  Google Pay reportedly works, which is the one thing the account-state finding
+  does not account for. The page is already deployed and the run takes ten
+  minutes, so this is the cheapest unanswered question in this document.
+- Whether Paytm and BHIM were installed on the handset used in run 1. Two rows
+  of that table stay uninterpretable without it, because the Play Store fallback
+  is the correct behaviour for an app that is simply absent.
 - The god-mode Health tab rendering against production.
 - That an impersonated admin genuinely cannot reset the superadmin's password
   on the live site. Proven locally with a real admin session, never on prod.
