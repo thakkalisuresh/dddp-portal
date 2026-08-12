@@ -125,9 +125,9 @@ a { color: var(--accent); }
 .appbar__back:hover { border-color: rgb(255 255 255 / 0.6); opacity: 1; }
 .appbar__back span { font-size: var(--text-base); line-height: 1; }
 
-/* God-mode banner. Functional, not decorative: it must be impossible to
+/* Viewing-as banner. Functional, not decorative: it must be impossible to
    forget you are impersonating (plan §5.5). Never dismissible. */
-.godbar {
+.viewbar {
   background: var(--awaiting-wash);
   border-bottom: 2px solid var(--awaiting);
   color: #6B4708;
@@ -140,9 +140,9 @@ a { color: var(--accent); }
   top: 0;
   z-index: 100;
 }
-.godbar__text { font-family: var(--font-ui); font-size: var(--text-sm); font-weight: 600; }
-.godbar__actions { margin-left: auto; display: flex; gap: var(--s-2); }
-.godbar[hidden] { display: none; }
+.viewbar__text { font-family: var(--font-ui); font-size: var(--text-sm); font-weight: 600; }
+.viewbar__actions { margin-left: auto; display: flex; gap: var(--s-2); }
+.viewbar[hidden] { display: none; }
 
 /* ── type helpers ──────────────────────────────────────────────────────── */
 

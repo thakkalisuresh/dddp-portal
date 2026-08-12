@@ -10,7 +10,7 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
-import { $, el, esc, renderGodBanner, showError, setChildren } from './ui.js';
+import { $, el, esc, renderViewBanner, showError, setChildren } from './ui.js';
 import { money, kg, periodLabel } from './i18n.js';
 
 /** Mirrors JUMP_MULTIPLE in functions/lib/admin.js. */
@@ -33,7 +33,7 @@ async function init() {
       await api.logout().catch(() => {});
       location.href = '/login';
     });
-    renderGodBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
+    renderViewBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
     renderNav(me, '/admin/readings');
 
     if (!period) { period = defaultPeriod(); }

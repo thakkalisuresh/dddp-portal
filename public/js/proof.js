@@ -9,7 +9,7 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
-import { $, el, esc, renderGodBanner, showError } from './ui.js';
+import { $, el, esc, renderViewBanner, showError } from './ui.js';
 import { money, periodLabel } from './i18n.js';
 import { compressImage, humanSize } from './compress.js';
 
@@ -24,7 +24,7 @@ async function init() {
   try {
     const me = await api.me();
     $('#who').innerHTML = `Flat ${esc(me.flat)} <span>· ${esc(me.name)}</span>`;
-    renderGodBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
+    renderViewBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
     renderNav(me, '/proof');
 
     bill = me.bill;

@@ -19,6 +19,7 @@
  */
 
 import { fail } from './errors.js';
+import { checkPassword } from '../../public/js/password-rules.js';
 
 export const CODE_LENGTH = 6;
 export const EXPIRY_MINUTES = 15;
@@ -114,12 +115,78 @@ export function failureMessage(reason, remaining) {
   }
 }
 
-export const MIN_PASSWORD = 8;
+/* ── temporary passwords, and when they stop working (B10) ────────────────── */
 
-export function validateNewPassword(pw) {
+/**
+ * How long an issued temporary password lasts, by who issued it and why.
+ *
+ * These differ because the two messages are read at different speeds. A
+ * superadmin reset goes to somebody who is locked out and waiting, and who will
+ * use it within minutes; a short window costs them nothing and costs anyone
+ * reading the thread a year later everything. A roster invite goes in bulk to
+ * people who were not expecting it, some of whom are travelling — anything
+ * short there turns the cutover into a re-send exercise.
+ */
+export const TEMP_PW_HOURS = 24;
+export const INVITE_PW_HOURS = 72;
+
+export function tempPasswordExpiry(hours = TEMP_PW_HOURS, now = new Date()) {
+  return new Date(now.getTime() + hours * 3600_000).toISOString();
+}
+
+/**
+ * Has this account's temporary password run out?
+ *
+ * Two guards, and both are the point rather than defensiveness:
+ *
+ * `must_change_pw` gates the whole check, so this can never expire a password
+ * the resident chose. That flag means "this credential was handed to you"; it is
+ * cleared the moment they pick their own, which is what makes an expiry unable
+ * to strand anybody.
+ *
+ * A NULL `pw_expires_at` never expires. Every row predating migration 0023 has
+ * one, and some of those are sitting on temporary passwords issued weeks ago —
+ * reading NULL as "expired long ago" would lock all of them out on deploy.
+ */
+export function tempPasswordState(owner, now = new Date()) {
+  if (!owner?.must_change_pw) return { expired: false };
+  if (!owner.pw_expires_at) return { expired: false };
+  return { expired: new Date(owner.pw_expires_at) <= now };
+}
+
+/**
+ * What an expired temporary password says. It must not read as "wrong
+ * password": the resident typed exactly what they were sent, and telling them
+ * otherwise sends them back to the person who sent it instead of to `/forgot`.
+ */
+export function expiredPasswordMessage() {
+  return 'That temporary password has expired. Use "Forgotten your password?" '
+       + 'below to email yourself a new code.';
+}
+
+/**
+ * The single gate every new password passes through — onboarding, the profile
+ * change, and the reset-with-code path all end up here.
+ *
+ * `user` is what the policy needs to judge it: `role` picks the tier, and
+ * name/mobile/email/flat are what it must not contain. Passing nothing
+ * applies the owner tier with no personal blocklist, which is the safe
+ * default for a caller that genuinely has no account in hand.
+ *
+ * The rules themselves live in public/js/password-rules.js so the browser can
+ * apply the same ones before a round trip.
+ */
+export function validateNewPassword(pw, user = {}) {
   const password = String(pw ?? '');
-  if (password.length < MIN_PASSWORD) {
-    fail('DDP-AUTH-008', { length: password.length });
+  const problem = checkPassword(password, user);
+  if (problem) {
+    // publicMessage reaches the resident via guard(); length and role are for
+    // the log. The password itself is never recorded, here or anywhere.
+    fail(problem.code, {
+      publicMessage: problem.message,
+      length: password.length,
+      role: user.role ?? 'owner',
+    });
   }
   return password;
 }
@@ -148,6 +215,39 @@ export function resetEmail({ code, name, flat }) {
       '',
       'If you did not ask for this, you can ignore it. Your password has not',
       'changed, and nobody can use this code without your email.',
+      '',
+      'DD Diamond Park Residents\' Welfare Association',
+    ].join('\n'),
+  };
+}
+
+/**
+ * The email carrying a temporary password the superadmin has just issued.
+ *
+ * Distinct from `resetEmail` because it carries a live credential rather than a
+ * code that only works on one page, and the two must not converge: this one has
+ * to say plainly that the next step is choosing their own, and it cannot claim
+ * to be single-use, because it is not — it is an ordinary password that happens
+ * to expire.
+ *
+ * No link, for the same reason as `resetEmail`: mail scanners follow links, and
+ * a link that carries a working password is worse than one that carries a code.
+ */
+export function tempPasswordEmail({ password, name, flat, hours = TEMP_PW_HOURS }) {
+  return {
+    subject: 'Diamond Park — a temporary password for your account',
+    text: [
+      `Hello${name ? ` ${name}` : ''},`,
+      '',
+      `A temporary password has been set for flat ${flat}:`,
+      '',
+      `    ${password}`,
+      '',
+      `It expires in ${hours} hours. Log in at https://diamondpark.pages.dev`,
+      'and you will be asked to choose your own password straight away.',
+      '',
+      'If you did not ask for this, tell the committee — somebody has reset',
+      'your account. Your old password no longer works either way.',
       '',
       'DD Diamond Park Residents\' Welfare Association',
     ].join('\n'),

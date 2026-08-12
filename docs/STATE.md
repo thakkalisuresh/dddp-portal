@@ -77,8 +77,24 @@ than posted to the vision provider, because the alternative is mailing every
 member's payment history to a third party.
 
 **People.** Roster import with preview against the real 99-flat model, temp
-passwords, a send-and-chase worklist, owners and tenants, flat transfer,
-self-service password reset by emailed code.
+passwords that expire, a send-and-chase worklist, owners and tenants, flat
+transfer, self-service password reset by emailed code.
+
+**Admins no longer write a mobile or an email either** (2026-08-12, B22). They
+raise a request with a reason and Sabarish approves it, which is what applies the
+change. Email is the reason: `/forgot` finds an account by mobile and mails the
+code to the address on file, so an admin who could rewrite the address could
+receive somebody else's reset. Mobile is the lockout rather than the takeover.
+Names stay directly editable — not a credential, and routing a spelling fix
+through an approval queue teaches people to ignore the queue.
+
+**Resetting a password is the superadmin's alone**, as of 2026-08-12. An admin
+who can reset an account is handed a working credential for it and can log in as
+that resident, so they no longer can: residents recover themselves through
+`/forgot`, and an admin's part is to tell them to. The superadmin's reset shows
+the temporary password on screen and offers a button that emails it — on screen
+first, because a send that fails must not leave somebody locked out with a
+password nobody knows. Backlog B21.
 
 **Admin and god.** Console, activity log, click capture, view-as and
 impersonation, god edit of any person or bill with a full audit trail, CSV
@@ -164,7 +180,7 @@ is useless and does not come back.
 
 | | |
 |---|---|
-| **B10** | Admin-issued temporary passwords never expire. Sent over WhatsApp, which keeps them for years. |
+| **B10** | Half done 2026-08-12: temporary passwords now expire (24h reset, 72h invite). What remains is the roster invite sending an announcement rather than a password where there is an email — not started, and wants doing with the import. |
 | **B12** | Configured 2026-08-11; no off-site backup has run *yet*. First 3am is unproven. |
 | **B20** | The nightly backup's three sweeps share one 50-subrequest ceiling, and the later ones would starve silently once residents start uploading. Not failing today. |
 | — | Rejecting a proof gives the resident no reason, so they re-upload the same wrong screenshot. Now that rejection also returns the bill to `unpaid` and the late fee applies (B13), this matters more than it did. |

@@ -12,8 +12,9 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
-import { $, el, esc, renderGodBanner, showError } from './ui.js';
+import { $, el, esc, renderViewBanner, showError } from './ui.js';
 import { mobileField } from './mobile-field.js';
+import { ADMINISTRATOR } from './contact.js';
 import { money, kg, periodLabel, dayLabel, stampLabel } from './i18n.js';
 import { prepareUpload, makeThumbnail } from './compress.js';
 
@@ -47,7 +48,7 @@ async function init() {
   try {
     me = await api.me();
     $('#who').innerHTML = `Admin <span>· ${esc(me.name)}</span>`;
-    renderGodBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
+    renderViewBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
     renderNav(me, '/admin/');
     renderTabs();
     await show(location.hash.slice(1) || 'periods');
@@ -391,6 +392,7 @@ async function residentsPanel() {
   return el('div', { class: 'panel stack' },
     heading,
     status,
+    contactRequests(status),
 
     el('details', {},
       el('summary', { style: 'font-family:var(--font-ui);cursor:pointer' }, 'Add a resident'),
@@ -400,7 +402,8 @@ async function residentsPanel() {
         el('div', { class: 'field' }, el('label', {}, 'Mobile'), mobile.node),
         el('div', { class: 'field' }, el('label', { for: 'r-email' }, 'Email'), email),
         el('p', { class: 'small' },
-          'Without an address they cannot reset their own password — an admin has to.'),
+          `Without an address they cannot reset their own password, and only `
+          + `${ADMINISTRATOR.name} can do it for them.`),
         el('div', { class: 'field' }, el('label', { for: 'r-rel' }, 'Owner or tenant'), relationship),
         el('button', {
           class: 'btn', type: 'button',
@@ -506,17 +509,103 @@ function personCard(p, status) {
                      el('span', { class: 'dircell__static' }, p.email || '—'))
                : editable(p, 'email', 'Email', status, { type: 'email', placeholder: 'none' })),
 
+    // Resetting is the superadmin's alone as of 2026-08-12. An admin who could
+    // reset 7B could log in AS 7B, so the button is not merely hidden — the
+    // endpoint refuses them too (canResetPassword). What replaces it for an
+    // admin is the sentence, because they are the one standing in front of the
+    // resident and they need to know what to say.
     inactive ? null : el('div', { style: 'margin-top:var(--s-3)' },
-      el('button', {
-        class: 'btn btn--sm btn--quiet', type: 'button',
-        onclick: async () => {
-          try {
-            const result = await api.admin.resetPassword(p.id);
-            status.replaceChildren(otpPanel(result, p.name));
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          } catch (err) { showError(status, err); }
-        },
-      }, 'Reset password')));
+      me.role === 'superadmin'
+        ? el('button', {
+            class: 'btn btn--sm btn--quiet', type: 'button',
+            onclick: async () => {
+              try {
+                const result = await api.admin.resetPassword(p.id);
+                status.replaceChildren(otpPanel(result, p, status));
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              } catch (err) { showError(status, err); }
+            },
+          }, 'Reset password')
+        : el('p', { class: 'small muted' },
+            'Forgotten password? Ask them to tap "Forgotten your password?" on the '
+            + 'login page — a code goes to their own email, so nobody else ever holds '
+            + `their password. If their email is wrong, ask ${ADMINISTRATOR.name}.`)));
+}
+
+/** The two an admin must ask about rather than write. Mirrors REQUESTABLE_FIELDS. */
+const REQUESTABLE = ['mobile', 'email'];
+
+/**
+ * Contact changes waiting to be approved (B22).
+ *
+ * Shown to admins as well as to the approver, and deliberately: an admin who
+ * cannot see that their own request is still pending will either raise it again
+ * or telephone about it, which are the two things this replaced. They see the
+ * queue and no buttons.
+ *
+ * Absent entirely when nothing is waiting. A panel that says "no requests" on
+ * every visit is a panel people stop reading, and this one has to be noticed on
+ * the day it is not empty.
+ */
+function contactRequests(status) {
+  const box = el('div');
+
+  async function load() {
+    let requests;
+    try {
+      ({ requests } = await api.admin.contactRequests());
+    } catch {
+      // A directory that will not render because a side panel failed is worse
+      // than a directory with no side panel.
+      return;
+    }
+    if (!requests.length) { box.replaceChildren(); return; }
+
+    box.replaceChildren(el('div', { class: 'note' },
+      el('p', { class: 'label' },
+        `${requests.length} contact ${requests.length === 1 ? 'change' : 'changes'} waiting`),
+      ...requests.map((r) => row(r))));
+  }
+
+  function row(r) {
+    const line = el('div', { class: 'stack', style: 'margin-top:var(--s-3)' },
+      el('p', {},
+        el('strong', {}, `${r.flat} ${r.name}`),
+        ` · ${r.field}: `,
+        el('span', { class: 'muted' }, r.current || 'none'),
+        ' → ',
+        el('strong', {}, r.value || 'none')),
+      el('p', { class: 'small muted' }, `“${r.reason}” — ${r.requestedBy}, ${r.at}`));
+
+    if (me.role !== 'superadmin') return line;
+
+    const decide = async (approve) => {
+      buttons.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+      try {
+        await api.admin.decideContactRequest(r.id, approve);
+        // Reloaded rather than patched in place: approving WRITES the resident's
+        // row, so the directory beside this is now stale and the cheapest honest
+        // fix is to fetch both again.
+        location.reload();
+      } catch (err) {
+        buttons.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+        showError(status, err);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    };
+
+    const buttons = el('div', { class: 'row' },
+      el('button', { class: 'btn btn--sm', type: 'button', onclick: () => decide(true) },
+        'Approve and apply'),
+      el('button', { class: 'btn btn--sm btn--quiet', type: 'button', onclick: () => decide(false) },
+        'Reject'));
+
+    line.append(buttons);
+    return line;
+  }
+
+  load();
+  return box;
 }
 
 /**
@@ -531,6 +620,10 @@ function personCard(p, status) {
  */
 function editable(p, field, label, status, { type = 'text', placeholder = '' } = {}) {
   const wrap = el('div', { class: 'dircell' });
+  // Since B22 an admin may fix a name but only ask about a mobile or an address.
+  // The button says which of the two this is, because "Edit" that turns out to
+  // need a reason and somebody else's approval is a promise the screen breaks.
+  const mustRequest = REQUESTABLE.includes(field) && me.role !== 'superadmin';
 
   function show() {
     wrap.classList.remove('dircell--dirty');
@@ -540,8 +633,10 @@ function editable(p, field, label, status, { type = 'text', placeholder = '' } =
         el('span', { class: p[field] ? '' : 'dircell__none' }, p[field] || 'none'),
         el('button', {
           class: 'btn--pencil', type: 'button', onclick: edit,
-          'aria-label': `Edit ${label.toLowerCase()} for ${p.name}, ${p.flat}`,
-        }, 'Edit')));
+          'aria-label': mustRequest
+            ? `Request a change to ${label.toLowerCase()} for ${p.name}, ${p.flat}`
+            : `Edit ${label.toLowerCase()} for ${p.name}, ${p.flat}`,
+        }, mustRequest ? 'Request' : 'Edit')));
   }
 
   function edit() {
@@ -551,14 +646,35 @@ function editable(p, field, label, status, { type = 'text', placeholder = '' } =
       ? mobileField(p.mobile ?? '', { label: `${label} for ${p.name}, ${p.flat}` })
       : plainEditor();
 
-    const save = el('button', { class: 'btn btn--sm', type: 'button', onclick: commit }, 'Save');
+    const save = el('button', { class: 'btn btn--sm', type: 'button', onclick: commit },
+                    mustRequest ? 'Send request' : 'Save');
     const cancel = el('button', { class: 'btn btn--sm btn--quiet', type: 'button', onclick: show }, 'Cancel');
+    // Required, and required HERE rather than only server-side, because the
+    // approval is reviewed against it: "7B says this is his new number, old one
+    // disconnected" is reviewable and "typo" is not.
+    const reason = mustRequest
+      ? el('input', {
+          type: 'text', placeholder: 'Why? e.g. "old number disconnected"',
+          'aria-label': `Reason for changing ${label.toLowerCase()} for ${p.name}`,
+        })
+      : null;
 
     async function commit() {
       const next = editor.value();
       if (next === String(p[field] ?? '')) { show(); return; }
       save.disabled = true;
       try {
+        if (mustRequest) {
+          await api.admin.requestContactChange(p.id,
+            { field, value: next || null, reason: reason.value.trim() });
+          show();
+          status.replaceChildren(el('div', { class: 'note note--good' },
+            `Requested: ${label.toLowerCase()} for ${p.name} (${p.flat}). `
+            + `${ADMINISTRATOR.name} has been notified and it will apply once approved. `
+            + 'Until then the number on file is unchanged.'));
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          return;
+        }
         await api.admin.updateResident(p.id, { [field]: next || null });
         p[field] = next || null;
         show();
@@ -590,6 +706,7 @@ function editable(p, field, label, status, { type = 'text', placeholder = '' } =
     wrap.replaceChildren(
       el('span', { class: 'dircell__label' }, label),
       editor.node,
+      reason,
       el('div', { class: 'dircell__actions' }, save, cancel));
     editor.focus();
   }
@@ -599,19 +716,58 @@ function editable(p, field, label, status, { type = 'text', placeholder = '' } =
 }
 
 /**
- * The reset panel is the whole point of the WhatsApp path: a say-able password
- * and a single tap to send it. No API, no cost, and the treasurer knowing the
- * resident by face is the identity check (plan §4b).
+ * The reset panel: the password on screen, then a deliberate tap to send it.
+ *
+ * On screen FIRST, and not as a convenience. Email is the destination that keeps
+ * the credential out of everybody else's hands, but it fails in ways this screen
+ * cannot see — an address that is wrong, a mailbox that is full, mail not yet
+ * configured at all. Showing the superadmin what was issued means a failed send
+ * costs a different delivery rather than a resident who is now locked out with a
+ * password nobody knows. The old password is already dead by this point; there
+ * is no going back from a reset.
+ *
+ * WhatsApp stays for the residents with no address on file at all — B5's people,
+ * for whom it is the only route that exists.
  */
-function otpPanel(result, who) {
+function otpPanel(result, p, status) {
+  const sent = el('div');
+  const emailBtn = el('button', { class: 'btn btn--block', type: 'button' },
+    `Email it to ${result.email}`);
+
+  emailBtn.addEventListener('click', async () => {
+    emailBtn.disabled = true;
+    emailBtn.textContent = 'Sending…';
+    try {
+      const r = await api.admin.emailTempPassword(p.id, result.oneTimePassword);
+      emailBtn.textContent = 'Emailed';
+      emailBtn.classList.add('is-done');
+      sent.replaceChildren(el('p', { class: 'small' }, `Sent to ${r.to}.`));
+    } catch (err) {
+      // The password on screen is still the live one, so this must not read as
+      // "the reset failed" — it did not.
+      showError(sent, err);
+      emailBtn.disabled = false;
+      emailBtn.textContent = `Try again — email to ${result.email}`;
+    }
+  });
+
   return el('div', { class: 'note note--good' },
-    el('p', { class: 'label', style: 'color:var(--accent)' }, `Temporary password for ${who}`),
+    el('p', { class: 'label', style: 'color:var(--accent)' }, `Temporary password for ${p.name}`),
     el('p', { style: 'font-family:var(--font-ui);font-size:var(--text-xl);font-weight:600;margin:var(--s-2) 0' },
       result.oneTimePassword),
-    el('a', { class: 'btn btn--block', href: result.whatsapp, target: '_blank', rel: 'noopener' },
-      'Send on WhatsApp'),
-    el('p', { class: 'small', style: 'margin-top:var(--s-2)' },
-      'They must change it at first login. All their other sessions have ended.'));
+    el('p', { class: 'small' },
+      `It expires in ${result.expiresInHours} hours. They must change it at first `
+      + 'login, and all their other sessions have already ended.'),
+    result.email
+      ? emailBtn
+      : el('a', { class: 'btn btn--block', href: result.whatsapp, target: '_blank', rel: 'noopener' },
+          'Send on WhatsApp'),
+    result.email
+      ? null
+      : el('p', { class: 'small muted', style: 'margin-top:var(--s-2)' },
+          `${p.name} has no email address on file, so there is nowhere to email it. `
+          + 'Adding one now means they can recover their own account next time.'),
+    sent);
 }
 
 /* ── notices ───────────────────────────────────────────────────────────── */
@@ -842,7 +998,7 @@ function withdrawnNotices(notices) {
       + 'puts one back in front of residents.'
       + (me.role === 'superadmin'
         ? ' Deleting destroys it and its files for good.'
-        : ' Only the superadmin can delete one permanently.')),
+        : ` Only ${ADMINISTRATOR.name} can delete one permanently.`)),
 
     ...(notices.length
       ? notices.map((n) =>

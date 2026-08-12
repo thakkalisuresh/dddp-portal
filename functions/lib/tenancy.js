@@ -50,6 +50,9 @@ export function canChangeRole({ target, newRole, superadminCount }) {
       && superadminCount >= SUPERADMIN_LIMIT) {
     return {
       ok: false,
+      // Left as the role name deliberately: canChangeRole is reachable only from
+      // god mode and the superadmin-only branch of patchResident, so the one
+      // person who reads this is the one person the role belongs to.
       message: 'There can only be one superadmin. Use "Hand over superadmin" to move the role.',
     };
   }
@@ -158,19 +161,46 @@ export function mergeTimeline({ audits = [], activities = [], errors = [] }) {
 }
 
 /**
- * Who may reset whose password.
+ * Who the one person with full control IS, by name, for anything a resident or an
+ * admin reads. "The superadmin" is a role name out of the database — nobody in
+ * this building says it, and a message that uses it tells the reader to go and
+ * find out who that means.
  *
- * The admin console originally let any admin reset ANY account, with no check
- * on the target's role. That was a privilege-escalation hole rather than a
- * convenience: an admin could reset the superadmin, receive the temporary
- * password, and log in with god mode. The single-superadmin rule stopped the
- * role being GRANTED to a second person while leaving it perfectly takeable.
+ * ONE DEFINITION on this side; the browser's copy is in `public/js/contact.js`,
+ * the same deliberate split as TREASURER there and the committee list in
+ * `lib/public.js`. Both carry a pointer to the other.
  *
- * The rule now: you can reset strictly below yourself.
+ * THIS GOES STALE IF THE ROLE IS HANDED OVER. God mode can hand superadmin to
+ * another resident, and nothing makes this constant follow — the messages would
+ * then name the wrong person. Both copies need editing at that moment. See the
+ * note in BACKLOG under B22 for the version that reads the name from the database
+ * instead, which is the right fix if handover ever actually happens.
+ */
+export const ADMINISTRATOR = { name: 'Sabarish' };
+
+/**
+ * Who may reset whose password. The superadmin, and nobody else.
  *
- *   resident  -> any admin or the superadmin
+ *   resident  -> the superadmin only
  *   admin     -> the superadmin only
  *   superadmin-> nobody, through any API
+ *
+ * ADMINS LOST THIS ON 2026-08-12, and the reason is not that they are not
+ * trusted. A reset shows nobody an existing password — that is a hash and is
+ * gone — but it MINTS one and hands it to whoever asked, who then knows a working
+ * credential for an account that is not theirs. `must_change_pw` does not help:
+ * they can log in first and set it themselves. Everything that account then
+ * does — a payment claim, a proof, a comment under somebody's name — is
+ * attributable to a resident who never typed the password.
+ *
+ * This ladder used to stop at the roles: an admin could not reset the superadmin
+ * or another admin, which closed privilege escalation and left all 99 residents
+ * impersonable by any admin. That was the sharp end, not the whole of it.
+ *
+ * So residents recover their own accounts through `/forgot`, and an admin's job
+ * in a recovery is to tell them to use it. What the admin keeps is the part that
+ * needs a person in the building: noticing that a number or address is wrong, and
+ * raising a request for the superadmin to approve (backlog B22).
  *
  * The superadmin exclusion has no exception, including for the superadmin
  * themselves — a session that is already authenticated does not need it, and
@@ -184,33 +214,35 @@ export function canResetPassword({ actor, target }) {
   if (target.role === 'superadmin') {
     return {
       ok: false,
-      message: 'The superadmin password cannot be reset from the portal. '
+      message: `${ADMINISTRATOR.name}'s own password cannot be reset from the portal. `
              + 'Use the break-glass script — it needs database access, not a login.',
     };
   }
 
-  if (target.role === 'admin' && actor.role !== 'superadmin') {
-    return { ok: false, message: 'Only the superadmin can reset another admin.' };
-  }
-
-  if (actor.role !== 'admin' && actor.role !== 'superadmin') {
-    return { ok: false, message: 'Admins only.' };
+  if (actor.role !== 'superadmin') {
+    return {
+      ok: false,
+      message: `Only ${ADMINISTRATOR.name} can reset a password. Ask the resident to use `
+             + '"Forgotten your password?" on the login page — the code goes to their '
+             + 'own email, so nobody else ever holds their password.',
+    };
   }
 
   return { ok: true };
 }
 
 /**
- * Who may edit somebody's contact details — the same ladder as
- * canResetPassword, and for the same reason.
+ * Who may edit somebody's row at all — the same ladder as canResetPassword.
  *
- * `mobile` IS the login identity. An admin who can rewrite the superadmin's
- * mobile can point that account at a phone they hold and then use the ordinary
- * forgot-password flow — which is the reset they were just refused, taken the
- * long way round. The directory made this reachable from the main console, so
- * the guard has to be here and not only on the reset path.
+ * An admin who can rewrite another admin's or the superadmin's contact details
+ * can take that account: see `canEditField` for which field actually does it and
+ * how. The directory made this reachable from the main console, so the guard has
+ * to be here and not only on the reset path.
  *
  * Unlike a reset, a superadmin editing their OWN row is ordinary and allowed.
+ *
+ * This answers "may you touch this person's row"; `canEditField` answers "may you
+ * write THIS column", which since B22 is a different question for two of them.
  */
 export function canEditResident({ actor, target }) {
   if (!actor || !target) return { ok: false, message: 'Unknown account.' };
@@ -226,7 +258,55 @@ export function canEditResident({ actor, target }) {
       ok: false,
       message: target.id === actor.id
         ? 'Change your own details from your profile, not the directory.'
-        : 'Only the superadmin can edit another admin.',
+        : `Only ${ADMINISTRATOR.name} can edit another admin.`,
+    };
+  }
+
+  return { ok: true };
+}
+
+/**
+ * The two columns an admin may no longer write directly (B22). They raise a
+ * request instead and the superadmin approves it.
+ */
+export const REQUESTABLE_FIELDS = ['mobile', 'email'];
+
+/**
+ * May this actor write THIS column on this person's row?
+ *
+ * `canEditResident` says whether the row is theirs to touch. This says whether
+ * the column is, and since 2026-08-12 the answer differs for two of them.
+ *
+ * WHICH FIELD ACTUALLY TAKES AN ACCOUNT, since the old comment here had it the
+ * wrong way round: `forgotPassword` finds the account BY MOBILE and mails the
+ * code TO THE EMAIL. So email is the takeover — set it to an address you hold,
+ * ask for a reset against the resident's own number, and the code arrives in your
+ * inbox, which is the reset B21 just refused you. Mobile is the lockout: the
+ * resident can no longer log in, but the code still follows the address, so
+ * nothing is delivered anywhere new.
+ *
+ * Both are behind approval. Email is the reason it had to happen, and mobile is
+ * not merely tidiness — an admin who can silently move a number can stop a
+ * resident logging in at all.
+ *
+ * `name` stays writable by an admin. It is not a credential, correcting a
+ * spelling is the kind of upkeep the directory exists for, and routing it through
+ * an approval queue would teach everybody to ignore the queue.
+ */
+export function canEditField({ actor, target, field }) {
+  const row = canEditResident({ actor, target });
+  if (!row.ok) return row;
+
+  if (REQUESTABLE_FIELDS.includes(field) && actor.role !== 'superadmin') {
+    return {
+      ok: false,
+      // Read by the person who just tried it, so it says what to do instead
+      // rather than only what went wrong.
+      message: `Only ${ADMINISTRATOR.name} can change a ${field}. `
+             + 'Use "Request a change" so it is recorded with your reason, and '
+             + 'it will be applied when approved.',
+      requestInstead: true,
+      field,
     };
   }
 

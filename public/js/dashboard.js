@@ -9,7 +9,7 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
-import { $, el, esc, statusChip, billBreakdown, renderGodBanner, showError } from './ui.js';
+import { $, el, esc, statusChip, billBreakdown, renderViewBanner, showError } from './ui.js';
 import { money, kg, periodLabel, dayLabel } from './i18n.js';
 import { drawQr } from './qr.js';
 import { treasurerLine } from './contact.js';
@@ -53,7 +53,7 @@ function render(me) {
     location.href = '/login';
   });
 
-  renderGodBanner(me, {
+  renderViewBanner(me, {
     onExit: async () => { await api.god.exit(); location.reload(); },
     onAllowWrites: async () => { /* phase 7b: re-issue the session with writes */ },
   });
