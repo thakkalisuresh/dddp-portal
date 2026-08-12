@@ -278,8 +278,19 @@ export default {
         }
         if (route === 'PUT /api/admin/committee') return putCommittee(request, env, session);
         if (route === 'GET /api/admin/periods') {
-          const rows = await env.DB.prepare('SELECT * FROM periods ORDER BY period DESC').all();
-          return json({ periods: rows.results ?? [] });
+          // `demoData` is what lets the month picker offer months that have not
+          // ENDED yet — see selectableMonths in admin-console.js. It is carried
+          // here rather than being a setting or a build flag on purpose: the
+          // demo rows must come out before the real roster goes in, and that
+          // removal is already a command somebody runs and a check doctor
+          // reports. Tying the affordance to it means it withdraws itself on
+          // the day it stops being safe, instead of relying on anybody
+          // remembering a switch.
+          const [rows, demo] = await Promise.all([
+            env.DB.prepare('SELECT * FROM periods ORDER BY period DESC').all(),
+            env.DB.prepare("SELECT value FROM settings WHERE key = 'demo_seed_ids'").first(),
+          ]);
+          return json({ periods: rows.results ?? [], demoData: Boolean(demo?.value) });
         }
         // Both admins and the superadmin read the archive; only the superadmin
         // can destroy anything in it, which is why the delete lives under /god.
