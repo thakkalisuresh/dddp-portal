@@ -25,10 +25,14 @@ import { validateAttachment, validateThumb, safeFilename, r2Key as attachmentKey
          isLargeUpload, MAX_PER_NOTICE, MAX_PER_COMMENT } from './lib/attachments.js';
 import { submitMessage, fingerprintOf, AMENITIES, OFFICE_HOURS, MESSAGE_SUBJECTS, CONTACT } from './lib/public.js';
 import {
-  transferFlat, canChangeRole, canResetPassword, canEditResident, waLink, planHandover, outstandingFor,
+  transferFlat, canChangeRole, canResetPassword, canEditResident, canEditField, waLink,
+  planHandover, outstandingFor,
   mergeTimeline, toIST, isRelationship, occupantOf, landlordOf, isTenanted,
-  billAccess, describeRelationship,
+  billAccess, describeRelationship, ADMINISTRATOR,
 } from './lib/tenancy.js';
+import {
+  validateRequest, requestState, decisionFailure, isStillAChange, requestNotification,
+} from './lib/contact-requests.js';
 import {
   OWNER_FIELDS, BILL_FIELDS, validateOwnerField, validateBillField,
   lockoutCheck, applyBillEdit, computedTotal, isUnexplainedMismatch,
@@ -167,6 +171,24 @@ export default {
         if (route === 'GET /api/admin/residents') return listResidents(env, session, url);
         if (route.startsWith('POST /api/admin/residents/') && path.endsWith('/reset/email')) {
           return emailTempPassword(request, env, session, path);
+        }
+        // Raising a request is an admin's job; deciding one is not. The decide
+        // routes are gated here rather than inside the handler because a missing
+        // check on those two would hand back exactly the write B22 removed.
+        if (route.startsWith('POST /api/admin/residents/')
+            && path.endsWith('/contact-request')) {
+          return requestContactChange(request, env, session, path);
+        }
+        if (route === 'GET /api/admin/contact-requests') return listContactRequests(env, url);
+        if (request.method === 'POST'
+            && /^\/api\/admin\/contact-requests\/\d+\/(approve|reject)$/.test(path)) {
+          if (!hasRole(session, 'superadmin')) {
+            await reportError(env, 'DDP-ADMIN-004',
+                              { path, actor: session.actor.id });
+            return problem(403, 'DDP-ADMIN-004',
+              `Only ${ADMINISTRATOR.name} can approve a contact change.`);
+          }
+          return decideContactRequest(request, env, session, path, path.endsWith('/approve'));
         }
         if (route.startsWith('POST /api/admin/residents/') && path.endsWith('/reset')) {
           return resetPassword(request, env, session, path);
@@ -1179,10 +1201,9 @@ async function patchResident(request, env, session, path) {
   ).bind(id).first();
   if (!target) return problem(404, 'DDP-AUTH-006', 'No such resident.');
 
-  // The directory puts mobile and email in front of every admin, and mobile IS
-  // the login id — so the same ladder that governs a password reset has to
-  // govern an edit. Without this an admin could point the superadmin's account
-  // at their own phone and then use the ordinary forgot-password flow.
+  // Whether this row is theirs to touch at all. Which COLUMNS they may write is
+  // a separate question, asked per field below — since B22 an admin may fix a
+  // name but must raise a request for a mobile or an address.
   const allowed = canEditResident({ actor: session.actor, target });
   if (!allowed.ok) {
     await reportError(env, 'DDP-ADMIN-014',
@@ -1200,6 +1221,15 @@ async function patchResident(request, env, session, path) {
   // '+91…', so an admin fixing a typo could lock the resident out entirely.
   for (const field of ['name', 'email', 'mobile']) {
     if (b?.[field] === undefined) continue;
+    // Per column, not per row. An admin submitting a mobile is refused here even
+    // though the row itself is theirs to edit, and the refusal names the request
+    // rather than just saying no.
+    const perField = canEditField({ actor: session.actor, target, field });
+    if (!perField.ok) {
+      await reportError(env, 'DDP-ADMIN-014',
+                        { actor: session.actor.id, target: id, field });
+      return problem(403, 'DDP-ADMIN-014', perField.message, { requestInstead: true, field });
+    }
     let value;
     try {
       value = validateOwnerField(field, b[field]);
@@ -1278,6 +1308,177 @@ function explainField(field, value) {
  * plain string comparison. Same query editOwner uses, lifted so both write
  * paths answer identically.
  */
+/* ── contact-change requests (B22) ────────────────────────────────────────
+   An admin notices a wrong number and raises a request; the superadmin
+   approves, and approving is what applies it. Admins keep the job that needs
+   somebody in the building and lose the write that would let them take an
+   account — see canEditField for which field does that and how.            */
+
+/** An admin raises one. */
+async function requestContactChange(request, env, session, path) {
+  const ownerId = Number(path.split('/')[4]);
+  const b = await readJson(request);
+
+  const target = await env.DB.prepare(
+    'SELECT id, name, flat, role, mobile, email FROM owners WHERE id = ? AND active = 1'
+  ).bind(ownerId).first();
+  if (!target) return problem(404, 'DDP-AUTH-006', 'No such resident.');
+
+  // The row ladder still applies: an admin may not raise a request against
+  // another admin any more than they may edit one. Otherwise this endpoint is a
+  // way to ask the superadmin to make the change they were refused.
+  const allowed = canEditResident({ actor: session.actor, target });
+  if (!allowed.ok) {
+    await reportError(env, 'DDP-ADMIN-014',
+                      { actor: session.actor.id, target: ownerId, targetRole: target.role });
+    return problem(403, 'DDP-ADMIN-014', allowed.message);
+  }
+
+  let req;
+  try {
+    req = validateRequest({ field: b?.field, value: b?.value, reason: b?.reason });
+  } catch (err) {
+    return problem(400, err.code ?? 'DDP-ADMIN-010',
+      err.code === 'DDP-ADMIN-011'
+        ? 'Say why it needs changing — it is what the approval is reviewed against.'
+        : explainField(b?.field, b?.value));
+  }
+
+  if (String(target[req.field] ?? '') === String(req.value ?? '')) {
+    return problem(409, 'DDP-ADMIN-003',
+      `That is already ${target.name}'s ${req.field}. Nothing to change.`);
+  }
+
+  // Checked when raised as well as at approval. Refusing a clash now happens
+  // while the admin can still ask the resident; refusing it at approval lands in
+  // front of somebody who cannot find out what the number should have been.
+  if (req.value != null) {
+    const clash = await duplicateContact(env, ownerId, req.field, req.value);
+    if (clash) {
+      return problem(409, 'DDP-ADMIN-013',
+        `That ${req.field} already belongs to ${clash.name} (${clash.flat}).`);
+    }
+  }
+
+  const now = new Date().toISOString();
+  const row = await env.DB.prepare(
+    `INSERT INTO contact_requests
+       (owner_id, field, requested_value, reason, requested_by, state, created_at)
+     VALUES (?, ?, ?, ?, ?, 'pending', ?) RETURNING id`
+  ).bind(ownerId, req.field, req.value, req.reason, session.actor.id, now).first();
+
+  await audit(env, session, 'contact.request',
+              { id: row.id, ownerId, flat: target.flat, field: req.field, reason: req.reason });
+
+  // No value in the message — see requestNotification. Failure to notify must not
+  // fail the request: it is recorded either way and the console is the queue.
+  await postToTelegram(env, requestNotification({
+    flat: target.flat, field: req.field, requestedBy: session.actor.name ?? 'an admin',
+  })).catch(() => {});
+
+  return json({ id: row.id, state: 'pending' }, { status: 201 });
+}
+
+/**
+ * What is waiting. Every admin sees the queue, not only the superadmin: an admin
+ * who cannot see that their own request is still pending will raise it again, or
+ * phone about it, which is the two things this was built to stop.
+ */
+async function listContactRequests(env, url) {
+  const wantsAll = url.searchParams.get('state') === 'all';
+  const { results } = await env.DB.prepare(
+    `SELECT r.id, r.owner_id, r.field, r.requested_value, r.reason, r.state,
+            r.created_at, r.decided_at,
+            o.flat, o.name, o.mobile AS current_mobile, o.email AS current_email,
+            rb.name AS requested_by_name, db.name AS decided_by_name
+       FROM contact_requests r
+       JOIN owners o  ON o.id  = r.owner_id
+       JOIN owners rb ON rb.id = r.requested_by
+       LEFT JOIN owners db ON db.id = r.decided_by
+      ${wantsAll ? '' : "WHERE r.state = 'pending'"}
+      ORDER BY r.state = 'pending' DESC, r.created_at`
+  ).all();
+
+  return json({
+    requests: (results ?? []).map((r) => ({
+      id: r.id, ownerId: r.owner_id, flat: r.flat, name: r.name,
+      field: r.field, value: r.requested_value,
+      current: r.field === 'mobile' ? r.current_mobile : r.current_email,
+      reason: r.reason, state: r.state,
+      requestedBy: r.requested_by_name, decidedBy: r.decided_by_name,
+      at: toIST(r.created_at), decidedAt: r.decided_at ? toIST(r.decided_at) : null,
+    })),
+  });
+}
+
+/**
+ * The superadmin decides. Approving APPLIES the change in the same call — two
+ * steps would leave a queue of approved requests nobody had applied, with the
+ * resident still unable to log in and everybody believing it was dealt with.
+ */
+async function decideContactRequest(request, env, session, path, approve) {
+  const id = Number(path.split('/')[4]);
+  const row = await env.DB.prepare('SELECT * FROM contact_requests WHERE id = ?')
+    .bind(id).first();
+
+  const state = requestState(row);
+  if (!state.open) return problem(409, 'DDP-ADMIN-003', decisionFailure(state.reason));
+
+  const owner = await env.DB.prepare(
+    'SELECT id, name, flat, role, mobile, email FROM owners WHERE id = ?'
+  ).bind(row.owner_id).first();
+  if (!owner) return problem(404, 'DDP-AUTH-006', 'That resident no longer exists.');
+
+  const now = new Date().toISOString();
+
+  if (!approve) {
+    await env.DB.prepare(
+      "UPDATE contact_requests SET state = 'rejected', decided_by = ?, decided_at = ? WHERE id = ?"
+    ).bind(session.actor.id, now, id).run();
+    await audit(env, session, 'contact.request.rejected',
+                { id, ownerId: owner.id, flat: owner.flat, field: row.field });
+    return json({ id, state: 'rejected' });
+  }
+
+  // Re-checked at approval, because approval can land days after the request and
+  // another row may have taken the number in between. The clash check at request
+  // time is for the admin's benefit; this one is what protects the login.
+  if (row.requested_value != null) {
+    const clash = await duplicateContact(env, owner.id, row.field, row.requested_value);
+    if (clash) {
+      return problem(409, 'DDP-ADMIN-013',
+        `That ${row.field} now belongs to ${clash.name} (${clash.flat}), so this cannot `
+        + 'be applied. Reject it and ask for a fresh one.');
+    }
+  }
+
+  if (!isStillAChange(row, owner)) {
+    // Approving would write what is already there and the audit row would claim a
+    // change that did not happen. Say so instead of silently doing nothing.
+    return problem(409, 'DDP-ADMIN-003',
+      `${owner.name}'s ${row.field} is already that value — it was changed after this `
+      + 'request was raised. Reject it; there is nothing left to apply.');
+  }
+
+  const before = owner[row.field] ?? null;
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE owners SET ${row.field} = ? WHERE id = ?`)
+      .bind(row.requested_value, owner.id),
+    env.DB.prepare(
+      "UPDATE contact_requests SET state = 'approved', decided_by = ?, decided_at = ? WHERE id = ?"
+    ).bind(session.actor.id, now, id),
+  ]);
+
+  // Same shape as resident.update's `changes`, so one search of the log finds
+  // every route by which a number has ever moved.
+  await audit(env, session, 'contact.request.approved', {
+    id, ownerId: owner.id, flat: owner.flat, reason: row.reason,
+    changes: { [row.field]: { from: before, to: row.requested_value } },
+  });
+
+  return json({ id, state: 'approved', applied: { [row.field]: row.requested_value } });
+}
+
 async function duplicateContact(env, id, field, value) {
   if (field === 'mobile') {
     return env.DB.prepare(

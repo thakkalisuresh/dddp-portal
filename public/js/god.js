@@ -14,7 +14,7 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
-import { $, el, esc, renderGodBanner, showError, setChildren } from './ui.js';
+import { $, el, esc, renderViewBanner, showError, setChildren } from './ui.js';
 
 const main = $('#main');
 let filters = { flat: '', kind: '', q: '', since: '' };
@@ -30,7 +30,7 @@ async function init() {
       return;
     }
     $('#who').innerHTML = `God mode <span>· ${esc(me.name)}</span>`;
-    renderGodBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
+    renderViewBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
     renderNav(me, '/god');
     await load();
   } catch (err) {

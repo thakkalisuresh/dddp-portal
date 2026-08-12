@@ -128,6 +128,14 @@ export const api = {
                                request('POST', `/api/admin/residents/${id}/reset/email`,
                                        { oneTimePassword }),
 
+    // B22: an admin asks, the superadmin approves, and approving applies it.
+    requestContactChange: (id, body) =>
+                               request('POST', `/api/admin/residents/${id}/contact-request`, body),
+    contactRequests: ()     => request('GET',  '/api/admin/contact-requests'),
+    decideContactRequest: (id, approve) =>
+                               request('POST',
+                                 `/api/admin/contact-requests/${id}/${approve ? 'approve' : 'reject'}`),
+
     // `period` here is always the USAGE month, never the month being walked.
     readings:      (period) => request('GET',  `/api/admin/readings?period=${period}`),
     saveReadings:  (period, readings) =>

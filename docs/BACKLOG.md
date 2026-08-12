@@ -82,8 +82,8 @@ NO-EMAIL-ON-FILE.
 ## The credential decision, 2026-08-12
 
 B10, B21 and B22 are three parts of one change, and B18 is what it leans on.
-Stated once, here. **B21 is done and now sits under "Done"; B10 has one half
-left; B22 is not started.**
+Stated once, here. **B21 and B22 are done and sit under "Done". What is left of
+the whole decision is B10's roster-invite half, below.**
 
 **An admin who can reset a resident's password can become that resident.** The
 reset does not show them an existing password — the old one is a hash and is
@@ -205,58 +205,6 @@ Two things to settle when it is built:
   `INVITE_PW_HOURS` exists for them and only them.
 
 ---
-
-## B22 — An admin requests a contact change, the superadmin approves it
-
-Raised and decided 2026-08-12. Reasoning above; **not blocked on anything**, and
-therefore the part of this decision to build if W1 drags.
-
-An admin loses `mobile` and `email` on `PATCH /api/admin/residents/:id` and gains
-a request. Mobile especially: it is the login identity, and B21 is pointless if an
-admin can point a resident's account at a phone they hold and then use `/forgot`
-themselves — `patchResident` already carries that reasoning in a comment and
-enforces it through `canEditResident`, which is the ladder to extend.
-
-Small, and it should stay small: **one table, one form, one approve button, one
-Telegram notification.**
-
-* **One table.** `contact_requests` — owner_id, field, requested_value, reason,
-  requested_by, state, decided_by, decided_at. Its own table for the same reasons
-  0010 gives: a request in flight is a separate short-lived fact, several can be
-  raised and abandoned, and who asked for what is worth keeping after the change
-  itself is applied.
-* **Validate on the way in, not only on approval.** Put the requested value
-  through `validateOwnerField` when it is raised, so a malformed number is
-  refused while the admin is still talking to the resident rather than days later
-  in front of the superadmin, who cannot fix it.
-* **Approving applies the change** — one action, not "approve" then "and now go
-  and edit it". Two steps means a queue of approved requests nobody applied, and
-  the resident still cannot log in.
-* **Reason required**, following B14: the committee turns over at every AGM and
-  "why is 7B's number different" needs an answer somebody can find. `checkReason`
-  is the existing helper.
-* **Re-run the duplicate check at approval**, not just at request time.
-  `duplicateContact` guards the login identity, and an approval can land days
-  after the request — long enough for another row to take the number.
-* **One Telegram notification**, through `postToTelegram`. It should say a
-  request is waiting and who raised it, and **not** carry the resident's new
-  number or address: `TELEGRAM_CHAT_ID` is one shared chat, the same one
-  alerting uses, and this is a resident's personal contact detail going somewhere
-  docs/PRIVACY.md has not accounted for. A nudge to open the console is the whole
-  job.
-
-**The audit groundwork is already done (2026-08-12).** `resident.update` used to
-record only which field *names* were submitted; it now records `{from, to}` per
-field that actually moved, so the approval trail can say what a number was
-changed from. That was worth doing before this rather than during it: an approval
-flow whose log cannot say what the old value was is accountability theatre. The
-old value now comes from the same `SELECT` the edit already needed — verified by
-issuing a real PATCH and reading the row back, because with the narrower select
-it silently logged `"from": null` and looked correct.
-
-**What this is not.** Not a general approvals framework. Two fields, one
-approver, no delegation, no partial approval, no expiry on a pending request. If
-a third field ever needs this, that is the moment to generalise, not before.
 
 ---
 
@@ -576,6 +524,102 @@ separate errand: `npm run google:auth -- mail`.
 ---
 
 # Done
+
+## B22 — An admin requests a contact change, Sabarish approves it — DONE 2026-08-12
+
+Raised, decided and built 2026-08-12. Migration 0024, `lib/contact-requests.js`.
+Approving applies the change in the same call, and the audit row carries
+`{from, to}` in the same shape as `resident.update` so one search of the log finds
+every route by which a number has ever moved.
+
+**Reject exists, though this entry did not ask for it.** Without it a request that
+should not happen has no disposal and the queue grows until people stop reading
+it, which is the failure the panel is designed against — it is hidden entirely
+when nothing is waiting, so it has to mean something on the day it appears.
+
+**Two guards that only matter because approval is not instant.** The duplicate
+check runs again at approval, because days can pass and another row may have taken
+the number. And a request is refused if the value is already in place — the
+resident may have fixed it themselves from their profile, and applying it anyway
+would write an audit row claiming a change that did not happen.
+
+**Admins see the queue and no buttons.** An admin who cannot see that their own
+request is still pending will raise it again or telephone about it, which are the
+two things this replaced.
+
+An admin loses `mobile` and `email` on `PATCH /api/admin/residents/:id` and gains
+a request. `canEditResident` is the ladder to extend.
+
+**Email is the takeover vector, and this entry originally said mobile.** Worth
+correcting rather than quietly fixing, because the wrong emphasis was inherited
+from a comment in `patchResident` that predates `/forgot` working the way it does.
+Traced through the code: `forgotPassword` looks an account up **by mobile** and
+mails the code **to the email on file**. So:
+
+* **Email is how an account is taken.** Change the address to one you control,
+  request a reset against the resident's own mobile, and the code arrives in your
+  inbox. That is B21's refusal taken the long way round, and it is available to
+  any admin today.
+* **Mobile is how an account is locked out.** It is the login identifier, so
+  changing it stops the resident logging in — but it does not deliver the reset
+  code anywhere new, because the code follows the address. Denial rather than
+  takeover.
+
+Both belong behind approval; email is the one that makes this urgent rather than
+tidy. And an admin editing the *superadmin's* mobile is separately guarded
+already, which is what the original comment was really about.
+
+Small, and it should stay small: **one table, one form, one approve button, one
+Telegram notification.**
+
+* **One table.** `contact_requests` — owner_id, field, requested_value, reason,
+  requested_by, state, decided_by, decided_at. Its own table for the same reasons
+  0010 gives: a request in flight is a separate short-lived fact, several can be
+  raised and abandoned, and who asked for what is worth keeping after the change
+  itself is applied.
+* **Validate on the way in, not only on approval.** Put the requested value
+  through `validateOwnerField` when it is raised, so a malformed number is
+  refused while the admin is still talking to the resident rather than days later
+  in front of the superadmin, who cannot fix it.
+* **Approving applies the change** — one action, not "approve" then "and now go
+  and edit it". Two steps means a queue of approved requests nobody applied, and
+  the resident still cannot log in.
+* **Reason required**, following B14: the committee turns over at every AGM and
+  "why is 7B's number different" needs an answer somebody can find. `checkReason`
+  is the existing helper.
+* **Re-run the duplicate check at approval**, not just at request time.
+  `duplicateContact` guards the login identity, and an approval can land days
+  after the request — long enough for another row to take the number.
+* **One Telegram notification**, through `postToTelegram`. It should say a
+  request is waiting and who raised it, and **not** carry the resident's new
+  number or address: `TELEGRAM_CHAT_ID` is one shared chat, the same one
+  alerting uses, and this is a resident's personal contact detail going somewhere
+  docs/PRIVACY.md has not accounted for. A nudge to open the console is the whole
+  job.
+
+**The audit groundwork is already done (2026-08-12).** `resident.update` used to
+record only which field *names* were submitted; it now records `{from, to}` per
+field that actually moved, so the approval trail can say what a number was
+changed from. That was worth doing before this rather than during it: an approval
+flow whose log cannot say what the old value was is accountability theatre. The
+old value now comes from the same `SELECT` the edit already needed — verified by
+issuing a real PATCH and reading the row back, because with the narrower select
+it silently logged `"from": null` and looked correct.
+
+**What this is not.** Not a general approvals framework. Two fields, one
+approver, no delegation, no partial approval, no expiry on a pending request. If
+a third field ever needs this, that is the moment to generalise, not before.
+
+**The naming trap this introduced, recorded because it will bite.** User-facing
+copy now says "Sabarish" rather than "the superadmin", from `ADMINISTRATOR` —
+`functions/lib/tenancy.js` for server messages and `public/js/contact.js` for the
+browser, two definitions on the same deliberate split as TREASURER. **God mode can
+hand the superadmin role to another resident, and nothing makes those constants
+follow**, so the day that happens every message names the wrong person. The right
+fix is to read the name from the row that holds the role — `SELECT name FROM owners
+WHERE role = 'superadmin'` — and carry it on `/api/me` for the browser. Not done
+because it is a query on paths that are currently pure functions, and because
+handover has never happened; do it before it does.
 
 ## B21 — Reset is the superadmin's alone — DONE 2026-08-12
 

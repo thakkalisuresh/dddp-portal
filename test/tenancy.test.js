@@ -132,7 +132,9 @@ describe('canResetPassword', () => {
     // they can simply change it first. This used to be allowed.
     const v = canResetPassword({ actor: admin, target: resident });
     expect(v.ok).toBe(false);
-    expect(v.message).toMatch(/only the superadmin/i);
+    // Named, not "the superadmin": a role name out of the database is not what
+    // anybody in the building calls him. See ADMINISTRATOR.
+    expect(v.message).toMatch(/only Sabarish/i);
   });
 
   it('sends the admin somewhere useful rather than just refusing', () => {
@@ -162,7 +164,7 @@ describe('canResetPassword', () => {
   it('refuses one admin resetting another', () => {
     const v = canResetPassword({ actor: admin, target: otherAdmin });
     expect(v.ok).toBe(false);
-    expect(v.message).toMatch(/only the superadmin/i);
+    expect(v.message).toMatch(/only Sabarish/i);
   });
 
   it('lets the superadmin reset an admin', () => {
@@ -202,7 +204,7 @@ describe('canEditResident', () => {
     // they were refused, arrived at sideways.
     const v = canEditResident({ actor: admin, target: superadmin });
     expect(v.ok).toBe(false);
-    expect(v.message).toMatch(/only the superadmin/i);
+    expect(v.message).toMatch(/only Sabarish/i);
   });
 
   it('refuses one admin editing another', () => {

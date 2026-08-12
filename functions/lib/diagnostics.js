@@ -496,7 +496,7 @@ export function checkConfig({ upiVpa, alerting, alertingConfigured, remote }) {
 
   if (!a.cron && !a.pages) {
     out.push(finding('warn', 'CONFIG-NO-ALERTS', 'Error alerting is not configured',
-      'Fatal errors land in error_log and are visible in god mode, but nothing '
+      'Fatal errors land in error_log and are visible in the activity log, but nothing '
       + 'is pushed anywhere — you find out by looking.'));
   } else if (!a.cron || !a.pages) {
     // The trap worth naming: two Workers over one database, so secrets set on

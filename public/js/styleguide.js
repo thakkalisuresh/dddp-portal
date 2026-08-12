@@ -3,15 +3,15 @@
  * which blocks inline execution — and weakening it to 'unsafe-inline' to keep
  * four small blocks in place would defeat having a policy at all.
  */
-import { renderGodBanner } from './ui.js';
+import { renderViewBanner } from './ui.js';
 import { money, periodLabel, dayLabel } from './i18n.js';
 
 let on = false;
 document.getElementById('demo').addEventListener('click', () => {
     on = !on;
-    renderGodBanner(
+    renderViewBanner(
       on ? { name: 'Sabarish Nair', flat: '4A', impersonation: { active: true, canWrite: false } } : null,
-      { onExit: () => { on = false; renderGodBanner(null); }, onAllowWrites: () => {} }
+      { onExit: () => { on = false; renderViewBanner(null); }, onAllowWrites: () => {} }
     );
     if (on) window.scrollTo({ top: 0, behavior: 'smooth' });
 });

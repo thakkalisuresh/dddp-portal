@@ -11,6 +11,7 @@
 
 import { api, ApiError } from './api.js';
 import { $, el, showError, withReveal } from './ui.js';
+import { ADMINISTRATOR } from './contact.js';
 
 const main = $('#main');
 
@@ -51,7 +52,7 @@ function render(me) {
       // password. Labelling it "optional" and saying nothing else is how a
       // building ends up with one person unlocking everybody's account.
       el('p', { class: 'small muted' },
-        'Without one you will have to ask the superadmin to reset your password.'),
+        `Without one you will have to ask ${ADMINISTRATOR.name} to reset your password.`),
       el('span', { class: 'field__hint' }, 'Only used to send you a code if you forget your password.')),
 
     el('div', { class: 'field' },

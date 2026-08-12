@@ -80,6 +80,14 @@ member's payment history to a third party.
 passwords that expire, a send-and-chase worklist, owners and tenants, flat
 transfer, self-service password reset by emailed code.
 
+**Admins no longer write a mobile or an email either** (2026-08-12, B22). They
+raise a request with a reason and Sabarish approves it, which is what applies the
+change. Email is the reason: `/forgot` finds an account by mobile and mails the
+code to the address on file, so an admin who could rewrite the address could
+receive somebody else's reset. Mobile is the lockout rather than the takeover.
+Names stay directly editable — not a credential, and routing a spelling fix
+through an approval queue teaches people to ignore the queue.
+
 **Resetting a password is the superadmin's alone**, as of 2026-08-12. An admin
 who can reset an account is handed a working credential for it and can log in as
 that resident, so they no longer can: residents recover themselves through
