@@ -319,8 +319,20 @@ export function committeeFolderSeparate(env) {
  * Deliberately NOT included: thumbnails, which are derived and regenerable, and
  * notice attachments, which share the bucket but are not financial evidence.
  * Both are a decision to revisit rather than an oversight.
+ *
+ * TWENTY, NOT FIFTY, AND THE NUMBER IS NOT ARBITRARY. This account is on the
+ * Workers free plan (docs/COSTS.md — the card on file is for R2, which is the
+ * one service that meters past its allowance), and the free plan allows **50
+ * subrequests per invocation**. A night already spends a handful on the token,
+ * the month folder, the CSV, the proofs root and a period folder, so fifty
+ * uploads would run out of subrequests partway through and fail every night
+ * once residents actually start uploading — invisible today, with one proof in
+ * the bucket, and arriving exactly when the building starts using the portal.
+ * Twenty leaves room to spare and still moves 600 a month against an expected
+ * inflow of about 52. Revisit this if the account ever moves to Workers Paid,
+ * where the ceiling is 1000.
  */
-export const PROOF_BATCH = 50;
+export const PROOF_BATCH = 20;
 
 /**
  * `4A-402318889021.jpg` — flat first so a folder sorts by flat, then the
@@ -349,7 +361,7 @@ export function proofBackupName({ flat, utr, image_sha256: hash }, contentType =
  *
  * The batch cap exists because a backlog is normal — the first run after this
  * ships has every proof ever taken — and a cron that tries to move all of them
- * in one invocation is a cron that hits a limit and moves none. Fifty a night
+ * in one invocation is a cron that hits a limit and moves none. Twenty a night
  * clears a year of a 99-flat building inside a month, and the watermark is
  * never held hostage to it.
  */
@@ -366,7 +378,7 @@ export async function backupProofs(env, token, { limit = PROOF_BATCH } = {}) {
   ).bind(limit).all();
 
   const pending = results ?? [];
-  if (!pending.length) return { copied: 0, failed: 0, remaining: 0 };
+  if (!pending.length) return { copied: 0, failed: 0 };
 
   const root = await ensureFolder(env, token, {
     name: 'proofs', parentId: committeeFolder(env),
@@ -401,12 +413,12 @@ export async function backupProofs(env, token, { limit = PROOF_BATCH } = {}) {
         .bind(new Date().toISOString(), row.id).run();
       copied += 1;
     } catch {
-      // One unreadable image must not cost the other forty-nine. Unmarked, so
+      // One unreadable image must not cost the other nineteen. Unmarked, so
       // tomorrow tries again.
       failed += 1;
     }
   }
-  return { copied, failed, remaining: Math.max(0, pending.length - copied) };
+  return { copied, failed };
 }
 
 /* ── the notice attachments ────────────────────────────────────────────── */
@@ -673,16 +685,22 @@ export async function runBackup(env, ctx) {
     // feature promises and the images are the thing it should also carry; a
     // bucket having a bad night must not make the night read as "no backup",
     // because that is the one signal anybody watches.
-    let proofs = { copied: 0, failed: 0, remaining: 0 };
-    let attachments = { copied: 0, failed: 0 };
-    let notices = { written: 0, failed: 0 };
-    try {
-      proofs = await backupProofs(env, token);
-      attachments = await backupAttachments(env, token);
-      notices = await backupNotices(env, token);
-    } catch (err) {
-      await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);
-    }
+    // Three sweeps, three separate tries. They share nothing but a token, and
+    // a folder lookup failing in one is no reason for the other two not to run
+    // — the images, the attachments and the notice documents are independent
+    // records, and a night that saves two of the three beats a night that
+    // saves none.
+    const sweep = async (fn, fallback) => {
+      try {
+        return await fn(env, token);
+      } catch (err) {
+        await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);
+        return fallback;
+      }
+    };
+    const proofs = await sweep(backupProofs, { copied: 0, failed: 0 });
+    const attachments = await sweep(backupAttachments, { copied: 0, failed: 0 });
+    const notices = await sweep(backupNotices, { written: 0, failed: 0 });
 
     return {
       uploaded: uploaded.name, tables: Object.keys(files).length,
