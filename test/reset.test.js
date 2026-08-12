@@ -3,6 +3,8 @@ import {
   generateCode, normaliseCode, canIssue, resetState, failureMessage,
   validateNewPassword, resetEmail, neutralReply,
   CODE_LENGTH, MAX_ATTEMPTS, MAX_PER_HOUR, EXPIRY_MINUTES,
+  tempPasswordState, tempPasswordExpiry, expiredPasswordMessage,
+  TEMP_PW_HOURS, INVITE_PW_HOURS,
 } from '../functions/lib/reset.js';
 import { buildRawMessage } from '../functions/lib/mailer.js';
 
@@ -200,5 +202,68 @@ describe('the raw message', () => {
     const d = atob(ml.replace(/-/g, '+').replace(/_/g, '/'));
     const body = d.split('\r\n\r\n')[1];
     expect(decodeURIComponent(escape(atob(body)))).toBe('ഹലോ ₹75');
+  });
+});
+
+/* ── temporary passwords expire (B10) ────────────────────────────────────── */
+
+describe('an issued temporary password stops working', () => {
+  const hoursAgo = (h) => new Date(Date.now() - h * 3600_000).toISOString();
+  const inHours = (h) => new Date(Date.now() + h * 3600_000).toISOString();
+
+  it('expires one that is past its deadline', () => {
+    expect(tempPasswordState({ must_change_pw: 1, pw_expires_at: hoursAgo(1) }).expired).toBe(true);
+  });
+
+  it('allows one still inside its window', () => {
+    expect(tempPasswordState({ must_change_pw: 1, pw_expires_at: inHours(1) }).expired).toBe(false);
+  });
+
+  it('NEVER expires a password the resident chose', () => {
+    // The whole check hangs off must_change_pw. Without this gate the column
+    // would eventually lock out somebody whose own password predates it — the
+    // one outcome this feature must not produce.
+    expect(tempPasswordState({ must_change_pw: 0, pw_expires_at: hoursAgo(500) }).expired).toBe(false);
+  });
+
+  it('treats a NULL deadline as "never expires", not as "expired long ago"', () => {
+    // Every row predating migration 0023 has NULL here, and some are sitting on
+    // a temporary password issued weeks back. Reading NULL as expired would
+    // lock all of them out on deploy — including the four committee accounts.
+    expect(tempPasswordState({ must_change_pw: 1, pw_expires_at: null }).expired).toBe(false);
+    expect(tempPasswordState({ must_change_pw: 1 }).expired).toBe(false);
+  });
+
+  it('expires exactly at the deadline rather than a moment after', () => {
+    const now = new Date('2026-08-12T10:00:00.000Z');
+    expect(tempPasswordState({ must_change_pw: 1, pw_expires_at: now.toISOString() }, now).expired)
+      .toBe(true);
+  });
+
+  it('survives a row with no owner at all', () => {
+    expect(tempPasswordState(null).expired).toBe(false);
+    expect(tempPasswordState(undefined).expired).toBe(false);
+  });
+
+  it('issues a superadmin reset for 24 hours and a roster invite for longer', () => {
+    // The gap is the decision: a reset is read within minutes by someone locked
+    // out, an invite goes to 99 people who were not expecting it.
+    expect(TEMP_PW_HOURS).toBe(24);
+    expect(INVITE_PW_HOURS).toBeGreaterThan(TEMP_PW_HOURS);
+  });
+
+  it('computes the deadline from the hours it is given', () => {
+    const now = new Date('2026-08-12T10:00:00.000Z');
+    expect(tempPasswordExpiry(24, now)).toBe('2026-08-13T10:00:00.000Z');
+    expect(tempPasswordExpiry(72, now)).toBe('2026-08-15T10:00:00.000Z');
+  });
+
+  it('does not tell the resident they typed it wrong', () => {
+    // They typed exactly what they were sent. "Wrong password" sends them back
+    // to whoever sent it; this has to send them to /forgot.
+    const m = expiredPasswordMessage();
+    expect(m).toMatch(/expired/i);
+    expect(m).toMatch(/forgotten your password/i);
+    expect(m).not.toMatch(/incorrect|wrong/i);
   });
 });

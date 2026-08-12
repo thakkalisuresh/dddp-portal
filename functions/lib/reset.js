@@ -114,6 +114,55 @@ export function failureMessage(reason, remaining) {
   }
 }
 
+/* ── temporary passwords, and when they stop working (B10) ────────────────── */
+
+/**
+ * How long an issued temporary password lasts, by who issued it and why.
+ *
+ * These differ because the two messages are read at different speeds. A
+ * superadmin reset goes to somebody who is locked out and waiting, and who will
+ * use it within minutes; a short window costs them nothing and costs anyone
+ * reading the thread a year later everything. A roster invite goes in bulk to
+ * people who were not expecting it, some of whom are travelling — anything
+ * short there turns the cutover into a re-send exercise.
+ */
+export const TEMP_PW_HOURS = 24;
+export const INVITE_PW_HOURS = 72;
+
+export function tempPasswordExpiry(hours = TEMP_PW_HOURS, now = new Date()) {
+  return new Date(now.getTime() + hours * 3600_000).toISOString();
+}
+
+/**
+ * Has this account's temporary password run out?
+ *
+ * Two guards, and both are the point rather than defensiveness:
+ *
+ * `must_change_pw` gates the whole check, so this can never expire a password
+ * the resident chose. That flag means "this credential was handed to you"; it is
+ * cleared the moment they pick their own, which is what makes an expiry unable
+ * to strand anybody.
+ *
+ * A NULL `pw_expires_at` never expires. Every row predating migration 0023 has
+ * one, and some of those are sitting on temporary passwords issued weeks ago —
+ * reading NULL as "expired long ago" would lock all of them out on deploy.
+ */
+export function tempPasswordState(owner, now = new Date()) {
+  if (!owner?.must_change_pw) return { expired: false };
+  if (!owner.pw_expires_at) return { expired: false };
+  return { expired: new Date(owner.pw_expires_at) <= now };
+}
+
+/**
+ * What an expired temporary password says. It must not read as "wrong
+ * password": the resident typed exactly what they were sent, and telling them
+ * otherwise sends them back to the person who sent it instead of to `/forgot`.
+ */
+export function expiredPasswordMessage() {
+  return 'That temporary password has expired. Use "Forgotten your password?" '
+       + 'below to email yourself a new code.';
+}
+
 export const MIN_PASSWORD = 8;
 
 export function validateNewPassword(pw) {

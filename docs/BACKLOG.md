@@ -126,18 +126,36 @@ remembered:
    2 is `hidden` until then. See B21 — this is why "I already have a code" is a
    real change and not a link.
 
-## B10 — Expire admin-issued temporary passwords
+## B10 — Expire issued temporary passwords — EXPIRY DONE 2026-08-12
 
-The reset message used to claim "expires in 24 hours" while nothing enforced
-it. The copy is honest now, but the gap is real: a temporary password sent over
-WhatsApp works forever, and those messages persist on both phones for years,
-get forwarded, and survive a handset changing hands. It is the one credential
-in this system deliberately sent in the clear.
+**The column and the login check shipped 2026-08-12.** Migration 0023,
+`pw_expires_at`, and `tempPasswordState` in `lib/reset.js`: 24 hours for a reset,
+72 for a roster invite, set at all four minting sites and cleared wherever
+`must_change_pw` goes to 0. An expired one answers DDP-AUTH-012 and points at
+`/forgot` instead of failing as "wrong password", and `resetPassword` may promise
+the expiry again because something now enforces it.
 
-Shape: `pw_expires_at` on `owners`, set when one is issued, checked at login
-only while `must_change_pw = 1` so it never touches a password the resident
-chose. An expired one should say so and point at `/forgot` rather than failing as
-"wrong password". Perhaps thirty lines and a test.
+Verified by logging in rather than by reading the code: expired plus the right
+password is refused; expired plus a *wrong* password still answers the generic
+"incorrect", because the expiry is checked after verification and must not tell
+an attacker holding a stale WhatsApp message that the number is real; a live one
+logs in and lands on `/password`; and a password the resident chose is unaffected
+even with a long-past deadline still sitting on the row. Both guards were broken
+deliberately to watch the tests catch them.
+
+**What remains of this entry** is the roster-invite half below — sending an
+announcement rather than a password where the resident has an email.
+
+**Why it was worth doing**, kept because the reasoning outlives the work. The
+reset message used to claim "expires in 24 hours" while nothing enforced it, and
+the claim was withdrawn rather than kept. Until 2026-08-12 a temporary password
+sent over WhatsApp worked forever, and those messages persist on both phones for
+years, get forwarded, and survive a handset changing hands. It is the one
+credential in this system deliberately sent in the clear.
+
+The shape it shipped as: `pw_expires_at` on `owners`, set when one is issued,
+checked at login only while `must_change_pw = 1` so it never touches a password
+the resident chose. Thirty lines and a test, as estimated.
 
 **Two durations, decided 2026-08-12.** They differ because the two messages are
 read at different speeds:

@@ -407,6 +407,11 @@ Self-service password reset by emailed code.
 | fn | `canIssue` | May this account be sent another code? Counts recent issues rather than recent failures: the thing being limited is mail to a resident's inbox, which an attacker who knows a mobile number could otherwise trigger endlessly. |
 | fn | `resetState` | Is this reset row still usable? Returns a reason rather than a boolean so the caller can say something true without saying something useful to an attacker. |
 | fn | `failureMessage` | What to tell someone whose code did not work. |
+| const | `TEMP_PW_HOURS` | How long an issued temporary password lasts, by who issued it and why. |
+| const | `INVITE_PW_HOURS` |  |
+| fn | `tempPasswordExpiry` |  |
+| fn | `tempPasswordState` | Has this account's temporary password run out? Two guards, and both are the point rather than defensiveness: `must_change_pw` gates the whole check, so this can never expire a password the resident chose. |
+| fn | `expiredPasswordMessage` | What an expired temporary password says. |
 | const | `MIN_PASSWORD` |  |
 | fn | `validateNewPassword` |  |
 | fn | `resetEmail` | The email a resident receives. |
@@ -666,4 +671,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-351 exports. 200 have no doc comment.
+356 exports. 202 have no doc comment.

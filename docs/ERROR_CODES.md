@@ -23,6 +23,7 @@ Ask the bot a code and it will explain it.
 | `DDP-AUTH-009` | warn | live | Reset code rejected — wrong, expired or already used |
 | `DDP-AUTH-010` | warn | live | Reset codes requested too often for one account |
 | `DDP-AUTH-011` | error | live | Reset requested for an account with no email on file |
+| `DDP-AUTH-012` | warn | live | Login refused — temporary password had expired |
 
 ## MAIL
 
@@ -136,7 +137,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-76 codes across 10 domains — 12 fatal, 3 awaiting their call site, 3 retired.
+77 codes across 10 domains — 12 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

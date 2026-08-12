@@ -38,6 +38,8 @@ import { runChecks, summarise, toMarkdown } from './lib/diagnostics.js';
 import {
   generateCode, normaliseCode, expiryFrom, canIssue, resetState, failureMessage,
   validateNewPassword, resetEmail, neutralReply,
+  tempPasswordState, expiredPasswordMessage, tempPasswordExpiry,
+  TEMP_PW_HOURS, INVITE_PW_HOURS,
 } from './lib/reset.js';
 import { sendEmail, mailConfigured } from './lib/mailer.js';
 import { parseRoster, previewRoster, resolveExemptionTargets } from './lib/roster.js';
@@ -367,7 +369,8 @@ async function login(request, env, ctx) {
   }
 
   const owner = await env.DB.prepare(
-    'SELECT id, name, flat, role, pw_hash, pw_salt, must_change_pw FROM owners WHERE mobile = ? AND active = 1'
+    `SELECT id, name, flat, role, pw_hash, pw_salt, must_change_pw, pw_expires_at
+       FROM owners WHERE mobile = ? AND active = 1`
   ).bind(mobile).first();
 
   // Same response either way — don't leak which mobiles are registered.
@@ -380,6 +383,17 @@ async function login(request, env, ctx) {
   if (!ok) {
     await reportError(env, 'DDP-AUTH-002', { mobile }, ctx);
     return problem(401, 'DDP-AUTH-002', 'Mobile number or password is incorrect.');
+  }
+
+  // Checked AFTER the password verifies, deliberately. Answering "that has
+  // expired" to a wrong password would tell an attacker holding a stale message
+  // that the number is real and that the account exists — and the resident who
+  // genuinely mistyped would be sent to /forgot instead of trying again.
+  const temp = tempPasswordState(owner);
+  if (temp.expired) {
+    await reportError(env, 'DDP-AUTH-012',
+                      { flat: owner.flat, ownerId: owner.id, expiredAt: owner.pw_expires_at }, ctx);
+    return problem(401, 'DDP-AUTH-012', expiredPasswordMessage());
   }
 
   await clearRateLimit(env, mobile);
@@ -442,7 +456,8 @@ async function changePassword(request, env, session) {
 
   const { hash, salt } = await hashPassword(next, ITER(env));
   await env.DB.prepare(
-    'UPDATE owners SET pw_hash = ?, pw_salt = ?, must_change_pw = 0 WHERE id = ?'
+    `UPDATE owners SET pw_hash = ?, pw_salt = ?, must_change_pw = 0, pw_expires_at = NULL
+      WHERE id = ?`
   ).bind(hash, salt, session.actor.id).run();
 
   await destroyAllSessionsFor(env, session.actor.id);
@@ -497,20 +512,22 @@ async function resetPassword(request, env, session, path) {
   const otp = generateOneTimePassword();
   const { hash, salt } = await hashPassword(otp, ITER(env));
   await env.DB.prepare(
-    'UPDATE owners SET pw_hash = ?, pw_salt = ?, must_change_pw = 1 WHERE id = ?'
-  ).bind(hash, salt, ownerId).run();
+    'UPDATE owners SET pw_hash = ?, pw_salt = ?, must_change_pw = 1, pw_expires_at = ? WHERE id = ?'
+  ).bind(hash, salt, tempPasswordExpiry(TEMP_PW_HOURS), ownerId).run();
   await destroyAllSessionsFor(env, ownerId);
   await audit(env, session, 'password.reset', { ownerId, flat: target.flat });
 
-  // No expiry is promised, because none is enforced. The previous wording said
-  // "it expires in 24 hours" and `expiresInHours: 24` was a decorative number
-  // nothing acted on — a temporary password sent over WhatsApp worked forever.
-  // See backlog B10; until that exists, saying nothing is the honest option.
+  // The expiry may be promised again, because it is now enforced — migration
+  // 0023 and `tempPasswordState`. The wording was withdrawn once when
+  // `expiresInHours: 24` was a decorative number nothing acted on, so the claim
+  // and the column go back in together or not at all.
   const text =
     `Diamond Park portal: your temporary password is ${otp}\n` +
+    `It expires in ${TEMP_PW_HOURS} hours.\n` +
     'Log in at https://diamondpark.pages.dev and choose your own password straight away.';
   return json({
     oneTimePassword: otp,
+    expiresInHours: TEMP_PW_HOURS,
     whatsapp: waLink(target.mobile, text),
   });
 }
@@ -642,7 +659,8 @@ async function onboard(request, env, session) {
 
   const { hash, salt } = await hashPassword(password, ITER(env));
   await env.DB.prepare(
-    `UPDATE owners SET name = ?, email = ?, pw_hash = ?, pw_salt = ?, must_change_pw = 0
+    `UPDATE owners SET name = ?, email = ?, pw_hash = ?, pw_salt = ?, must_change_pw = 0,
+            pw_expires_at = NULL
       WHERE id = ?`
   ).bind(name, email, hash, salt, session.actor.id).run();
 
@@ -1050,9 +1068,9 @@ async function postResident(request, env, session) {
   const { hash, salt } = await hashPassword(otp, ITER(env));
   const row = await env.DB.prepare(
     `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, must_change_pw,
-                         role, relationship, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 1, 'owner', ?, ?) RETURNING id`
-  ).bind(flat, name, mobile, email, hash, salt, relationship,
+                         pw_expires_at, role, relationship, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'owner', ?, ?) RETURNING id`
+  ).bind(flat, name, mobile, email, hash, salt, tempPasswordExpiry(TEMP_PW_HOURS), relationship,
          new Date().toISOString()).first();
 
   await audit(env, session, 'resident.create', { id: row.id, flat, relationship });
@@ -1344,9 +1362,10 @@ async function postTransfer(request, env, session) {
 
   const incoming = await env.DB.prepare(
     `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, must_change_pw,
-                         role, active, moved_in_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 1, 'owner', 1, ?, ?) RETURNING id`
-  ).bind(flat, String(b.name).trim(), mobile, b?.email ?? null, hash, salt, now, now).first();
+                         pw_expires_at, role, active, moved_in_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'owner', 1, ?, ?) RETURNING id`
+  ).bind(flat, String(b.name).trim(), mobile, b?.email ?? null, hash, salt,
+         tempPasswordExpiry(TEMP_PW_HOURS), now, now).first();
 
   await env.DB.batch([
     // Deactivated, never deleted: their bills, payments and comments must stay
@@ -2570,7 +2589,9 @@ async function resetWithCode(request, env, ctx) {
   const now = new Date().toISOString();
 
   await env.DB.batch([
-    env.DB.prepare('UPDATE owners SET pw_hash = ?, pw_salt = ?, must_change_pw = 0 WHERE id = ?')
+    env.DB.prepare(
+      `UPDATE owners SET pw_hash = ?, pw_salt = ?, must_change_pw = 0, pw_expires_at = NULL
+        WHERE id = ?`)
       .bind(hash, salt, owner.id),
     // Single use, marked in the same batch as the password change so the two
     // cannot come apart and leave a spent code still live.
@@ -2641,9 +2662,10 @@ async function rosterImport(request, env, session) {
     const { hash, salt } = await hashPassword(otp, ITER(env));
     const inserted = await env.DB.prepare(
       `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, must_change_pw,
-                           role, relationship, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, 'owner', ?, ?) RETURNING id`
-    ).bind(row.flat, row.name, row.mobile, row.email, hash, salt, row.relationship, now).first();
+                           pw_expires_at, role, relationship, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'owner', ?, ?) RETURNING id`
+    ).bind(row.flat, row.name, row.mobile, row.email, hash, salt,
+           tempPasswordExpiry(INVITE_PW_HOURS), row.relationship, now).first();
 
     const text =
       `Diamond Park gas portal: your login for flat ${row.flat}\n` +
