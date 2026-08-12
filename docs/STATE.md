@@ -358,9 +358,9 @@ which this run therefore does not establish.
 | `upi://` plain | opened | resolved, chooser path works |
 | `intent://` bare | opened | resolved |
 | `intent://` → gpay | opened | Google Pay's component ENABLED |
-| `intent://` → phonepe | **Play Store**, app installed but no account registered | component NOT resolvable |
-| `intent://` → paytm | Play Store | uninterpretable — install state unknown |
-| `intent://` → bhim | Play Store | uninterpretable — install state unknown |
+| `intent://` → phonepe | **Play Store**, app INSTALLED, no account registered | component NOT resolvable |
+| `intent://` → paytm | Play Store, app not installed | correct fallback |
+| `intent://` → bhim | Play Store, app not installed | correct fallback |
 | `gpay://` scheme | opened | resolved |
 | `phonepe://` scheme | not tried | — |
 | `paytm://` scheme | not tried | — |
@@ -394,11 +394,37 @@ reason entirely, or that the original report described something other than
 what we now think it did. Re-testing THAT handset against this same page is the
 obvious next move, and it is now a cheap one.
 
-The Paytm and BHIM rows are recorded as uninterpretable rather than quietly
-counted as failures. The Play Store fallback is the correct and documented
-behaviour for a package that is not installed, so without knowing whether those
-two apps are on the device the rows carry no information. Treating them as
-evidence would be counting an expected result as a surprising one.
+**Every row is accounted for, with nothing left over.** Install and account
+state were established afterwards, and they explain the table exactly:
+
+| App | Installed | Account | Outcome |
+|---|---|---|---|
+| Google Pay | yes | yes | opens |
+| PhonePe | **yes** | **no** | Play Store |
+| Paytm | no | — | Play Store |
+| BHIM | no | — | Play Store |
+
+The Paytm and BHIM rows turn out to be the control, and they earn their place by
+being unremarkable: an absent app SHOULD bounce to the store, that is what the
+fallback in `intentUri` was added for, and it did. Which sharpens the PhonePe
+row into the finding of this run — **an installed app with no account behaved
+identically to an app that was not installed at all.** From the browser's side
+the two are indistinguishable, and that is precisely why this bug was so hard to
+see: the portal cannot tell "you don't have this app" from "you have it and it
+won't answer", and neither can the resident.
+
+**The full chain is verified, not just the launch.** The confirmation screen
+showed the payee name, the ₹1 amount, and note text (unreadable over the video
+call, but present). So registry resolution, amount carriage and `tn` delivery
+all work end to end. The payee name in particular is what makes this run
+unambiguous — it is the reason a resolving VPA was used instead of the
+unresolvable default.
+
+**One thing this run did NOT establish: that the chooser appears.** Only one app
+on the device could answer, and Android launches directly rather than offering a
+choice when a single handler resolves. So `upi://` resolving is proven; the
+chooser UI that the Android pay screen leads with is not, and a handset with two
+or more registered UPI apps is what would prove it.
 
 **A real UX defect fell out of this.** An `intent://` addressed to an installed
 but unregistered app sends the resident to the Play Store to install software
@@ -415,9 +441,12 @@ Things I could not check and someone should:
   Google Pay reportedly works, which is the one thing the account-state finding
   does not account for. The page is already deployed and the run takes ten
   minutes, so this is the cheapest unanswered question in this document.
-- Whether Paytm and BHIM were installed on the handset used in run 1. Two rows
-  of that table stay uninterpretable without it, because the Play Store fallback
-  is the correct behaviour for an app that is simply absent.
+- **Whether the OS chooser actually appears.** Run 1 could not show it: only one
+  app on that handset could answer, and Android launches straight into a single
+  handler. The Android pay screen LEADS with the plain link on the argument that
+  the chooser is the mechanism NPCI defines, so the screen's first route rests on
+  behaviour still unobserved. Any handset with two registered UPI apps settles
+  it.
 - The god-mode Health tab rendering against production.
 - That an impersonated admin genuinely cannot reset the superadmin's password
   on the live site. Proven locally with a real admin session, never on prod.

@@ -194,6 +194,11 @@ screen, so a spoofed mail pointing at a scam VPA announces itself as somebody
 else before any money moves. Banks and utilities send payment links routinely.
 The idea is legitimate; it is the plumbing that refuses, not the ethics.
 
+That paragraph was reasoning from the spec when it was written. It is now
+observed: the device run of 2026-08-11 reached a confirmation screen showing the
+payee name, the amount and the note, from a link built by this codebase. The
+protection it describes is real and works.
+
 **What to build instead**, when there is an account to send from:
 
 > Your July bill is ₹289, due the 10th. **[View and pay]**
