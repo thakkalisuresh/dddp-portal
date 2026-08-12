@@ -158,19 +158,28 @@ export function mergeTimeline({ audits = [], activities = [], errors = [] }) {
 }
 
 /**
- * Who may reset whose password.
+ * Who may reset whose password. The superadmin, and nobody else.
  *
- * The admin console originally let any admin reset ANY account, with no check
- * on the target's role. That was a privilege-escalation hole rather than a
- * convenience: an admin could reset the superadmin, receive the temporary
- * password, and log in with god mode. The single-superadmin rule stopped the
- * role being GRANTED to a second person while leaving it perfectly takeable.
- *
- * The rule now: you can reset strictly below yourself.
- *
- *   resident  -> any admin or the superadmin
+ *   resident  -> the superadmin only
  *   admin     -> the superadmin only
  *   superadmin-> nobody, through any API
+ *
+ * ADMINS LOST THIS ON 2026-08-12, and the reason is not that they are not
+ * trusted. A reset shows nobody an existing password — that is a hash and is
+ * gone — but it MINTS one and hands it to whoever asked, who then knows a working
+ * credential for an account that is not theirs. `must_change_pw` does not help:
+ * they can log in first and set it themselves. Everything that account then
+ * does — a payment claim, a proof, a comment under somebody's name — is
+ * attributable to a resident who never typed the password.
+ *
+ * This ladder used to stop at the roles: an admin could not reset the superadmin
+ * or another admin, which closed privilege escalation and left all 99 residents
+ * impersonable by any admin. That was the sharp end, not the whole of it.
+ *
+ * So residents recover their own accounts through `/forgot`, and an admin's job
+ * in a recovery is to tell them to use it. What the admin keeps is the part that
+ * needs a person in the building: noticing that a number or address is wrong, and
+ * raising a request for the superadmin to approve (backlog B22).
  *
  * The superadmin exclusion has no exception, including for the superadmin
  * themselves — a session that is already authenticated does not need it, and
@@ -189,12 +198,13 @@ export function canResetPassword({ actor, target }) {
     };
   }
 
-  if (target.role === 'admin' && actor.role !== 'superadmin') {
-    return { ok: false, message: 'Only the superadmin can reset another admin.' };
-  }
-
-  if (actor.role !== 'admin' && actor.role !== 'superadmin') {
-    return { ok: false, message: 'Admins only.' };
+  if (actor.role !== 'superadmin') {
+    return {
+      ok: false,
+      message: 'Only the superadmin can reset a password. Ask the resident to use '
+             + '"Forgotten your password?" on the login page — the code goes to their '
+             + 'own email, so nobody else ever holds their password.',
+    };
   }
 
   return { ok: true };

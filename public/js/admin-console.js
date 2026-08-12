@@ -400,7 +400,8 @@ async function residentsPanel() {
         el('div', { class: 'field' }, el('label', {}, 'Mobile'), mobile.node),
         el('div', { class: 'field' }, el('label', { for: 'r-email' }, 'Email'), email),
         el('p', { class: 'small' },
-          'Without an address they cannot reset their own password — an admin has to.'),
+          'Without an address they cannot reset their own password, and only the '
+          + 'superadmin can do it for them.'),
         el('div', { class: 'field' }, el('label', { for: 'r-rel' }, 'Owner or tenant'), relationship),
         el('button', {
           class: 'btn', type: 'button',
@@ -506,17 +507,27 @@ function personCard(p, status) {
                      el('span', { class: 'dircell__static' }, p.email || '—'))
                : editable(p, 'email', 'Email', status, { type: 'email', placeholder: 'none' })),
 
+    // Resetting is the superadmin's alone as of 2026-08-12. An admin who could
+    // reset 7B could log in AS 7B, so the button is not merely hidden — the
+    // endpoint refuses them too (canResetPassword). What replaces it for an
+    // admin is the sentence, because they are the one standing in front of the
+    // resident and they need to know what to say.
     inactive ? null : el('div', { style: 'margin-top:var(--s-3)' },
-      el('button', {
-        class: 'btn btn--sm btn--quiet', type: 'button',
-        onclick: async () => {
-          try {
-            const result = await api.admin.resetPassword(p.id);
-            status.replaceChildren(otpPanel(result, p.name));
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          } catch (err) { showError(status, err); }
-        },
-      }, 'Reset password')));
+      me.role === 'superadmin'
+        ? el('button', {
+            class: 'btn btn--sm btn--quiet', type: 'button',
+            onclick: async () => {
+              try {
+                const result = await api.admin.resetPassword(p.id);
+                status.replaceChildren(otpPanel(result, p, status));
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              } catch (err) { showError(status, err); }
+            },
+          }, 'Reset password')
+        : el('p', { class: 'small muted' },
+            'Forgotten password? Ask them to tap "Forgotten your password?" on the '
+            + 'login page — a code goes to their own email, so nobody else ever holds '
+            + 'their password. If their email is wrong, ask the superadmin.')));
 }
 
 /**
@@ -599,19 +610,58 @@ function editable(p, field, label, status, { type = 'text', placeholder = '' } =
 }
 
 /**
- * The reset panel is the whole point of the WhatsApp path: a say-able password
- * and a single tap to send it. No API, no cost, and the treasurer knowing the
- * resident by face is the identity check (plan §4b).
+ * The reset panel: the password on screen, then a deliberate tap to send it.
+ *
+ * On screen FIRST, and not as a convenience. Email is the destination that keeps
+ * the credential out of everybody else's hands, but it fails in ways this screen
+ * cannot see — an address that is wrong, a mailbox that is full, mail not yet
+ * configured at all. Showing the superadmin what was issued means a failed send
+ * costs a different delivery rather than a resident who is now locked out with a
+ * password nobody knows. The old password is already dead by this point; there
+ * is no going back from a reset.
+ *
+ * WhatsApp stays for the residents with no address on file at all — B5's people,
+ * for whom it is the only route that exists.
  */
-function otpPanel(result, who) {
+function otpPanel(result, p, status) {
+  const sent = el('div');
+  const emailBtn = el('button', { class: 'btn btn--block', type: 'button' },
+    `Email it to ${result.email}`);
+
+  emailBtn.addEventListener('click', async () => {
+    emailBtn.disabled = true;
+    emailBtn.textContent = 'Sending…';
+    try {
+      const r = await api.admin.emailTempPassword(p.id, result.oneTimePassword);
+      emailBtn.textContent = 'Emailed';
+      emailBtn.classList.add('is-done');
+      sent.replaceChildren(el('p', { class: 'small' }, `Sent to ${r.to}.`));
+    } catch (err) {
+      // The password on screen is still the live one, so this must not read as
+      // "the reset failed" — it did not.
+      showError(sent, err);
+      emailBtn.disabled = false;
+      emailBtn.textContent = `Try again — email to ${result.email}`;
+    }
+  });
+
   return el('div', { class: 'note note--good' },
-    el('p', { class: 'label', style: 'color:var(--accent)' }, `Temporary password for ${who}`),
+    el('p', { class: 'label', style: 'color:var(--accent)' }, `Temporary password for ${p.name}`),
     el('p', { style: 'font-family:var(--font-ui);font-size:var(--text-xl);font-weight:600;margin:var(--s-2) 0' },
       result.oneTimePassword),
-    el('a', { class: 'btn btn--block', href: result.whatsapp, target: '_blank', rel: 'noopener' },
-      'Send on WhatsApp'),
-    el('p', { class: 'small', style: 'margin-top:var(--s-2)' },
-      'They must change it at first login. All their other sessions have ended.'));
+    el('p', { class: 'small' },
+      `It expires in ${result.expiresInHours} hours. They must change it at first `
+      + 'login, and all their other sessions have already ended.'),
+    result.email
+      ? emailBtn
+      : el('a', { class: 'btn btn--block', href: result.whatsapp, target: '_blank', rel: 'noopener' },
+          'Send on WhatsApp'),
+    result.email
+      ? null
+      : el('p', { class: 'small muted', style: 'margin-top:var(--s-2)' },
+          `${p.name} has no email address on file, so there is nowhere to email it. `
+          + 'Adding one now means they can recover their own account next time.'),
+    sent);
 }
 
 /* ── notices ───────────────────────────────────────────────────────────── */

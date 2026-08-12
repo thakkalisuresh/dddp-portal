@@ -38,7 +38,7 @@ import { runChecks, summarise, toMarkdown } from './lib/diagnostics.js';
 import {
   generateCode, normaliseCode, expiryFrom, canIssue, resetState, failureMessage,
   validateNewPassword, resetEmail, neutralReply,
-  tempPasswordState, expiredPasswordMessage, tempPasswordExpiry,
+  tempPasswordState, expiredPasswordMessage, tempPasswordExpiry, tempPasswordEmail,
   TEMP_PW_HOURS, INVITE_PW_HOURS,
 } from './lib/reset.js';
 import { sendEmail, mailConfigured } from './lib/mailer.js';
@@ -165,6 +165,9 @@ export default {
           return problem(403, 'DDP-ADMIN-004', 'Admins only.');
         }
         if (route === 'GET /api/admin/residents') return listResidents(env, session, url);
+        if (route.startsWith('POST /api/admin/residents/') && path.endsWith('/reset/email')) {
+          return emailTempPassword(request, env, session, path);
+        }
         if (route.startsWith('POST /api/admin/residents/') && path.endsWith('/reset')) {
           return resetPassword(request, env, session, path);
         }
@@ -495,12 +498,13 @@ async function listResidents(env, session, url) {
 
 async function resetPassword(request, env, session, path) {
   const ownerId = Number(path.split('/')[4]);
-  const target = await env.DB.prepare('SELECT id, name, flat, mobile, role FROM owners WHERE id = ?')
-    .bind(ownerId).first();
+  const target = await env.DB.prepare(
+    'SELECT id, name, flat, mobile, email, role FROM owners WHERE id = ?'
+  ).bind(ownerId).first();
   if (!target) return problem(404, 'DDP-AUTH-006', 'No such resident.');
 
-  // An admin could previously reset ANY account, superadmin included, and then
-  // log in with the temporary password they were handed. See canResetPassword.
+  // Superadmin only since 2026-08-12: a reset mints a working credential, so
+  // whoever performs one can log in as that resident. See canResetPassword.
   const allowed = canResetPassword({ actor: session.actor, target });
   if (!allowed.ok) {
     await reportError(env, 'DDP-ADMIN-014',
@@ -508,7 +512,7 @@ async function resetPassword(request, env, session, path) {
     return problem(403, 'DDP-ADMIN-014', allowed.message);
   }
 
-  // Admins reset, they don't read — the old password is a hash and is gone.
+  // Nobody reads an existing password — it is a hash and is gone. This mints one.
   const otp = generateOneTimePassword();
   const { hash, salt } = await hashPassword(otp, ITER(env));
   await env.DB.prepare(
@@ -525,11 +529,93 @@ async function resetPassword(request, env, session, path) {
     `Diamond Park portal: your temporary password is ${otp}\n` +
     `It expires in ${TEMP_PW_HOURS} hours.\n` +
     'Log in at https://diamondpark.pages.dev and choose your own password straight away.';
+  // Shown to the superadmin on screen, then emailed on a second deliberate tap.
+  // Showing it here is not the hole this feature closed: that hole was ADMINS
+  // holding credentials for accounts that are not theirs. The superadmin can
+  // already reset any account with the break-glass script, so the screen tells
+  // them nothing their own database access would not — and it is what keeps the
+  // flow working on a day when mail is down, or the address on file is wrong.
   return json({
     oneTimePassword: otp,
     expiresInHours: TEMP_PW_HOURS,
+    email: target.email,
     whatsapp: waLink(target.mobile, text),
   });
+}
+
+/**
+ * Email a temporary password that was just issued on screen.
+ *
+ * Takes the password back from the caller and CHECKS IT AGAINST THE STORED HASH
+ * before sending. Two things follow from that, and both are the reason it works
+ * this way rather than mailing whatever it is handed: the endpoint cannot be used
+ * to send arbitrary text to a resident, and it stops working the moment the
+ * password stops being current — a second reset, or the resident choosing their
+ * own, makes a stale tab's Send button fail loudly instead of mailing a password
+ * that no longer opens anything.
+ *
+ * Deliberately a second call rather than a flag on the reset. The superadmin sees
+ * the password first and decides to send it; a reset that mailed automatically
+ * would be one that cannot be performed quietly for somebody standing next to
+ * you, which is the walk-in case this whole path exists for.
+ */
+async function emailTempPassword(request, env, session, path) {
+  const ownerId = Number(path.split('/')[4]);
+  const body = await readJson(request);
+  const offered = String(body?.oneTimePassword ?? '');
+
+  const target = await env.DB.prepare(
+    `SELECT id, name, flat, email, role, pw_hash, pw_salt, must_change_pw, pw_expires_at
+       FROM owners WHERE id = ?`
+  ).bind(ownerId).first();
+  if (!target) return problem(404, 'DDP-AUTH-006', 'No such resident.');
+
+  // The same ladder as the reset itself. Without it this is a reset's payload
+  // delivered by an endpoint that never asked who was allowed to cause one.
+  const allowed = canResetPassword({ actor: session.actor, target });
+  if (!allowed.ok) {
+    await reportError(env, 'DDP-ADMIN-014',
+                      { actor: session.actor.id, target: target.id, targetRole: target.role });
+    return problem(403, 'DDP-ADMIN-014', allowed.message);
+  }
+
+  if (!target.email) {
+    await reportError(env, 'DDP-AUTH-011', { flat: target.flat, ownerId: target.id });
+    return problem(400, 'DDP-AUTH-011',
+      `${target.name} has no email address on file, so there is nowhere to send it. `
+      + 'Send the password another way, or add an address first.');
+  }
+
+  const current = offered
+    && target.must_change_pw
+    && await verifyPassword(offered, target.pw_hash, target.pw_salt, ITER(env));
+  if (!current) {
+    return problem(409, 'DDP-ADMIN-003',
+      'That temporary password is no longer the current one for this account. '
+      + 'Issue a fresh one and send that instead.');
+  }
+
+  const { subject, text } = tempPasswordEmail({
+    password: offered, name: target.name, flat: target.flat, hours: TEMP_PW_HOURS,
+  });
+  const result = await sendEmail(env, { to: target.email, subject, text });
+
+  if (!result.sent) {
+    await reportError(env, 'DDP-MAIL-001', { flat: target.flat, reason: result.reason });
+    // Said plainly rather than as a success. A screen that claims to have sent a
+    // password nobody received is how a locked-out resident stays locked out
+    // while everybody believes they were helped.
+    return problem(502, 'DDP-MAIL-001',
+      result.reason === 'not-configured'
+        ? 'Email is not set up yet, so nothing was sent. The password on screen is '
+          + 'still valid — pass it on another way.'
+        : `The email could not be sent (${result.reason}). The password on screen is `
+          + 'still valid — pass it on another way.');
+  }
+
+  await audit(env, session, 'password.reset.emailed',
+              { ownerId, flat: target.flat, sentTo: target.email });
+  return json({ sent: true, to: target.email });
 }
 
 /**
@@ -2464,9 +2550,10 @@ async function godDiagnostics(env, url) {
 }
 
 /* ── self-service password reset ──────────────────────────────────────────
-   Removes the treasurer from the loop for anyone with an email on file.
-   Everyone else still goes through an admin, which is why the admin reset
-   path stays.                                                              */
+   The ONLY route for a resident since 2026-08-12, and the reason admins no
+   longer reset passwords: a reset mints a credential, so whoever performs one
+   can log in as that resident. Anybody with no address on file falls back to
+   the superadmin, who is the one person for whom that is not an escalation. */
 
 /**
  * "I forgot my password."

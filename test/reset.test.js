@@ -3,7 +3,7 @@ import {
   generateCode, normaliseCode, canIssue, resetState, failureMessage,
   validateNewPassword, resetEmail, neutralReply,
   CODE_LENGTH, MAX_ATTEMPTS, MAX_PER_HOUR, EXPIRY_MINUTES,
-  tempPasswordState, tempPasswordExpiry, expiredPasswordMessage,
+  tempPasswordState, tempPasswordExpiry, expiredPasswordMessage, tempPasswordEmail,
   TEMP_PW_HOURS, INVITE_PW_HOURS,
 } from '../functions/lib/reset.js';
 import { buildRawMessage } from '../functions/lib/mailer.js';
@@ -265,5 +265,47 @@ describe('an issued temporary password stops working', () => {
     expect(m).toMatch(/expired/i);
     expect(m).toMatch(/forgotten your password/i);
     expect(m).not.toMatch(/incorrect|wrong/i);
+  });
+});
+
+describe('the email carrying a temporary password', () => {
+  const mail = tempPasswordEmail({ password: 'tiger-lamp-42', name: 'Priya', flat: '4B' });
+
+  it('carries the password and the flat it belongs to', () => {
+    expect(mail.text).toContain('tiger-lamp-42');
+    expect(mail.text).toContain('4B');
+  });
+
+  it('says how long it lasts', () => {
+    expect(mail.text).toContain(`${TEMP_PW_HOURS} hours`);
+  });
+
+  it('does NOT claim to be single use, because it is not', () => {
+    // It is an ordinary password that happens to expire. The reset-CODE email
+    // says "once" and is right to; converging the two copy would be a lie.
+    expect(mail.text).not.toMatch(/\bonce\b|single use/i);
+  });
+
+  it('keeps the password out of the subject line', () => {
+    // The reset code is deliberately IN its subject so it can be read from a
+    // lock-screen notification. A working password must not be — a notification
+    // is visible to anyone holding the handset.
+    expect(mail.subject).not.toContain('tiger-lamp-42');
+  });
+
+  it('carries no link that could be followed by a mail scanner', () => {
+    const links = mail.text.match(/https?:\/\/\S+/g) ?? [];
+    expect(links).toEqual(['https://diamondpark.pages.dev']);
+  });
+
+  it('tells somebody who did not ask that their account was reset', () => {
+    // The opposite advice from the reset-code mail, and deliberately: an
+    // unexpected code is ignorable, an unexpected password change is not.
+    expect(mail.text).toMatch(/did not ask/i);
+    expect(mail.text).toMatch(/tell the committee/i);
+  });
+
+  it('says the next step is choosing their own', () => {
+    expect(mail.text).toMatch(/choose your own/i);
   });
 });

@@ -355,7 +355,8 @@ export function checkResetPath({ mailConfigured, remote }, owners = []) {
     out.push(finding('info', 'NO-EMAIL-ON-FILE',
       `${without.length} of ${active.length} accounts cannot reset their own password`,
       'No email on file, so the emailed code has nowhere to go. They fall back '
-      + 'to an admin reset. Onboarding asks for one, but it is optional.',
+      + 'to a superadmin reset, since admins no longer reset passwords at all. '
+      + 'Onboarding asks for one, but it is optional.',
       without.map((o) => ({ flat: o.flat, name: o.name }))));
   }
   return out;

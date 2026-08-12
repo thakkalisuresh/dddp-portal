@@ -204,6 +204,39 @@ export function resetEmail({ code, name, flat }) {
 }
 
 /**
+ * The email carrying a temporary password the superadmin has just issued.
+ *
+ * Distinct from `resetEmail` because it carries a live credential rather than a
+ * code that only works on one page, and the two must not converge: this one has
+ * to say plainly that the next step is choosing their own, and it cannot claim
+ * to be single-use, because it is not — it is an ordinary password that happens
+ * to expire.
+ *
+ * No link, for the same reason as `resetEmail`: mail scanners follow links, and
+ * a link that carries a working password is worse than one that carries a code.
+ */
+export function tempPasswordEmail({ password, name, flat, hours = TEMP_PW_HOURS }) {
+  return {
+    subject: 'Diamond Park — a temporary password for your account',
+    text: [
+      `Hello${name ? ` ${name}` : ''},`,
+      '',
+      `A temporary password has been set for flat ${flat}:`,
+      '',
+      `    ${password}`,
+      '',
+      `It expires in ${hours} hours. Log in at https://diamondpark.pages.dev`,
+      'and you will be asked to choose your own password straight away.',
+      '',
+      'If you did not ask for this, tell the committee — somebody has reset',
+      'your account. Your old password no longer works either way.',
+      '',
+      'DD Diamond Park Residents\' Welfare Association',
+    ].join('\n'),
+  };
+}
+
+/**
  * The reply to "I forgot my password". One string, always.
  *
  * TAKES NO ARGUMENTS ON PURPOSE. The first version accepted a masked address

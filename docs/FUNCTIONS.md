@@ -415,6 +415,7 @@ Self-service password reset by emailed code.
 | const | `MIN_PASSWORD` |  |
 | fn | `validateNewPassword` |  |
 | fn | `resetEmail` | The email a resident receives. |
+| fn | `tempPasswordEmail` | The email carrying a temporary password the superadmin has just issued. |
 | fn | `neutralReply` | The reply to "I forgot my password". |
 
 ### `functions/lib/roster.js`
@@ -671,4 +672,4 @@ Run by hand. Several touch production and say so.
 
 ---
 
-356 exports. 202 have no doc comment.
+357 exports. 202 have no doc comment.

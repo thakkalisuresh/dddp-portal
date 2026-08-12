@@ -77,8 +77,16 @@ than posted to the vision provider, because the alternative is mailing every
 member's payment history to a third party.
 
 **People.** Roster import with preview against the real 99-flat model, temp
-passwords, a send-and-chase worklist, owners and tenants, flat transfer,
-self-service password reset by emailed code.
+passwords that expire, a send-and-chase worklist, owners and tenants, flat
+transfer, self-service password reset by emailed code.
+
+**Resetting a password is the superadmin's alone**, as of 2026-08-12. An admin
+who can reset an account is handed a working credential for it and can log in as
+that resident, so they no longer can: residents recover themselves through
+`/forgot`, and an admin's part is to tell them to. The superadmin's reset shows
+the temporary password on screen and offers a button that emails it — on screen
+first, because a send that fails must not leave somebody locked out with a
+password nobody knows. Backlog B21.
 
 **Admin and god.** Console, activity log, click capture, view-as and
 impersonation, god edit of any person or bill with a full audit trail, CSV
@@ -164,8 +172,7 @@ is useless and does not come back.
 
 | | |
 |---|---|
-| **B10** | Admin-issued temporary passwords never expire. Sent over WhatsApp, which keeps them for years. |
-| **B21** | An admin who resets a resident's password is handed a working credential for that account, so they can log in as that resident and `must_change_pw` does not prevent it. Bounded by `canResetPassword` — not the superadmin, not another admin — so it is the 99 residents. Decided 2026-08-12; blocked on W1. |
+| **B10** | Half done 2026-08-12: temporary passwords now expire (24h reset, 72h invite). What remains is the roster invite sending an announcement rather than a password where there is an email — not started, and wants doing with the import. |
 | **B12** | Configured 2026-08-11; no off-site backup has run *yet*. First 3am is unproven. |
 | — | Rejecting a proof gives the resident no reason, so they re-upload the same wrong screenshot. Now that rejection also returns the bill to `unpaid` and the late fee applies (B13), this matters more than it did. |
 | — | Deleting a proof clears R2 but keeps `image_sha256`, so duplicate detection still fires against an image nobody can see. |

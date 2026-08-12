@@ -82,7 +82,8 @@ NO-EMAIL-ON-FILE.
 ## The credential decision, 2026-08-12
 
 B10, B21 and B22 are three parts of one change, and B18 is what it leans on.
-Stated once, here:
+Stated once, here. **B21 is done and now sits under "Done"; B10 has one half
+left; B22 is not started.**
 
 **An admin who can reset a resident's password can become that resident.** The
 reset does not show them an existing password — the old one is a hash and is
@@ -112,19 +113,21 @@ recovery route and a resident without one has no way back into their account.
 Three things that will catch you out, all verified in the code rather than
 remembered:
 
-1. **"Temporary password" is not a one-time code.** `generateOneTimePassword`
-   writes an ordinary password into `owners.pw_hash` via `hashPassword`. Nothing
-   about it is single-use or time-limited today. B10 is what makes the name
-   half-true.
+1. **"Temporary password" is still not a one-time code.** `generateOneTimePassword`
+   writes an ordinary password into `owners.pw_hash` via `hashPassword`. B10 made
+   it time-limited; nothing makes it single-use, and the emails deliberately do
+   not claim otherwise. Do not let its copy converge with the reset-code email's.
 2. **Four paths mint one, not just the reset.** `resetPassword`, `postResident`,
-   `postTransfer` and `rosterImport` all call `generateOneTimePassword` and all
-   hand the result to whichever admin is looking at the screen. B21 names the
-   reset because that is the one a resident triggers, but the other three are the
-   same hole and are accounted for there.
+   `postTransfer` and `rosterImport` all call `generateOneTimePassword` and hand
+   the result to whoever is looking at the screen. B21 fixed the reset because
+   that is the one a resident triggers; all four now carry B10's expiry, and the
+   remaining three are accounted for at the end of B21.
 3. **`/forgot` cannot accept a code you did not just request.** `public/js/forgot.js`
    holds the mobile in a module variable set only after step 1 succeeds, and step
-   2 is `hidden` until then. See B21 — this is why "I already have a code" is a
-   real change and not a link.
+   2 is `hidden` until then. This shaped B21 by ruling something out: the
+   superadmin sends a temporary password rather than a code precisely so that
+   nobody ever holds a code they did not request on that page, and `/forgot` kept
+   its two-step shape unchanged.
 
 ## B10 — Expire issued temporary passwords — EXPIRY DONE 2026-08-12
 
@@ -157,25 +160,29 @@ The shape it shipped as: `pw_expires_at` on `owners`, set when one is issued,
 checked at login only while `must_change_pw = 1` so it never touches a password
 the resident chose. Thirty lines and a test, as estimated.
 
-**Two durations, decided 2026-08-12.** They differ because the two messages are
-read at different speeds:
+**The two durations as shipped: 24 hours for a reset, 72 for a roster invite.**
+`TEMP_PW_HOURS` and `INVITE_PW_HOURS` in `lib/reset.js`. They differ because the
+two messages are read at different speeds — a reset goes to somebody locked out
+and waiting who will use it within minutes, an invite goes in bulk to people who
+were not expecting it and some of whom are travelling. (An earlier draft of this
+entry said 4 hours for a reset; 24 is the decision.)
 
-* **4 hours** for a superadmin reset. Somebody is locked out and waiting; they
-  will use it within minutes, and a short window is nearly free to them and
-  expensive to anyone reading the WhatsApp thread next year.
-* **48–72 hours** for a roster invite. Sent in bulk to 99 people who were not
-  expecting it, some of whom will be travelling. Anything shorter and the
-  cutover becomes a re-send exercise. Pick one number in that range and put it
-  in a named constant — the range is the argument, not the value.
+---
 
-**The roster invite stops sending a password at all where there is an email.**
-It sends an announcement instead: you have an account, here is the address it is
-under, set your own password at `/forgot`. A bulk WhatsApp of 99 live
-credentials is the largest single exposure this system would ever create, and
-the resident has to choose a password on first login regardless — so the
-temporary one is a step that exists only to be replaced.
+### STILL TO DO — the roster invite sends an announcement, not a password
 
-This part is a **deletion**, and worth recognising as one rather than building a
+The remaining half of B10, and the one piece of the 2026-08-12 decision not yet
+built. Nothing blocks it except C1: there is no roster to import yet, so this is
+best done in the same sitting as the import rather than months before it.
+
+**Where the resident has an email, the invite stops carrying a password.** It
+says: you have an account, here is the address it is under, set your own password
+at `/forgot`. A bulk WhatsApp of 99 live credentials is the largest single
+exposure this system could create, and the resident has to choose a password on
+first login regardless — so the temporary one is a step that exists only to be
+replaced.
+
+This is a **deletion**, and worth recognising as one rather than building a
 setting: `generateOneTimePassword`, `hashPassword` and `waLink` come out of
 `rosterImport`, and the `oneTimePassword` / `whatsapp` pair comes out of the
 worklist it returns. `sendList` in `public/js/admin-roster.js` loses the WhatsApp
@@ -185,76 +192,19 @@ has been told is still the point. The `state` derivation on the worklist
 untouched, which is the useful accident: it reads `must_change_pw`, not the
 password, so it still says who has actually logged in.
 
-**Where a resident has no email, the invite keeps the temporary password** — that
-is B5's population and there is no other route to them. Which means the 48–72
-hour expiry only ever applies to those rows, and the 4-hour one only to whatever
-residual reset path B21 leaves for the same people. Build B10 before B21 anyway:
-the column and the login check are what both need, and they are correct on their
-own.
+Two things to settle when it is built:
 
-Do not promise an expiry in any message until it is enforced. The copy in
-`resetPassword` was corrected once already for exactly this — `expiresInHours: 24`
-was a decorative number nothing acted on.
+* **What the announcement is sent BY.** An email needs W1. A WhatsApp message
+  saying "go to /forgot" needs nothing and reaches the phone the roster already
+  has. The second is probably right for the cutover, and it makes this
+  independent of W1 — but it is a choice, not an obvious default, because C3
+  wants exactly one message to each resident.
+* **What happens to a row with no email**, which is the same open question B18
+  records for the mandatory column. The invite keeps the temporary password for
+  those residents — B5's population, with no other route to them — so
+  `INVITE_PW_HOURS` exists for them and only them.
 
-## B21 — Reset moves to the superadmin, and the resident recovers by email
-
-Raised and decided 2026-08-12. The reasoning is in "The credential decision"
-above; this is the work.
-
-**BLOCKED ON W1.** Not partially — there is no path here that does not send
-mail. The whole point is that recovery arrives at an address the admin does not
-control, so building it against a `sendEmail` that returns early would ship a
-reset nobody receives, and the only symptom would be residents who cannot get in.
-B22 is the half of this decision that is **not** blocked, so if W1 lingers, build
-that and leave this.
-
-**What comes out.** `resetPassword` stops being available to `admin` — the
-`canResetPassword` ladder keeps its shape and loses a rung, so an admin gets the
-same refusal an admin already gets for another admin. The temporary-password
-reply (`oneTimePassword` plus `whatsapp`) goes with it, and so does the button in
-`public/js/admin-console.js` that renders them. What the admin sees instead is a
-line telling them to send the resident to `/forgot`, which is the actual
-procedure now.
-
-**What the superadmin gets** is issuing a code, not a password: a row in
-`password_resets` and an email, the same two things `/forgot` already produces.
-This is much smaller than it sounds, because migration 0010 built that table for
-exactly this and it already has the hard parts — the code stored as a PBKDF2
-hash, `expires_at`, an `attempts` cap, `used_at` for single use, and `sent_to` for
-the trail. Reuse it. A second mechanism for "a code that lets you in" is how the
-two drift apart and one of them stops being rate-limited.
-
-**Why the superadmin needs it at all, when `/forgot` exists.** A resident whose
-stored address is wrong cannot use `/forgot` — the code goes to the old address.
-The superadmin path is for that case and for the walk-in, and it is the reason
-this is not simply "delete admin reset and point at `/forgot`".
-
-**"I already have a code" on `/forgot`.** Needed because the emailed code and the
-form that accepts it are now separated by however long it takes someone to open
-their email — possibly on another device, and the superadmin-issued case never
-touched the page at all. Today step 2 is unreachable without step 1: `forgot.js`
-keeps the mobile in a module-level variable assigned only on step 1's success and
-unhides `#finish` at the same moment. So the entry point has to **set the mobile
-too** — the code alone cannot identify the account, since `api.reset(mobile, code,
-password)` and the `ix_resets_owner` lookup are both keyed by owner. Two fields,
-not one: mobile and code.
-
-**The `#code` fragment in the email** prefills the code box. A fragment rather
-than a query string deliberately — it never reaches the server, stays out of
-logs, and out of `Referer`. It prefills only; the resident still types their
-mobile, per the paragraph above. And it must not auto-submit: a prefetching mail
-client would burn the single use before the resident read the message.
-
-Keep step 1's identical reply whichever way in you take. The page cannot say "no
-such resident" even when it is true, and a new entry point that answers
-differently would reintroduce the account-enumeration hole through the side door.
-
-**The other three minting paths** (`postResident`, `postTransfer`,
-`rosterImport`) are the same exposure and are not all fixed here. B10 handles
-`rosterImport`. `postResident` and `postTransfer` are admin-facing and low
-volume — a handful of rows a year — so they keep the temporary password with
-B10's expiry on it, and that is a deliberate stopping point rather than an
-oversight. Revisit if either becomes routine.
+---
 
 ## B22 — An admin requests a contact change, the superadmin approves it
 
@@ -626,6 +576,70 @@ separate errand: `npm run google:auth -- mail`.
 ---
 
 # Done
+
+## B21 — Reset is the superadmin's alone — DONE 2026-08-12
+
+Raised, decided and built 2026-08-12. The reasoning is in "The credential
+decision" above.
+
+**What came out.** `canResetPassword` lost its middle rungs: the ladder is now
+superadmin-only, and an admin gets a refusal that names `/forgot` and says the
+code goes to the resident's own email — because an admin reading it is standing in
+front of somebody who cannot log in, and a bare "no" just routes the problem to a
+phone call. The Reset button is gone from the admin's directory card and replaced
+by that same sentence. **Both halves matter:** the endpoint refuses an admin
+independently of the button being hidden, which was verified by calling it
+directly with an admin session.
+
+**What the superadmin gets: the password on screen, then a button that emails it.**
+Not an emailed code, which is what this entry originally proposed — a temporary
+password the resident logs in with, which is simpler and reuses the forced-change
+path that already existed (`login.js` sends `mustChangePassword` to `/password`,
+and `dashboard.js` guards it independently).
+
+**On screen FIRST, and that is not a compromise.** Showing it to the superadmin
+is not the hole this closed: the hole was ADMINS holding credentials for accounts
+that are not theirs. The superadmin can already reset any account with the
+break-glass script, so the screen tells them nothing their database access would
+not. What it buys is a flow that survives its own failures — a wrong address, a
+full mailbox, mail not configured at all — where the alternative is a resident
+locked out with a password nobody knows, since the old one is dead the moment the
+reset runs. This is also why the whole design could ship before W1.
+
+**The email endpoint takes the password back and checks it against the stored
+hash before sending.** Two consequences, both deliberate: it cannot be used to
+mail arbitrary text to a resident, and it stops working the moment the password
+stops being current — a second reset, or the resident choosing their own, makes a
+stale tab's Send button fail loudly rather than mail a password that opens
+nothing. Verified all three ways, plus the empty-string case.
+
+A failed send says so plainly and says the on-screen password is still valid. A
+screen that claims to have sent a password nobody received is how a locked-out
+resident stays locked out while everybody believes they were helped.
+
+**WhatsApp stayed** for residents with no address on file — B5's people, for whom
+it is the only route that exists. The panel offers it instead of the email button,
+and says why.
+
+**Not built, deliberately: "I already have a code" and the `#code` fragment.**
+This entry called for both. The design that shipped removes the need for them
+entirely — the superadmin sends a password rather than a code, so nobody ever
+holds a code they did not just request on that page. `/forgot` keeps its two-step
+shape untouched, and `forgot.js` did not need to change at all. Recorded because
+the reasoning for them was sound and would come back if the superadmin path ever
+becomes a code again.
+
+**The other three minting paths** (`postResident`, `postTransfer`,
+`rosterImport`) are the same exposure and are not all fixed here. B10's remaining
+half handles `rosterImport`. `postResident` and `postTransfer` are superadmin- and
+admin-facing and low volume — a handful of rows a year — so they keep the
+temporary password with B10's expiry on it, and that is a deliberate stopping
+point rather than an oversight. Revisit if either becomes routine.
+
+**Still true, and the reason W1 still matters:** a resident whose stored address
+is wrong cannot use `/forgot`, and until W1 the emailed half of this reaches
+nobody. The superadmin path works today regardless; the self-service path does
+not, and 103 of 105 accounts have no address at all.
 
 ## B16 — Notices are resident business — DONE 2026-08-09
 

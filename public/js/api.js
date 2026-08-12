@@ -122,6 +122,11 @@ export const api = {
     residents: (opts)       => request('GET',
                                `/api/admin/residents${opts?.past ? '?include=past' : ''}`),
     resetPassword: (id)     => request('POST', `/api/admin/residents/${id}/reset`),
+    // The password goes back so the server can check it is still the current one
+    // before mailing it — see emailTempPassword.
+    emailTempPassword: (id, oneTimePassword) =>
+                               request('POST', `/api/admin/residents/${id}/reset/email`,
+                                       { oneTimePassword }),
 
     // `period` here is always the USAGE month, never the month being walked.
     readings:      (period) => request('GET',  `/api/admin/readings?period=${period}`),
