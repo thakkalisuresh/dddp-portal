@@ -28,6 +28,7 @@ export const ERROR_CODES = {
   'DDP-AUTH-009': { severity: 'warn',  message: 'Reset code rejected — wrong, expired or already used' },
   'DDP-AUTH-010': { severity: 'warn',  message: 'Reset codes requested too often for one account' },
   'DDP-AUTH-011': { severity: 'error', message: 'Reset requested for an account with no email on file' },
+  'DDP-AUTH-012': { severity: 'warn',  message: 'Login refused — temporary password had expired' },
 
   // ── BILL ───────────────────────────────────────────────────────────────
   'DDP-BILL-001': { severity: 'error', message: 'Bill generation found no reading for an active flat' },

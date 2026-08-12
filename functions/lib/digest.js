@@ -100,7 +100,7 @@ export function buildDigest({ warns = [], alerts = [], window, counts = {} }) {
     lines.push('');
   }
 
-  lines.push('Full detail in god mode, or: npm run doctor');
+  lines.push('Full detail in the activity log, or: npm run doctor');
   return lines.join('\n');
 }
 

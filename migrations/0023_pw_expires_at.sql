@@ -1,0 +1,31 @@
+-- When an issued temporary password stops working.
+--
+-- Backlog B10. A temporary password is the one credential this system sends in
+-- the clear, and until now it worked forever: the message persists on both
+-- phones for years, gets forwarded, and survives a handset changing hands. The
+-- reset copy once claimed "expires in 24 hours" while nothing enforced it, so
+-- the promise was withdrawn rather than kept. This is the column that lets it
+-- be made again.
+--
+-- WHY IT IS ONLY EVER CHECKED WHILE must_change_pw = 1. This must never expire
+-- a password the resident chose for themselves. `must_change_pw` is the flag
+-- that says "this credential was handed to you, not picked by you", so it is
+-- the gate on the whole check — and it is cleared by `changePassword` and by
+-- onboarding, which is what makes an expiry impossible to strand somebody with.
+-- A column read outside that gate would eventually lock out a resident whose
+-- own password happened to predate the timestamp.
+--
+-- WHY NULL MEANS "NEVER EXPIRES" rather than "expired long ago". Every row that
+-- exists today has a NULL here, including the four committee accounts and the
+-- ~100 demo residents, and some of those genuinely are sitting on a temporary
+-- password issued weeks ago. Treating NULL as expired would lock all of them
+-- out on deploy. The old behaviour is the default and expiry starts applying to
+-- passwords issued from here on.
+--
+-- WHY A TIMESTAMP AND NOT AN AGE IN HOURS. The two durations differ by issuer —
+-- a superadmin reset is read within minutes by somebody locked out and waiting,
+-- a roster invite goes to 99 people who were not expecting it — and storing the
+-- deadline rather than the interval means the decision is made once, where the
+-- password is issued, instead of being re-derived at every login by code that
+-- would have to know which path minted it.
+ALTER TABLE owners ADD COLUMN pw_expires_at TEXT;

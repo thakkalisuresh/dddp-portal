@@ -15,7 +15,7 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
-import { $, el, esc, renderGodBanner, showError, setChildren } from './ui.js';
+import { $, el, esc, renderViewBanner, showError, setChildren } from './ui.js';
 import { money, periodLabel } from './i18n.js';
 
 const main = $('#main');
@@ -33,7 +33,7 @@ async function init() {
       return;
     }
     $('#who').innerHTML = `Edit anything <span>· ${esc(me.name)}</span>`;
-    renderGodBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
+    renderViewBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
     renderNav(me, '/god');
     await load();
   } catch (err) {

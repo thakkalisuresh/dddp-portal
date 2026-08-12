@@ -9,7 +9,7 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
-import { $, el, esc, renderGodBanner, showError, withReveal } from './ui.js';
+import { $, el, esc, renderViewBanner, showError, withReveal } from './ui.js';
 
 const main = $('#main');
 
@@ -20,7 +20,7 @@ async function init() {
   try {
     const me = await api.me();
     $('#who').innerHTML = `Flat ${esc(me.flat)} <span>· ${esc(me.name)}</span>`;
-    renderGodBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
+    renderViewBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
     renderNav(me, '/profile');
     render(me);
   } catch (err) {

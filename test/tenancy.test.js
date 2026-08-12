@@ -121,18 +121,35 @@ describe('canResetPassword', () => {
   const otherAdmin = { id: 3, role: 'admin' };
   const resident   = { id: 4, role: 'owner' };
 
-  it('lets an admin reset a resident — the ordinary case', () => {
-    expect(canResetPassword({ actor: admin, target: resident }).ok).toBe(true);
-  });
-
-  it('lets the superadmin reset a resident', () => {
+  it('lets the superadmin reset a resident — now the ONLY case', () => {
     expect(canResetPassword({ actor: superadmin, target: resident }).ok).toBe(true);
   });
 
+  it('REFUSES AN ADMIN RESETTING AN ORDINARY RESIDENT', () => {
+    // The change of 2026-08-12, and the one this whole ladder now exists for.
+    // A reset mints a working credential and hands it to whoever asked, so an
+    // admin who can reset 7B can log in AS 7B — must_change_pw included, since
+    // they can simply change it first. This used to be allowed.
+    const v = canResetPassword({ actor: admin, target: resident });
+    expect(v.ok).toBe(false);
+    // Named, not "the superadmin": a role name out of the database is not what
+    // anybody in the building calls him. See ADMINISTRATOR.
+    expect(v.message).toMatch(/only Sabarish/i);
+  });
+
+  it('sends the admin somewhere useful rather than just refusing', () => {
+    // An admin reading this is standing in front of a resident who cannot log
+    // in. A bare "no" makes them phone the superadmin; naming /forgot is what
+    // makes the new arrangement work without one.
+    const v = canResetPassword({ actor: admin, target: resident });
+    expect(v.message).toMatch(/forgotten your password/i);
+    expect(v.message).toMatch(/their own email/i);
+  });
+
   it('REFUSES an admin resetting the superadmin', () => {
-    // The hole. Any admin could reset this account, be handed the temporary
-    // password, and log in with god mode — so the single-superadmin rule
-    // stopped the role being granted while leaving it takeable.
+    // The original hole. Any admin could reset this account, be handed the
+    // temporary password, and log in with god mode — so the single-superadmin
+    // rule stopped the role being granted while leaving it takeable.
     const v = canResetPassword({ actor: admin, target: superadmin });
     expect(v.ok).toBe(false);
     expect(v.message).toMatch(/break-glass/i);
@@ -147,7 +164,7 @@ describe('canResetPassword', () => {
   it('refuses one admin resetting another', () => {
     const v = canResetPassword({ actor: admin, target: otherAdmin });
     expect(v.ok).toBe(false);
-    expect(v.message).toMatch(/only the superadmin/i);
+    expect(v.message).toMatch(/only Sabarish/i);
   });
 
   it('lets the superadmin reset an admin', () => {
@@ -156,6 +173,16 @@ describe('canResetPassword', () => {
 
   it('refuses a resident resetting anyone', () => {
     expect(canResetPassword({ actor: resident, target: resident }).ok).toBe(false);
+  });
+
+  it('leaves no role other than superadmin able to reset anybody', () => {
+    // Enumerated rather than spot-checked: the failure this guards against is a
+    // role added later that quietly satisfies whatever the check happens to be.
+    for (const role of ['owner', 'tenant', 'admin', 'treasurer', '', null, undefined]) {
+      for (const t of [resident, admin]) {
+        expect(canResetPassword({ actor: { id: 9, role }, target: t }).ok, `${role}`).toBe(false);
+      }
+    }
   });
 });
 
@@ -177,7 +204,7 @@ describe('canEditResident', () => {
     // they were refused, arrived at sideways.
     const v = canEditResident({ actor: admin, target: superadmin });
     expect(v.ok).toBe(false);
-    expect(v.message).toMatch(/only the superadmin/i);
+    expect(v.message).toMatch(/only Sabarish/i);
   });
 
   it('refuses one admin editing another', () => {

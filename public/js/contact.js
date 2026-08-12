@@ -17,6 +17,18 @@ export const TREASURER = {
   phone: '+91 98464 66511',
 };
 
+/**
+ * The one person with full control, by name, for anything shown on screen.
+ * "The superadmin" is a database role name; nobody in the building says it, and a
+ * message using it makes the reader go and work out who is meant.
+ *
+ * The server's copy is `ADMINISTRATOR` in `functions/lib/tenancy.js`, for the
+ * messages it generates. Deliberately two definitions, like TREASURER and the
+ * committee list — and both go stale together if god mode ever hands the role to
+ * somebody else, which is the one thing to remember about them.
+ */
+export const ADMINISTRATOR = { name: 'Sabarish' };
+
 /** 'Mukesh (Treasurer) — +91 98464 66511' */
 export function treasurerLine() {
   return `${TREASURER.name} (${TREASURER.role}), ${TREASURER.phone}`;

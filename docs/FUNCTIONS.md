@@ -149,6 +149,20 @@ Click capture — off by default, expires on its own.
 | fn | `sanitiseClick` | Reduce a click to element identity plus visible label. |
 | fn | `validateBatch` |  |
 
+### `functions/lib/contact-requests.js`
+
+An admin asks for a resident's mobile or email to be changed; the superadmin approves, and approving applies it.
+
+| | Export | What it does |
+|---|---|---|
+| const | `MAX_REASON` |  |
+| const | `STATES` |  |
+| fn | `validateRequest` | Check a request at the moment it is RAISED, not only when it is approved. |
+| fn | `requestState` | Is this request still open, and may it be decided? A reason rather than a boolean, so an already-decided request can say which way it went. |
+| fn | `decisionFailure` |  |
+| fn | `isStillAChange` | Would this request still be a change if approved now? Approval can land days after the request, by which time the resident may have corrected it themselves through their profile. |
+| fn | `requestNotification` | The Telegram nudge. |
+
 ### `functions/lib/cron.js`
 
 Scheduled work: late fees, and the nudge for bills stuck claiming payment.
@@ -407,9 +421,15 @@ Self-service password reset by emailed code.
 | fn | `canIssue` | May this account be sent another code? Counts recent issues rather than recent failures: the thing being limited is mail to a resident's inbox, which an attacker who knows a mobile number could otherwise trigger endlessly. |
 | fn | `resetState` | Is this reset row still usable? Returns a reason rather than a boolean so the caller can say something true without saying something useful to an attacker. |
 | fn | `failureMessage` | What to tell someone whose code did not work. |
+| const | `TEMP_PW_HOURS` | How long an issued temporary password lasts, by who issued it and why. |
+| const | `INVITE_PW_HOURS` |  |
+| fn | `tempPasswordExpiry` |  |
+| fn | `tempPasswordState` | Has this account's temporary password run out? Two guards, and both are the point rather than defensiveness: `must_change_pw` gates the whole check, so this can never expire a password the resident chose. |
+| fn | `expiredPasswordMessage` | What an expired temporary password says. |
 | const | `MIN_PASSWORD` |  |
 | fn | `validateNewPassword` |  |
 | fn | `resetEmail` | The email a resident receives. |
+| fn | `tempPasswordEmail` | The email carrying a temporary password the superadmin has just issued. |
 | fn | `neutralReply` | The reply to "I forgot my password". |
 
 ### `functions/lib/roster.js`
@@ -481,8 +501,11 @@ Ownership changes: a flat is sold, or the builder hands one to a new buyer.
 | fn | `transferFlat` | Hand a flat over. |
 | fn | `toIST` |  |
 | fn | `mergeTimeline` | One timeline from three tables. |
+| const | `ADMINISTRATOR` | Who the one person with full control IS, by name, for anything a resident or an admin reads. |
 | fn | `canResetPassword` | Who may reset whose password. |
-| fn | `canEditResident` | Who may edit somebody's contact details — the same ladder as canResetPassword, and for the same reason. |
+| fn | `canEditResident` | Who may edit somebody's row at all — the same ladder as canResetPassword. |
+| const | `REQUESTABLE_FIELDS` | The two columns an admin may no longer write directly (B22). |
+| fn | `canEditField` | May this actor write THIS column on this person's row? `canEditResident` says whether the row is theirs to touch. |
 | fn | `waLink` | A wa.me link needs bare digits with the country code and no '+'. |
 | const | `RELATIONSHIPS` |  |
 | fn | `isRelationship` |  |
@@ -559,6 +582,7 @@ Who a resident contacts when something is wrong.
 | | Export | What it does |
 |---|---|---|
 | const | `TREASURER` | Who a resident contacts when something is wrong. |
+| const | `ADMINISTRATOR` | The one person with full control, by name, for anything shown on screen. |
 | fn | `treasurerLine` |  |
 | fn | `dialable` |  |
 
@@ -643,7 +667,7 @@ Small render helpers shared by every screen.
 | fn | `el` |  |
 | fn | `setChildren` | Like node.replaceChildren, but drops null and undefined. |
 | fn | `statusChip` |  |
-| fn | `renderGodBanner` | The god-mode banner. |
+| fn | `renderViewBanner` | The viewing-as banner. |
 | fn | `billBreakdown` |  |
 | fn | `showError` |  |
 | fn | `withReveal` | A show/hide control for a password field. |
@@ -679,4 +703,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-357 exports. 202 have no doc comment.
+374 exports. 207 have no doc comment.

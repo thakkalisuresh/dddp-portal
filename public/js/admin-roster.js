@@ -14,7 +14,7 @@
 
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
-import { $, el, esc, renderGodBanner, showError, setChildren } from './ui.js';
+import { $, el, esc, renderViewBanner, showError, setChildren } from './ui.js';
 import { trackPage, trackAction } from './track.js';
 
 const main = $('#main');
@@ -35,7 +35,7 @@ async function init() {
       return;
     }
     $('#who').innerHTML = `Roster <span>· ${esc(me.name)}</span>`;
-    renderGodBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
+    renderViewBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
     // This page was the only one that never called it, so it had neither the
     // bottom bar nor a way back until it grew its own link in the header.
     renderNav(me, '/admin/roster');
