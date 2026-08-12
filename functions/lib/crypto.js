@@ -4,25 +4,39 @@
  * Chosen over bcrypt/argon2 because those need WASM and fight the free tier's
  * 10 ms CPU ceiling.
  *
- * ON THE ITERATION COUNT (was the open NOTE from plan §4b). 100000 is below
- * OWASP's current PBKDF2-SHA256 guidance of 600000, and raising it is the
- * single biggest improvement available to stored credentials here — it is
- * worth more against a leaked database than any composition rule.
+ * ON THE ITERATION COUNT — SETTLED 2026-08-12, DO NOT REOPEN WITHOUT READING.
  *
- * What blocked it was never the number, it was that the number was global:
- * a hash only verifies at the count that produced it, so changing this
- * constant invalidated every stored hash at once. Migration 0025 moved the
- * count onto the row, and login re-hashes at the current target, so the
- * building now migrates itself one login at a time. Raising it is a change to
- * the PBKDF2_ITERATIONS binding and nothing else.
+ * 100000 is below OWASP's PBKDF2-SHA256 guidance of 600000, and it cannot be
+ * raised. Cloudflare's runtime refuses any value above 100000:
  *
- * What is still needed before raising it is a MEASUREMENT, and it has to be
- * taken on deployed Cloudflare rather than a laptop — the edge CPU is slower
- * and the free tier's ceiling is the constraint the whole project is built
- * around (see docs/COSTS.md). One derive costs ~7 ms on an M-series Mac at
- * 100000 and scales linearly: ~20 ms at 300000. Watch the CPU time on a real
- * login with `wrangler tail` before moving it, and remember that login,
- * onboarding and every reset pay this cost once per request.
+ *   NotSupportedError: Pbkdf2 failed: iteration counts above 100000 are not
+ *   supported (requested 200000).
+ *
+ * That is the whole answer to the old `NOTE (plan §4b)`, which asked for a
+ * measurement against the CPU budget. The measurement was taken and says there
+ * is room: one derive costs ~27 ms on the edge (~7 ms on an M-series Mac, so
+ * the edge is ~3.8x slower), and a 32 ms login returns outcome "ok" — three
+ * times the 10 ms figure this comment used to worry about. The budget was
+ * never the binding constraint. The platform is, and no amount of CPU headroom
+ * buys a way around it.
+ *
+ * TWO THINGS THAT MADE THIS EXPENSIVE TO LEARN, both worth remembering:
+ *
+ *   `wrangler dev --local` does not enforce the cap. A probe accepted 600000
+ *   without complaint. The failure appears for the first time on a deployed
+ *   URL, so a green suite and a clean local run prove nothing about it.
+ *
+ *   The failure mode is total: every login 500s, including the superadmin's.
+ *   What made it a ten-minute rollback instead of a lockout was migration
+ *   0025 — hashes carry their own count, so nothing written at 100000 was ever
+ *   in danger. That migration keeps earning its place even though the raise it
+ *   was built for turned out to be impossible; it is also what would make a
+ *   future move to a different KDF survivable.
+ *
+ * If stronger hashing is genuinely wanted, the lever is scrypt or argon2 via
+ * WASM — rejected at the top of this file for reasons that still hold, but
+ * rejected on ITS merits, not by conflating it with an iteration count nobody
+ * can change. test/deploy-config.test.js fails on any value above 100000.
  */
 
 export const DEFAULT_ITERATIONS = 100_000;

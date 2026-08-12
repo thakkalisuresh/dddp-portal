@@ -67,13 +67,22 @@ describe('the iteration count itself', () => {
     expect(iterations).toBeGreaterThanOrEqual(100_000);
   });
 
-  it('stays inside what the edge was measured to afford', () => {
-    // One derive measured ~27 ms of CPU on deployed Cloudflare at 100000, and
-    // PBKDF2 is linear. 600000 would be ~162 ms on a request that also does
-    // six D1 round trips. OWASP asks for 600000; this building has not shown
-    // it can pay for that, and the honest ceiling is the one that was measured
-    // rather than the one that was recommended. Raise this line WITH a fresh
-    // `wrangler tail` reading, not ahead of one.
-    expect(iterations).toBeLessThanOrEqual(300_000);
+  it('never exceeds 100000, which is the PLATFORM cap and not a preference', () => {
+    // This assertion exists because the bound it replaces was wrong and shipped.
+    // It was set to 300000 on the theory that CPU was the constraint; 200000
+    // then took production login down with a 500 on every attempt:
+    //
+    //   NotSupportedError: Pbkdf2 failed: iteration counts above 100000 are
+    //   not supported (requested 200000).
+    //
+    // Cloudflare refuses it outright, so there is nothing to tune. The CPU
+    // headroom is real — a 32 ms login returns "ok" — and irrelevant.
+    //
+    // THE TEST IS THE ONLY GUARD THERE IS. `wrangler dev --local` accepts
+    // 600000 without complaint, so neither a local run nor a green suite would
+    // catch a raise; the failure appears for the first time on a deployed URL,
+    // in front of residents. Do not relax this without evidence from a real
+    // deployment that the cap has moved.
+    expect(iterations).toBeLessThanOrEqual(100_000);
   });
 });
