@@ -288,7 +288,7 @@ God edits — the superadmin changing anything.
 | const | `BILL_COMPONENTS` | Money fields. |
 | const | `BILL_FIELDS` |  |
 | const | `BILL_STATUSES` |  |
-| fn | `reasonRequired` |  |
+| fn | `reasonRequired` | Acts that need a reason on the record. |
 | const | `MAX_REASON` |  |
 | fn | `normaliseMobile` | Mobile numbers are the login identity, and several owners live abroad, so a bare 10-digit Indian assumption is wrong. |
 | fn | `normaliseEmail` | An address, or null if it is not one. |
@@ -714,4 +714,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-378 exports. 205 have no doc comment.
+378 exports. 204 have no doc comment.

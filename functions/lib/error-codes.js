@@ -104,7 +104,7 @@ export const ERROR_CODES = {
                      message: 'Flat limit reached — the retired paise column capped the table at 99 (retired)' },
   'DDP-ADMIN-009': { severity: 'warn',  message: 'Mobile number is not a valid E.164 number' },
   'DDP-ADMIN-010': { severity: 'warn',  message: 'God edit rejected — field or value not allowed' },
-  'DDP-ADMIN-011': { severity: 'warn',  message: 'God edit to money rejected — no reason given' },
+  'DDP-ADMIN-011': { severity: 'warn',  message: 'Change needing a reason rejected — no reason given' },
   'DDP-ADMIN-012': { severity: 'error', message: 'God edit would lock the superadmin out of their own account' },
   'DDP-ADMIN-013': { severity: 'warn',  message: 'God edit rejected — mobile or email already belongs to someone else' },
   'DDP-ADMIN-014': { severity: 'error', message: 'Password reset attempted against an equal or higher role' },

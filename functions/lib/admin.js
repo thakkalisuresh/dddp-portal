@@ -36,19 +36,33 @@ export function readMonthFor(period) {
 export async function readingGrid(env, period) {
   const prev = previousPeriod(period);
 
-  const [periodRow, rows] = await Promise.all([
+  const [periodRow, rows, excludedRows] = await Promise.all([
     env.DB.prepare('SELECT * FROM periods WHERE period = ?').bind(period).first(),
     env.DB.prepare(
       `SELECT f.flat, f.floor,
               cur.reading  AS reading,
               cur.read_on  AS read_on,
-              prv.reading  AS previous
+              prv.reading  AS previous,
+              o.name       AS resident
          FROM flats f
          LEFT JOIN readings cur ON cur.flat = f.flat AND cur.period = ?
          LEFT JOIN readings prv ON prv.flat = f.flat AND prv.period = ?
+         LEFT JOIN owners  o   ON o.flat = f.flat AND o.active = 1
         WHERE f.active = 1
+        GROUP BY f.flat
         ORDER BY f.floor, f.flat`
     ).bind(period, prev).all(),
+    // Excluded flats come back too, or they become invisible: the grid filters
+    // them out, so without this list there is no screen anywhere that admits
+    // they exist, and no way to put one back.
+    env.DB.prepare(
+      `SELECT f.flat, f.floor, o.name AS resident
+         FROM flats f
+         LEFT JOIN owners o ON o.flat = f.flat AND o.active = 1
+        WHERE f.active = 0
+        GROUP BY f.flat
+        ORDER BY f.floor, f.flat`
+    ).all(),
   ]);
 
   const factor = periodRow?.conversion_factor ?? DEFAULT_CONVERSION;
@@ -78,8 +92,13 @@ export async function readingGrid(env, period) {
     lateFee: periodRow?.late_fee ?? 0,
     status: periodRow?.status ?? null,
     entered: flats.filter((f) => f.reading != null).length,
+    // `total` is what generation compares against (expectedFlats), so excluding
+    // a flat lowers the bar as well as hiding the row. That is the whole point:
+    // "every flat or nothing" becomes "every flat still being billed, or
+    // nothing", and a month with unsold flats in it can close.
     total: flats.length,
     flats,
+    excluded: excludedRows.results ?? [],
   };
 }
 

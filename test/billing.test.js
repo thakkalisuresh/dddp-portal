@@ -83,6 +83,46 @@ describe('late fees', () => {
     expect(isWholeRupees(0.1 + 0.2)).toBe(false);
     expect(isWholeRupees(NaN)).toBe(false);
   });
+
+  /**
+   * A flat that consumed nothing owes nothing, and cannot be late paying it.
+   *
+   * This charged before: an unpaid zero-total bill passed every guard and came
+   * back `charge`, so applyLateFee(0, 50) made it ₹50. The people it would have
+   * hit are exactly the ones who cannot argue — an empty flat between tenants,
+   * an owner abroad for the month — and nobody would have been watching those
+   * flats to notice.
+   */
+  describe('a bill for nothing', () => {
+    const overdue = { today: '2026-09-20', dueDate: '2026-09-10' };
+
+    it('is not charged a late fee', () => {
+      const d = lateFeeDecision({ status: 'unpaid', total: 0, late_fee_at: null }, overdue);
+      expect(d).toEqual({ action: 'skip', reason: 'nothing-owed' });
+    });
+
+    it('is skipped for the right reason, not merely skipped', () => {
+      // 'settled' or 'not-yet-due' would also stop the charge, and would both
+      // be lies the digest goes on to report.
+      const d = lateFeeDecision({ status: 'unpaid', total: 0, late_fee_at: null }, overdue);
+      expect(d.reason).toBe('nothing-owed');
+    });
+
+    it('still charges a bill that owes even one rupee', () => {
+      const d = lateFeeDecision({ status: 'unpaid', total: 1, late_fee_at: null }, overdue);
+      expect(d.action).toBe('charge');
+    });
+
+    it('treats a missing or unreadable total as nothing owed, not as overdue', () => {
+      // A column left out of the cron's SELECT arrives undefined. That is the
+      // B13 trap, and the safe direction here is to skip rather than to invent
+      // a debt. (b.total IS in that SELECT — this guards the day it is not.)
+      for (const total of [undefined, null, NaN]) {
+        expect(lateFeeDecision({ status: 'unpaid', total, late_fee_at: null }, overdue).action)
+          .toBe('skip');
+      }
+    });
+  });
 });
 
 describe('consumption — the meter counts volume, the bill charges mass', () => {
