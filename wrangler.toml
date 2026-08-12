@@ -29,7 +29,17 @@ bucket_name = "dddp-proofs"
 [vars]
 UPI_VPA = "qr.ddwelfare@sib"
 UPI_PAYEE = "DD Diamond Park RWA"
-PBKDF2_ITERATIONS = "100000"
+# MUST match pages/wrangler.toml. The two deployments share one database, so a
+# disagreement here means each one re-hashes what the other just wrote, and
+# every login pays for two derives forever. Change both or neither.
+#
+# Raised 100000 -> 200000 on 2026-08-12, measured rather than guessed: a real
+# login cost 32 ms CPU against a 5 ms non-crypto baseline, so one derive is
+# ~27 ms on the edge and this makes it ~54. Safe to move because migration 0025
+# put the count on the row — old hashes keep verifying at 100000 and are
+# re-hashed on next login. Nobody has to do anything, and anybody who never
+# logs in stays working at the old cost.
+PBKDF2_ITERATIONS = "200000"
 
 # Secrets (wrangler secret put): TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
 # GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN, MAIL_FROM,
