@@ -7,7 +7,9 @@
  */
 
 import { buildUpiLinks, payTargetFor, manualPayment } from './upi.js';
-import { computeConsumption, DEFAULT_CONVERSION } from './billing.js';
+import { computeConsumption, meterDeltaAcrossChange, DEFAULT_CONVERSION } from './billing.js';
+import { applyLateFeeToBill } from './cron.js';
+import { istToday } from './time.js';
 import { billAccess, occupantOf, describeRelationship } from './tenancy.js';
 import { unreadNoticeCount } from './notices.js';
 
@@ -19,12 +21,15 @@ const BILL_HISTORY = 12;
  * "overdue" and "the CTA must disappear once settled", both of which are
  * decisions rather than data.
  */
-export function shapeBill(bill, period, today = new Date().toISOString().slice(0, 10)) {
+export function shapeBill(bill, period, today = istToday()) {
   if (!bill) return null;
 
   const settled = bill.status === 'paid' || bill.status === 'waived';
   const claimed = bill.status === 'initiated' || bill.status === 'awaiting';
-  const pastDue = !settled && period?.due_date != null && today > period.due_date;
+  // `>=`, because the fee lands at 00:00 IST ON the due date. A bill that is
+  // being charged today must not still read "due today" while the resident is
+  // looking at a total that already includes the fee.
+  const pastDue = !settled && period?.due_date != null && today >= period.due_date;
 
   return {
     id: bill.id,
@@ -96,8 +101,23 @@ export async function dashboardPayload(env, subject, userAgent = '', origin = ''
         ORDER BY b.period DESC LIMIT 1`
     ).bind(flat, billsOf).first(),
 
+    // meter_changes is joined in because without it the number simply DROPS —
+    // 19.145 one month, 0.412 the next — and the resident's only reasonable
+    // conclusion is that the portal is broken. The row says what happened.
+    // meter_changes is joined in because without it the number simply DROPS —
+    // 19.145 one month, 0.412 the next — and the resident's only reasonable
+    // conclusion is that the portal is broken. The row says what happened, and
+    // the figures are here because the month's consumption cannot be computed
+    // without them: subtracting the raw readings across a swap is negative, and
+    // computeConsumption would throw on the resident's own dashboard.
     env.DB.prepare(
-      `SELECT period, reading, read_on FROM readings WHERE flat = ? ORDER BY period DESC LIMIT ?`
+      `SELECT r.period, r.reading, r.read_on,
+              mc.changed_on AS meter_changed_on,
+              mc.old_final  AS meter_old_final,
+              mc.new_start  AS meter_new_start
+         FROM readings r
+         LEFT JOIN meter_changes mc ON mc.flat = r.flat AND mc.period = r.period
+        WHERE r.flat = ? ORDER BY r.period DESC LIMIT ?`
     ).bind(flat, READING_HISTORY).all(),
 
     env.DB.prepare(
@@ -110,6 +130,21 @@ export async function dashboardPayload(env, subject, userAgent = '', origin = ''
   const period = billRow
     ? { due_date: billRow.due_date, late_fee: billRow.period_late_fee, status: billRow.period_status }
     : null;
+
+  // The fee is charged the moment it is due, not when the nightly job wakes up.
+  // Doing it here — on the read, before the QR below is built — is what stops a
+  // resident opening the portal at 00:05 and being handed a pre-fee amount to
+  // pay. The write is guarded and idempotent, so this is safe on a GET and safe
+  // against the cron running at the same instant.
+  if (billRow && !billRow.late_fee_at) {
+    const charged = await applyLateFeeToBill(env, billRow.id);
+    if (charged.applied) {
+      billRow.late_fee = charged.lateFee;
+      billRow.total = charged.total;
+      billRow.late_fee_at = charged.lateFeeAt;
+    }
+  }
+
   const bill = shapeBill(billRow, period);
 
   // The QR and the button are built from the same URI, so a late fee changes
@@ -192,12 +227,37 @@ export async function dashboardPayload(env, subject, userAgent = '', origin = ''
 export function withConsumption(rows, conversionFactor = DEFAULT_CONVERSION) {
   return rows.map((row, i) => {
     const prev = rows[i + 1];
+    const change = row.meter_old_final == null ? null : {
+      old_final: row.meter_old_final,
+      new_start: row.meter_new_start ?? 0,
+    };
+
+    // Guarded rather than trusted. This runs on the RESIDENT's dashboard, and
+    // an inconsistent changeover row would otherwise throw here and take the
+    // whole page down — the bill, the QR, everything — for a data problem that
+    // belongs to the committee. Their month shows a dash instead.
+    let consumption = null;
+    let meterDelta = null;
+    if (prev) {
+      try {
+        consumption = computeConsumption(row.reading, prev.reading, conversionFactor, change);
+        meterDelta = change
+          ? meterDeltaAcrossChange(row.reading, prev.reading, change)
+          : Math.round((row.reading - prev.reading) * 1000) / 1000;
+      } catch {
+        consumption = null;
+        meterDelta = null;
+      }
+    }
+
     return {
       period: row.period,          // usage month — what the bill is labelled
       readOn: row.read_on ?? null, // when the meter was read, a month later
       reading: row.reading,
-      meterDelta: prev ? Math.round((row.reading - prev.reading) * 1000) / 1000 : null,
-      consumption: prev ? computeConsumption(row.reading, prev.reading, conversionFactor) : null,
+      // The resident's explanation for a number that just went down.
+      meterChangedOn: row.meter_changed_on ?? null,
+      meterDelta,
+      consumption,
     };
   });
 }

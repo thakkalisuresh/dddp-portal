@@ -23,8 +23,6 @@ Admin billing: the reading grid, and generation.
 | fn | `previousPeriod` |  |
 | fn | `readMonthFor` |  |
 | fn | `readingGrid` | Every active flat, with last month's reading and this month's if entered. |
-| const | `JUMP_MULTIPLE` |  |
-| fn | `jumpWarning` |  |
 | fn | `generateBills` | Generation. |
 | fn | `openPeriod` | Open a period. |
 | fn | `planRateChange` | What changing a month's rate would do to the bills already in it. |
@@ -39,8 +37,6 @@ Portal analytics — who is actually using this thing.
 
 | | Export | What it does |
 |---|---|---|
-| fn | `istDay` |  |
-| fn | `istHour` |  |
 | fn | `dayRange` | The last `days` IST days, oldest first, ending with today. |
 | fn | `windowStart` | The UTC instant at which the window starts — midnight IST on its first day. |
 | fn | `mergeDaily` | One row per day in the window, whether or not anything happened on it. |
@@ -54,6 +50,20 @@ Portal analytics — who is actually using this thing.
 | fn | `summarise` | Window totals, plus the comparison that makes them mean anything. |
 | fn | `reachOf` | Rollout reach — the number the committee actually asks for. |
 | fn | `topList` |  |
+
+### `functions/lib/approvals.js`
+
+Who may approve a bill edit, and how many of them it takes.
+
+| | Export | What it does |
+|---|---|---|
+| const | `SUBSTITUTE_AFTER_HOURS` |  |
+| const | `REQUEST_TTL_DAYS` |  |
+| fn | `approvalPolicy` | @param admins [{ id, role, flat }] — active admins AND the superadmin @param requesterId who raised the edit @param billFlat the flat the bill belongs to |
+| fn | `canApprove` | May this person approve this request, right now? `substitute` is not a second class of approval — it is the same decision, recorded as having been made by the superadmin in place of an admin who did not answer, so it can be read back as exactly that. |
+| fn | `isSatisfied` |  |
+| fn | `expiresAt` |  |
+| fn | `needsApproval` | Does this edit need approval at all? Bill totals are whole rupees — the paise tag was retired and `toWholeRupees` ceilings every total — so the smallest move any edit can make is ₹1. |
 
 ### `functions/lib/attachments.js`
 
@@ -127,6 +137,7 @@ Pure billing arithmetic.
 | fn | `isWholeRupees` |  |
 | const | `DEFAULT_CONVERSION` | DEFAULT_CONVERSION is derived, not guessed. |
 | fn | `meterDelta` |  |
+| fn | `meterDeltaAcrossChange` | The meter movement across a month in which the meter itself was replaced. |
 | fn | `computeConsumption` |  |
 | fn | `computeBill` |  |
 | fn | `applyLateFee` | Add a late fee to an existing total, then round up as usual. |
@@ -135,7 +146,10 @@ Pure billing arithmetic.
 | fn | `rateSanity` |  |
 | fn | `deriveRate` | Many RWAs do not get a published per-kg tariff — they get one bulk invoice and divide it across the sub-metered flats, which is why the effective rate moves every month even when the supplier's tariff hasn't. |
 | fn | `meterReconciliation` | Sub-meters never sum to the bulk meter — there are line losses and unmetered common usage. |
-| fn | `previewGeneration` | What a month's import will actually bill, computed BEFORE anything is written. |
+| const | `JUMP_MULTIPLE` |  |
+| fn | `jumpWarning` |  |
+| fn | `dropWarning` | The mirror of jumpWarning: a reading that is wrong DOWNWARD. |
+| fn | `previewGeneration` |  |
 | fn | `isExempt` | Is this resident exempt on this date? Inclusive of the end date: "exempt until 30 November" means the 30th is still covered, which is how anyone reads it. |
 | const | `CLAIM_HOLD_DAYS` | How long a claim of payment holds off the late fee. |
 | fn | `lateFeeDecision` | Which bills the nightly cron should charge. |
@@ -193,7 +207,11 @@ Scheduled work: late fees, and the nudge for bills stuck claiming payment.
 |---|---|---|
 | fn | `planLateFees` | Decide what to do with a month's bills. |
 | fn | `applyLateFees` |  |
+| fn | `applyLateFeeToBill` | Apply the fee to ONE bill, right now, if it is due one. |
 | fn | `staleIntents` | Bills where the resident tapped Pay and sent nothing. |
+| const | `LATE_FEE_CRON` | 00:00 IST. |
+| fn | `isLateFeeCron` |  |
+| fn | `runLateFees` | The midnight run: fees, and nothing else. |
 | fn | `runScheduled` |  |
 | fn | `sendDigest` |  |
 
@@ -537,6 +555,17 @@ Ownership changes: a flat is sold, or the builder hands one to a new buyer.
 | fn | `describeRelationship` |  |
 | fn | `planDeparture` | A tenant is leaving. |
 
+### `functions/lib/time.js`
+
+The building's clock.
+
+| | Export | What it does |
+|---|---|---|
+| const | `IST_OFFSET_MS` | The building's clock. |
+| fn | `istDay` |  |
+| fn | `istHour` |  |
+| fn | `istToday` | Today, in Kerala. |
+
 ### `functions/lib/upi.js`
 
 UPI deep links.
@@ -744,4 +773,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-394 exports. 209 have no doc comment.
+409 exports. 215 have no doc comment.

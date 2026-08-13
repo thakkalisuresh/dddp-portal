@@ -247,6 +247,16 @@ export const api = {
                    request('PATCH', `/api/god/owner/${id}`, { field, value, reason }),
     editBill:    (id, field, value, reason) =>
                    request('PATCH', `/api/god/bill/${id}`, { field, value, reason }),
+    // Deliberately NOT under god: the superadmin who raised an edit must not be
+    // able to approve it, so approving lives with the admins.
+    billEdits:   ()   => request('GET',  '/api/admin/bill-edits'),
+    approveEdit: (id) => request('POST', `/api/admin/bill-edits/${id}/approve`),
+    rejectEdit:  (id) => request('POST', `/api/admin/bill-edits/${id}/reject`),
+    /** A replaced meter. Backdated on purpose — the swap is reported late. */
+    meterChanges:  (period)  => request('GET', `/api/god/meter-changes?period=${encodeURIComponent(period)}`),
+    setMeterChange: (body)   => request('POST', '/api/god/meter-change', body),
+    clearMeterChange: (flat, period) =>
+                   request('DELETE', '/api/god/meter-change', { flat, period }),
   },
 };
 

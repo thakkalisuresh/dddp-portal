@@ -6,7 +6,7 @@
  */
 
 import {
-  computeBill, computeConsumption, previewGeneration,
+  computeBill, computeConsumption, previewGeneration, meterDeltaAcrossChange,
   assertRateSetForPeriod, rateSanity, DEFAULT_CONVERSION,
 } from './billing.js';
 import { fail } from './errors.js';
@@ -39,19 +39,29 @@ export async function readingGrid(env, period) {
   const [periodRow, rows, excludedRows] = await Promise.all([
     env.DB.prepare('SELECT * FROM periods WHERE period = ?').bind(period).first(),
     env.DB.prepare(
+      // mc is joined here rather than fetched separately because every consumer
+      // of this grid — the screen, the preview and generation — has to agree
+      // about which flats had their meter swapped this month. A second query
+      // somewhere else is how the grid shows one number and the bill says
+      // another.
       `SELECT f.flat, f.floor,
               cur.reading  AS reading,
               cur.read_on  AS read_on,
               prv.reading  AS previous,
-              o.name       AS resident
+              o.name       AS resident,
+              mc.old_final AS mc_old_final,
+              mc.new_start AS mc_new_start,
+              mc.changed_on AS mc_changed_on,
+              mc.note      AS mc_note
          FROM flats f
          LEFT JOIN readings cur ON cur.flat = f.flat AND cur.period = ?
          LEFT JOIN readings prv ON prv.flat = f.flat AND prv.period = ?
          LEFT JOIN owners  o   ON o.flat = f.flat AND o.active = 1
+         LEFT JOIN meter_changes mc ON mc.flat = f.flat AND mc.period = ?
         WHERE f.active = 1
         GROUP BY f.flat
         ORDER BY f.floor, f.flat`
-    ).bind(period, prev).all(),
+    ).bind(period, prev, period).all(),
     // Excluded flats come back too, or they become invisible: the grid filters
     // them out, so without this list there is no screen anywhere that admits
     // they exist, and no way to put one back.
@@ -68,18 +78,31 @@ export async function readingGrid(env, period) {
   const factor = periodRow?.conversion_factor ?? DEFAULT_CONVERSION;
 
   const flats = (rows.results ?? []).map((r) => {
+    // The changeover, if this flat had one this month. Reshaped off the mc_
+    // columns so nothing downstream has to know how the join was spelled.
+    const meterChange = r.mc_old_final == null ? null : {
+      old_final: r.mc_old_final,
+      new_start: r.mc_new_start ?? 0,
+      changed_on: r.mc_changed_on,
+      note: r.mc_note,
+    };
+
     let consumption = null;
     let problem = null;
     if (r.reading != null && r.previous != null) {
       try {
-        consumption = computeConsumption(r.reading, r.previous, factor);
+        consumption = computeConsumption(r.reading, r.previous, factor, meterChange);
       } catch (err) {
-        problem = err.code === 'DDP-BILL-002' ? 'below-previous' : 'invalid';
+        problem = err.code === 'DDP-BILL-002' ? 'below-previous'
+                : err.code === 'DDP-BILL-014' ? 'meter-change-inconsistent'
+                : 'invalid';
       }
     } else if (r.reading != null && r.previous == null) {
       problem = 'no-previous';
     }
-    return { ...r, consumption, problem };
+
+    const { mc_old_final, mc_new_start, mc_changed_on, mc_note, ...rest } = r;
+    return { ...rest, meterChange, consumption, problem };
   });
 
   return {
@@ -102,19 +125,11 @@ export async function readingGrid(env, period) {
   };
 }
 
-/** Flag an implausible jump. Warns; never blocks. */
-export const JUMP_MULTIPLE = 3;
-
-export function jumpWarning(consumption, history) {
-  const past = history.filter((n) => Number.isFinite(n) && n > 0);
-  if (past.length < 2 || !Number.isFinite(consumption)) return null;
-  const avg = past.reduce((a, b) => a + b, 0) / past.length;
-  if (avg <= 0) return null;
-  if (consumption > avg * JUMP_MULTIPLE) {
-    return { level: 'warn', average: Math.round(avg * 100) / 100, multiple: +(consumption / avg).toFixed(1) };
-  }
-  return null;
-}
+// jumpWarning moved to billing.js so previewGeneration can call it — the
+// confirmation screen has to name the same outliers the grid flagged, and
+// billing.js cannot import this module without a cycle. Re-exported because
+// index.js and the tests already take it from here.
+export { JUMP_MULTIPLE, jumpWarning, dropWarning } from './billing.js';
 
 /**
  * Generation. Refuses on a locked period, an inherited or absent rate, any
@@ -137,7 +152,9 @@ export async function generateBills(env, period, actorId) {
   const grid = await readingGrid(env, period);
   const rows = grid.flats
     .filter((f) => f.reading != null && f.previous != null)
-    .map((f) => ({ flat: f.flat, reading: f.reading, previous: f.previous }));
+    .map((f) => ({
+      flat: f.flat, reading: f.reading, previous: f.previous, meterChange: f.meterChange,
+    }));
 
   const preview = previewGeneration({
     rows,
@@ -156,11 +173,18 @@ export async function generateBills(env, period, actorId) {
 
   const now = new Date().toISOString();
   const statements = rows.map((r) => {
-    const consumption = computeConsumption(r.reading, r.previous, periodRow.conversion_factor);
+    const consumption = computeConsumption(
+      r.reading, r.previous, periodRow.conversion_factor, r.meterChange);
     const { gasAmount, total } = computeBill({
       consumption, ratePerKg: periodRow.rate_per_kg,
     });
-    const delta = Math.round((r.reading - r.previous) * 1000) / 1000;
+    // meter_delta is the gas that moved, which across a swap is the sum of both
+    // segments. Subtracting the raw readings would store a NEGATIVE delta beside
+    // a positive consumption — the stored bill would contradict itself, and
+    // DDP-BILL-003 exists to shout about exactly that kind of mismatch.
+    const delta = r.meterChange
+      ? meterDeltaAcrossChange(r.reading, r.previous, r.meterChange)
+      : Math.round((r.reading - r.previous) * 1000) / 1000;
     return env.DB.prepare(
       `INSERT INTO bills (flat, period, meter_delta, consumption, conversion_factor,
                           rate_per_kg, gas_amount, total, status, created_at)

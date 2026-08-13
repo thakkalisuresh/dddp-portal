@@ -10,13 +10,16 @@ import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex, deriv
 import { dashboardPayload } from './lib/dashboard.js';
 import {
   readingGrid, saveReadings, generateBills, openPeriod, parseReadings,
-  previousPeriod, jumpWarning, changeRate,
+  previousPeriod, jumpWarning, changeRate, normaliseFlat,
 } from './lib/admin.js';
 import { previewGeneration, computeBill, isExempt } from './lib/billing.js';
+import {
+  approvalPolicy, canApprove, isSatisfied, needsApproval, expiresAt,
+} from './lib/approvals.js';
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { validateStatement, parseStatement, reconcile, sweepAbandonedStatements } from './lib/statement.js';
 import { readReceipt } from './lib/vision.js';
-import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
+import { runScheduled, runLateFees, isLateFeeCron, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden, markNoticesSeen, NOTICE_SCOPES,
          canSeeAttachment, listArchivedNotices, purgeNotice } from './lib/notices.js';
 // r2Key is aliased: lib/proof.js exports one of its own, and the two build
@@ -244,6 +247,15 @@ export default {
         if (request.method === 'POST' && /^\/api\/admin\/bills\/\d+\/mark-paid$/.test(path)) {
           return markPaid(request, env, session, path);
         }
+        // Approving is an ADMIN action, not a god one — the whole point is that
+        // the superadmin who raised the edit cannot also wave it through.
+        if (route === 'GET /api/admin/bill-edits') return listBillEditRequests(env, session);
+        if (request.method === 'POST' && /^\/api\/admin\/bill-edits\/\d+\/approve$/.test(path)) {
+          return decideBillEdit(request, env, session, path, 'approve');
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/bill-edits\/\d+\/reject$/.test(path)) {
+          return decideBillEdit(request, env, session, path, 'reject');
+        }
         if (route === 'GET /api/admin/late-fees') return lateFeePanel(env);
         if (route === 'POST /api/admin/late-fee-exemption/bulk') {
           return bulkLateFeeExemption(request, env, session);
@@ -381,6 +393,13 @@ export default {
         if (route === 'GET /api/god/stats') return godStats(env, url);
         if (route.startsWith('PATCH /api/god/owner/')) return editOwner(request, env, session, path);
         if (route.startsWith('PATCH /api/god/bill/'))  return editBill(request, env, session, path);
+        // A replaced meter is a superadmin decision, not a monthly chore: it
+        // restates what a month's consumption MEANS, and it is rare enough
+        // (once in years) that putting it on the readings screen would only
+        // teach the treasurer to ignore it.
+        if (route === 'GET /api/god/meter-changes')  return listMeterChanges(env, url);
+        if (route === 'POST /api/god/meter-change')  return postMeterChange(request, env, session);
+        if (route === 'DELETE /api/god/meter-change') return deleteMeterChange(request, env, session);
       }
 
       return problem(404, 'DDP-SYS-001', 'No such endpoint.');
@@ -390,12 +409,20 @@ export default {
   async scheduled(event, env, ctx) {
     await assertAlerting(env);
 
-    // Two triggers, and which one fired decides the work. The backup runs at
+    // Three triggers, and which one fired decides the work. The backup runs at
     // 03:30 IST because that was asked for; the digest cannot follow it there,
     // because a Telegram message at 3:30am is a notification somebody mutes,
     // and muting it takes the 22 warnings only the digest reports with it.
     if (isBackupCron(event.cron)) {
       await runBackup(env, ctx);
+      return;
+    }
+
+    // Midnight IST: fees only. The 08:30 run below still calls applyLateFees,
+    // which is the backstop for anything this one missed — it is idempotent, so
+    // the overlap costs nothing and the guarantee is worth more than the query.
+    if (isLateFeeCron(event.cron)) {
+      await runLateFees(env, ctx);
       return;
     }
 
@@ -2576,9 +2603,25 @@ async function getPreview(env, url) {
   const prev = await env.DB.prepare('SELECT rate_per_kg FROM periods WHERE period = ?')
     .bind(previousPeriod(period)).first();
 
+  // Each flat's own past months, so the preview can say which readings are
+  // implausible. Same query the grid uses for its amber warnings — the two
+  // screens must agree, or the confirmation contradicts the row above it.
+  const history = await env.DB.prepare(
+    `SELECT flat, consumption FROM bills WHERE period < ? ORDER BY period DESC LIMIT 400`
+  ).bind(period).all();
+  const byFlat = new Map();
+  for (const row of history.results ?? []) {
+    if (!byFlat.has(row.flat)) byFlat.set(row.flat, []);
+    byFlat.get(row.flat).push(row.consumption);
+  }
+
   const rows = grid.flats
     .filter((f) => f.reading != null && f.previous != null)
-    .map((f) => ({ flat: f.flat, reading: f.reading, previous: f.previous }));
+    .map((f) => ({
+      flat: f.flat, reading: f.reading, previous: f.previous,
+      meterChange: f.meterChange,
+      history: byFlat.get(f.flat) ?? [],
+    }));
 
   return json({
     ...previewGeneration({
@@ -2847,6 +2890,303 @@ async function editOwner(request, env, session, path) {
   return json({ ok: true, field, value, confirm: verdict.confirm ?? null });
 }
 
+/**
+ * Meter changes for a period, with the readings either side so the superadmin
+ * can see the arithmetic rather than trust it.
+ */
+async function listMeterChanges(env, url) {
+  const period = periodFrom(url);
+  if (!period) return problem(400, 'DDP-BILL-005', 'Specify a period, e.g. ?period=2026-07.');
+
+  const rows = await env.DB.prepare(
+    `SELECT mc.flat, mc.period, mc.changed_on, mc.old_final, mc.new_start, mc.note,
+            mc.entered_at, o.name AS entered_by_name,
+            prv.reading AS previous, cur.reading AS reading
+       FROM meter_changes mc
+       LEFT JOIN owners o ON o.id = mc.entered_by
+       LEFT JOIN readings prv ON prv.flat = mc.flat AND prv.period = ?
+       LEFT JOIN readings cur ON cur.flat = mc.flat AND cur.period = mc.period
+      WHERE mc.period = ?
+      ORDER BY mc.flat`
+  ).bind(previousPeriod(period), period).all();
+
+  return json({ period, changes: rows.results ?? [] });
+}
+
+async function postMeterChange(request, env, session) {
+  if (session.impersonating) {
+    await reportError(env, 'DDP-AUTH-007', { action: 'meter-change' });
+    return problem(403, 'DDP-AUTH-007', 'Not while impersonating.');
+  }
+
+  const body = await readJson(request);
+  const flat = normaliseFlat(String(body?.flat ?? ''));
+  const period = String(body?.period ?? '');
+  const oldFinal = Number(body?.oldFinal);
+  const newStart = Number(body?.newStart ?? 0);
+  // BACKDATED BY DESIGN. The caretaker reads the meters and mentions the swap
+  // afterwards, sometimes weeks later, so this is a date somebody types.
+  const changedOn = String(body?.changedOn ?? '').slice(0, 10);
+  const note = body?.note ? String(body.note).slice(0, 500) : null;
+
+  if (!flat || !/^\d{4}-\d{2}$/.test(period)) {
+    return problem(400, 'DDP-BILL-014', 'Give a flat and a usage month.');
+  }
+  if (!Number.isFinite(oldFinal) || !Number.isFinite(newStart)) {
+    return problem(400, 'DDP-BILL-014', 'The old meter\'s final reading is required.');
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(changedOn)) {
+    return problem(400, 'DDP-BILL-014', 'Give the date the meter was changed.');
+  }
+
+  const periodRow = await env.DB.prepare('SELECT status FROM periods WHERE period = ?')
+    .bind(period).first();
+  if (!periodRow) return problem(404, 'DDP-BILL-005', 'That month does not exist yet.');
+  // A locked month's bills are already written and already on residents'
+  // dashboards; changing what its consumption means would leave the bills
+  // saying one thing and the arithmetic another. Correct those bills directly.
+  if (periodRow.status === 'locked') {
+    return problem(409, 'DDP-BILL-007',
+      'That month is already generated. Correct the bill itself instead.');
+  }
+
+  const prev = await env.DB.prepare(
+    'SELECT reading FROM readings WHERE flat = ? AND period = ?'
+  ).bind(flat, previousPeriod(period)).first();
+
+  // Checked here as well as at generation, so the refusal arrives while the
+  // superadmin is looking at the form rather than a fortnight later when the
+  // month refuses to close.
+  if (prev && oldFinal < prev.reading) {
+    return problem(409, 'DDP-BILL-014',
+      `The old meter's final reading (${oldFinal}) is below last month's (${prev.reading}).`);
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO meter_changes (flat, period, changed_on, old_final, new_start, note,
+                                entered_by, entered_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (flat, period) DO UPDATE SET
+       changed_on = excluded.changed_on, old_final = excluded.old_final,
+       new_start = excluded.new_start, note = excluded.note,
+       entered_by = excluded.entered_by, entered_at = excluded.entered_at`
+  ).bind(flat, period, changedOn, oldFinal, newStart, note,
+         session.actor.id, new Date().toISOString()).run();
+
+  await audit(env, session, 'meter.change', { flat, period, changedOn, oldFinal, newStart, note });
+  return json({ ok: true, flat, period, changedOn, oldFinal, newStart });
+}
+
+async function deleteMeterChange(request, env, session) {
+  const body = await readJson(request);
+  const flat = normaliseFlat(String(body?.flat ?? ''));
+  const period = String(body?.period ?? '');
+
+  const periodRow = await env.DB.prepare('SELECT status FROM periods WHERE period = ?')
+    .bind(period).first();
+  if (periodRow?.status === 'locked') {
+    return problem(409, 'DDP-BILL-007', 'That month is already generated.');
+  }
+
+  await env.DB.prepare('DELETE FROM meter_changes WHERE flat = ? AND period = ?')
+    .bind(flat, period).run();
+  await audit(env, session, 'meter.change.remove', { flat, period });
+  return json({ ok: true, flat, period });
+}
+
+/** Everyone who could ever approve: the admins and the superadmin. */
+async function approvalBench(env) {
+  const rows = await env.DB.prepare(
+    `SELECT id, role, flat FROM owners
+      WHERE active = 1 AND role IN ('admin','superadmin') ORDER BY id`
+  ).all();
+  return rows.results ?? [];
+}
+
+async function policyFor(env, { bill, requesterId }) {
+  return approvalPolicy({
+    admins: await approvalBench(env),
+    requesterId,
+    billFlat: bill.flat,
+  });
+}
+
+/** The single place a bill's money actually changes, however it was agreed. */
+async function writeBillEdit(env, session, { bill, field, value, reason, actorId }) {
+  const { bill: next, derived, computed } = applyBillEdit(bill, field, value);
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(
+    `UPDATE bills SET gas_amount = ?, other_charges = ?, additional_charges = ?,
+            late_fee = ?, total = ?, status = ?, manual_total = ?,
+            adjusted_by = ?, adjusted_at = ?, adjust_reason = ?
+      WHERE id = ?`
+  ).bind(
+    next.gas_amount, next.other_charges, next.additional_charges, next.late_fee,
+    next.total, next.status, next.manual_total,
+    actorId, now, reason, bill.id
+  ).run();
+
+  return { next, derived, computed };
+}
+
+/**
+ * Hold the edit until the committee agrees. Nothing about the bill changes
+ * here: the proposed value waits in its own row, because a bill that briefly
+ * says something nobody approved is exactly what this is preventing.
+ */
+async function requestBillEdit(env, session, { bill, field, value, reason, totalAfter }) {
+  const policy = await policyFor(env, { bill, requesterId: session.actor.id });
+
+  if (!policy.satisfiable) {
+    await reportError(env, 'DDP-ADMIN-016', {
+      billId: bill.id, eligible: policy.approverIds.length, required: policy.required,
+    });
+    return problem(409, 'DDP-ADMIN-016',
+      'There are not enough admins available to approve this. Add an admin, or '
+      + 'ask the committee before changing the bill.');
+  }
+
+  const now = new Date().toISOString();
+  const numeric = typeof value === 'number' ? value : null;
+  const text = typeof value === 'number' ? null : String(value);
+
+  const res = await env.DB.prepare(
+    `INSERT INTO bill_edit_requests
+       (bill_id, field, value, value_text, reason, total_before, total_after,
+        requested_by, requested_at, expires_at, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
+  ).bind(bill.id, field, numeric, text, reason, bill.total, totalAfter,
+         session.actor.id, now, expiresAt(now)).run();
+
+  await audit(env, session, 'bill.edit.request', {
+    billId: bill.id, flat: bill.flat, period: bill.period, field,
+    totalBefore: bill.total, totalAfter, required: policy.required,
+  });
+
+  return json({
+    ok: true,
+    pending: true,
+    requestId: res?.meta?.last_row_id ?? null,
+    required: policy.required,
+    approvers: policy.approverIds,
+    subjectIsAdmin: policy.subjectIsAdmin,
+    totalBefore: bill.total,
+    totalAfter,
+    note: policy.subjectIsAdmin
+      ? 'This bill belongs to an admin, so every other eligible admin must approve.'
+      : `Waiting for ${policy.required} other admins to approve.`,
+  });
+}
+
+/** Open requests, with everything an approver needs to judge one. */
+async function listBillEditRequests(env, session) {
+  const rows = await env.DB.prepare(
+    `SELECT r.*, b.flat, b.period, o.name AS requested_by_name,
+            (SELECT COUNT(*) FROM bill_edit_approvals a
+              WHERE a.request_id = r.id AND a.decision = 'approve') AS approvals
+       FROM bill_edit_requests r
+       JOIN bills b ON b.id = r.bill_id
+       LEFT JOIN owners o ON o.id = r.requested_by
+      WHERE r.status = 'pending'
+      ORDER BY r.requested_at`
+  ).all();
+
+  const bench = await approvalBench(env);
+  const out = [];
+  for (const r of rows.results ?? []) {
+    const policy = approvalPolicy({ admins: bench, requesterId: r.requested_by, billFlat: r.flat });
+    const verdict = canApprove({ policy, approver: session.actor, request: r });
+    out.push({
+      ...r,
+      required: policy.required,
+      // So the screen can grey the button and say why, rather than offering an
+      // action that will be refused.
+      canApprove: verdict.ok,
+      substitute: verdict.substitute ?? false,
+      blockedBecause: verdict.ok ? null : verdict.reason,
+      hoursLeft: verdict.hoursLeft ?? null,
+    });
+  }
+  return json({ requests: out });
+}
+
+async function decideBillEdit(request, env, session, path, decision) {
+  const id = Number(path.split('/')[4]);
+  const req = await env.DB.prepare(
+    `SELECT r.*, b.flat FROM bill_edit_requests r JOIN bills b ON b.id = r.bill_id
+      WHERE r.id = ?`
+  ).bind(id).first();
+  if (!req) return problem(404, 'DDP-ADMIN-017', 'No such request.');
+
+  // Lapsed on read rather than by a job: the expiry only has to be true at the
+  // moment somebody acts on it, and a cron for it would be one more thing to
+  // fail quietly.
+  if (req.status === 'pending' && Date.parse(req.expires_at) < Date.now()) {
+    await env.DB.prepare(
+      "UPDATE bill_edit_requests SET status = 'expired', resolved_at = ? WHERE id = ? AND status = 'pending'"
+    ).bind(new Date().toISOString(), id).run();
+    return problem(409, 'DDP-ADMIN-017', 'That request has lapsed. Raise it again if it still stands.');
+  }
+
+  const policy = await policyFor(env, { bill: req, requesterId: req.requested_by });
+  const verdict = canApprove({ policy, approver: session.actor, request: req });
+  if (!verdict.ok) {
+    await reportError(env, verdict.code, { requestId: id, actor: session.actor.id, reason: verdict.reason });
+    return problem(403, verdict.code,
+      verdict.reason === 'requester' ? 'You raised this edit, so you cannot approve it.'
+      : verdict.reason === 'too-soon' ? `An admin still has ${verdict.hoursLeft}h to answer.`
+      : 'This is not yours to approve.');
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO bill_edit_approvals (request_id, approver_id, decision, substitute, at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (request_id, approver_id) DO UPDATE SET
+       decision = excluded.decision, at = excluded.at, substitute = excluded.substitute`
+  ).bind(id, session.actor.id, decision, verdict.substitute ? 1 : 0, now).run();
+
+  if (decision === 'reject') {
+    await env.DB.prepare(
+      "UPDATE bill_edit_requests SET status = 'rejected', resolved_at = ? WHERE id = ?"
+    ).bind(now, id).run();
+    await audit(env, session, 'bill.edit.reject', { requestId: id, billId: req.bill_id });
+    return json({ ok: true, status: 'rejected' });
+  }
+
+  const approvals = await env.DB.prepare(
+    'SELECT approver_id, decision FROM bill_edit_approvals WHERE request_id = ?'
+  ).bind(id).all();
+
+  if (!isSatisfied(policy, approvals.results ?? [])) {
+    const yes = (approvals.results ?? []).filter((a) => a.decision === 'approve').length;
+    await audit(env, session, 'bill.edit.approve', { requestId: id, billId: req.bill_id, yes });
+    return json({ ok: true, status: 'pending', approvals: yes, required: policy.required });
+  }
+
+  // The last approval lands: now, and only now, the bill changes.
+  const bill = await env.DB.prepare('SELECT * FROM bills WHERE id = ?').bind(req.bill_id).first();
+  const value = req.value_text ?? req.value;
+  const { next, derived, computed } = await writeBillEdit(env, session, {
+    bill, field: req.field, value, reason: req.reason, actorId: req.requested_by,
+  });
+
+  await env.DB.prepare(
+    "UPDATE bill_edit_requests SET status = 'applied', resolved_at = ? WHERE id = ?"
+  ).bind(now, id).run();
+
+  await audit(env, session, `god.edit.bill.${req.field}`, {
+    requestId: id, billId: req.bill_id, flat: bill.flat, period: bill.period,
+    field: req.field, before: bill[req.field], after: value,
+    totalBefore: bill.total, totalAfter: next.total, reason: req.reason,
+    approvedBy: (approvals.results ?? []).filter((a) => a.decision === 'approve').map((a) => a.approver_id),
+    derived, computed,
+  });
+
+  return json({ ok: true, status: 'applied', total: next.total });
+}
+
 async function editBill(request, env, session, path) {
   if (session.impersonating) {
     await reportError(env, 'DDP-AUTH-007', { actor: session.actor.id });
@@ -2870,18 +3210,19 @@ async function editBill(request, env, session, path) {
   if (!change) return json({ ok: true, unchanged: true });
 
   const { bill: next, derived, computed } = applyBillEdit(bill, field, value);
-  const now = new Date().toISOString();
 
-  await env.DB.prepare(
-    `UPDATE bills SET gas_amount = ?, other_charges = ?, additional_charges = ?,
-            late_fee = ?, total = ?, status = ?, manual_total = ?,
-            adjusted_by = ?, adjusted_at = ?, adjust_reason = ?
-      WHERE id = ?`
-  ).bind(
-    next.gas_amount, next.other_charges, next.additional_charges, next.late_fee,
-    next.total, next.status, next.manual_total,
-    session.actor.id, now, reason, id
-  ).run();
+  // MONEY DOES NOT MOVE ON ONE PERSON'S SAY-SO. Readings are checked before
+  // they are submitted, so an edit after generation means somebody already got
+  // it wrong — and correcting it quietly is the thing the committee decided
+  // must not be possible. An edit that leaves the total alone still applies at
+  // once; there is nothing for a second pair of eyes to protect.
+  if (needsApproval({ totalBefore: bill.total, totalAfter: next.total })) {
+    return requestBillEdit(env, session, {
+      bill, field, value, reason, totalAfter: next.total, computed, derived,
+    });
+  }
+
+  await writeBillEdit(env, session, { bill, field, value, reason, actorId: session.actor.id });
 
   await audit(env, session, `god.edit.bill.${field}`, {
     ...change, flat: bill.flat, period: bill.period,

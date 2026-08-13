@@ -86,12 +86,15 @@ function billSection(me) {
     el('p', { class: 'muted' },
       settled
         ? (b.paidAt ? `Paid ${dayLabel(b.paidAt)}` : 'Settled')
-        : `Due ${dayLabel(b.dueDate)}`),
+        // "Due 20 Aug" read as "the 20th is fine", and it is not: the fee lands
+        // at 00:00 that morning, so the 20th is already late. The deadline is
+        // stated as the instant it expires rather than the day it falls on.
+        : `Pay before ${dayLabel(b.dueDate)}`),
 
     // Warn about the fee before it lands — nobody should be surprised by it.
     b.lateFeeWarning
       ? el('p', { class: 'small', style: 'color:var(--awaiting);font-family:var(--font-ui)' },
-          `${money(b.lateFeeWarning.amount)} late fee applies after ${dayLabel(b.lateFeeWarning.after)}`)
+          `${money(b.lateFeeWarning.amount)} late fee from ${dayLabel(b.lateFeeWarning.after)}, 00:00`)
       : null,
 
     b.displayStatus === 'overdue' && b.lateFee
@@ -456,7 +459,14 @@ function consumptionSection(readings, bills = []) {
             // The meter closing June's usage is read in early July. Showing both
             // stops "why is my June bill from a July reading?"
             el('td', { class: 'muted small' }, r.readOn ? dayLabel(r.readOn) : '—'),
-            el('td', { class: 'r' }, r.reading.toFixed(3)),
+            el('td', { class: 'r' },
+              r.reading.toFixed(3),
+              // A new meter starts near zero, so this column drops by twenty
+              // without explanation and reads as a fault in the portal. Said on
+              // the row itself, where the surprising number is.
+              r.meterChangedOn
+                ? el('div', { class: 'small muted' }, `new meter ${dayLabel(r.meterChangedOn)}`)
+                : null),
             el('td', { class: 'r' }, r.consumption == null ? '—' : kg(r.consumption)))))))
   );
 }

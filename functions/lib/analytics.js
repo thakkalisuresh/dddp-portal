@@ -22,21 +22,15 @@
  *     can be tested without a database.
  */
 
-const IST_OFFSET_MS = 5.5 * 3600_000;
-
-/** The IST calendar day a UTC timestamp falls in, as YYYY-MM-DD. */
-export function istDay(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return new Date(d.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
-}
-
-/** The IST hour of day, 0–23. */
-export function istHour(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return new Date(d.getTime() + IST_OFFSET_MS).getUTCHours();
-}
+// The IST clock moved to time.js when late fees started needing it too. Two
+// copies of the offset is how the analytics day and the billing day drift
+// apart by five and a half hours without anyone noticing. Re-exported because
+// callers and tests already import them from here.
+// Imported AND re-exported, not `export ... from`: that form re-exports without
+// binding the names locally, so every internal call in this file became a
+// ReferenceError while the module still looked correct from outside.
+import { istDay, istHour, IST_OFFSET_MS } from './time.js';
+export { istDay, istHour, IST_OFFSET_MS };
 
 /**
  * The last `days` IST days, oldest first, ending with today.

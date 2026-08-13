@@ -58,11 +58,40 @@ export function meterDelta(current, previous) {
 }
 
 /** Billable consumption in kilograms. */
-export function computeConsumption(current, previous, conversionFactor = DEFAULT_CONVERSION) {
+/**
+ * The meter movement across a month in which the meter itself was replaced.
+ *
+ * Two segments, because two meters counted the gas: what the old one recorded
+ * between last month's reading and the day it came off, plus what the new one
+ * has recorded since it was fitted.
+ *
+ * Both halves are checked. A changeover whose old_final is below last month's
+ * reading, or whose current reading is below what the new meter started at,
+ * describes a meter that ran backwards on one side of the swap — which is the
+ * same impossibility the swap was invented to explain, and quietly billing it
+ * would turn one mistyped number into a bill nobody can account for.
+ */
+export function meterDeltaAcrossChange(current, previous, change) {
+  const oldFinal = Number(change.old_final ?? change.oldFinal);
+  const newStart = Number(change.new_start ?? change.newStart ?? 0);
+
+  if (![current, previous, oldFinal, newStart].every(Number.isFinite)) {
+    fail('DDP-BILL-014', { current, previous, oldFinal, newStart });
+  }
+  if (oldFinal < previous) fail('DDP-BILL-014', { reason: 'old-final-below-previous', oldFinal, previous });
+  if (current < newStart) fail('DDP-BILL-014', { reason: 'reading-below-new-start', current, newStart });
+
+  return Math.round(((oldFinal - previous) + (current - newStart)) * 1000) / 1000;
+}
+
+export function computeConsumption(current, previous, conversionFactor = DEFAULT_CONVERSION, change = null) {
   if (!Number.isFinite(conversionFactor) || conversionFactor <= 0) {
     fail('DDP-BILL-005', { conversionFactor });
   }
-  return round2(meterDelta(current, previous) * conversionFactor);
+  const delta = change
+    ? meterDeltaAcrossChange(current, previous, change)
+    : meterDelta(current, previous);
+  return round2(delta * conversionFactor);
 }
 
 /** Build a bill total: gas + charges + any late fee, rounded up to a whole rupee. */
@@ -193,21 +222,90 @@ export function meterReconciliation(bulkKg, sumOfFlatsKg) {
  *
  * Pure. `rows` are { flat, reading, previous }.
  */
+/** Flag an implausible jump. Warns; never blocks. */
+export const JUMP_MULTIPLE = 3;
+
+/** The average of a flat's own past months, or null if there is too little. */
+function averageOf(history) {
+  const past = (history ?? []).filter((n) => Number.isFinite(n) && n > 0);
+  if (past.length < 2) return null;
+  const avg = past.reduce((a, b) => a + b, 0) / past.length;
+  return avg > 0 ? avg : null;
+}
+
+export function jumpWarning(consumption, history) {
+  const avg = averageOf(history);
+  if (avg == null || !Number.isFinite(consumption)) return null;
+  if (consumption > avg * JUMP_MULTIPLE) {
+    return { level: 'warn', average: Math.round(avg * 100) / 100, multiple: +(consumption / avg).toFixed(1) };
+  }
+  return null;
+}
+
+/**
+ * The mirror of jumpWarning: a reading that is wrong DOWNWARD.
+ *
+ * 18.867 mistyped as 18.100 is still above last month, so nothing rejects it,
+ * nothing warns, and the flat is under-billed. Nobody ever reports being
+ * charged too little, so this class of error is invisible forever — which is
+ * precisely why it needs a machine to notice it.
+ *
+ * Zero is deliberately NOT flagged. A flat that used nothing is the documented
+ * way to record an empty month, it is entered by typing last month's reading
+ * again, and warning about it would train the treasurer to dismiss the warning
+ * that matters. Only a suspiciously small NON-zero figure is suspect.
+ */
+export function dropWarning(consumption, history) {
+  const avg = averageOf(history);
+  if (avg == null || !Number.isFinite(consumption)) return null;
+  if (!(consumption > 0)) return null;
+  if (consumption * JUMP_MULTIPLE < avg) {
+    return { level: 'warn', average: Math.round(avg * 100) / 100, fraction: +(consumption / avg).toFixed(2) };
+  }
+  return null;
+}
+
 export function previewGeneration({ rows, ratePerKg, conversionFactor = DEFAULT_CONVERSION,
                                     previousRate = null, expectedFlats = null }) {
   const sanity = rateSanity(ratePerKg, previousRate);
   const bills = [];
   const blocked = [];
+  // Flats whose reading is improbable against their OWN history. Carried out of
+  // here so the confirmation screen can name them: the grid already flags these
+  // in amber as they are typed, but that warning sits ninety rows up the page
+  // and never reached the one screen shown before the irreversible click. A
+  // caretaker walks the meters and sends the numbers on, so the person typing
+  // cannot check a suspect figure against anything — this is the only place the
+  // building gets told.
+  const outliers = [];
 
   for (const row of rows) {
     try {
-      const consumption = computeConsumption(row.reading, row.previous, conversionFactor);
+      const consumption = computeConsumption(row.reading, row.previous, conversionFactor, row.meterChange);
       const { gasAmount, total } = computeBill({ consumption, ratePerKg });
       bills.push({ flat: row.flat, consumption, gasAmount, total });
+
+      const high = jumpWarning(consumption, row.history);
+      const low = high ? null : dropWarning(consumption, row.history);
+      if (high || low) {
+        outliers.push({
+          flat: row.flat,
+          direction: high ? 'high' : 'low',
+          consumption,
+          total,
+          average: (high ?? low).average,
+          multiple: high?.multiple ?? null,
+          fraction: low?.fraction ?? null,
+        });
+      }
     } catch (err) {
       blocked.push({ flat: row.flat, reason: err.code ?? 'DDP-BILL-001' });
     }
   }
+
+  // Worst first: the screen shows a handful, and the ₹12,000 one must not be
+  // the entry that got cut off.
+  outliers.sort((a, b) => b.total - a.total);
 
   const totalKg = round2(bills.reduce((sum, b) => sum + b.consumption, 0));
   const totalAmount = round2(bills.reduce((sum, b) => sum + b.total, 0));
@@ -219,6 +317,7 @@ export function previewGeneration({ rows, ratePerKg, conversionFactor = DEFAULT_
     rateSanity: sanity,
     willBill: bills.length,
     blocked,
+    outliers,
     missing: expectedFlats == null ? null : expectedFlats - bills.length - blocked.length,
     totalKg,
     totalAmount,
@@ -275,6 +374,13 @@ export function lateFeeDecision(bill, {
   if (bill.status === 'paid' || bill.status === 'waived') return { action: 'skip', reason: 'settled' };
   if (bill.status === 'awaiting') return { action: 'skip', reason: 'proof-under-review' };
 
+  // A CORRECTION IN FLIGHT FREEZES THE CLOCK. Two admins have to agree before a
+  // total moves, and they are allowed to take their time — so without this the
+  // fee lands at midnight on a bill everybody already agrees is wrong, and
+  // removing it needs its own waiver on top. The resident is not late because
+  // the committee is deliberating.
+  if (bill.pending_edit) return { action: 'skip', reason: 'edit-pending' };
+
   // NOTHING OWED IS NOT LATE. A flat that consumed nothing — empty for the
   // month, or between tenants — bills at zero, which is correct and stays
   // visible so the flat is still accounted for. But an unpaid zero sailed
@@ -293,9 +399,19 @@ export function lateFeeDecision(bill, {
   // is the real one — "exempt" rather than "not yet due".
   if (isExempt(exemptUntil, today)) return { action: 'skip', reason: 'exempt' };
 
+  // THE FEE LANDS ON THE DUE DATE, AT 00:00 IST — not the morning after.
+  //
+  // This was `<=`, which meant a bill due on the 10th was charged on the 11th,
+  // and the nightly job runs at 08:30 IST, so the real moment was 32 hours
+  // after the one residents were told about. The committee's rule is that
+  // payment must be complete before the due date begins; `<` is that rule.
+  //
+  // Consequence worth stating plainly: the last payable day is the one BEFORE
+  // due_date. Anything labelled "due 20 Aug" must therefore be worded as a
+  // deadline the 20th ends, not one it includes (see shapeBill).
   const cutoff = new Date(dueDate);
   cutoff.setUTCDate(cutoff.getUTCDate() + graceDays);
-  if (new Date(today) <= cutoff) return { action: 'skip', reason: 'not-yet-due' };
+  if (new Date(today) < cutoff) return { action: 'skip', reason: 'not-yet-due' };
 
   if (bill.status === 'initiated') {
     // No claim time at all means nothing is known about when they tapped, and

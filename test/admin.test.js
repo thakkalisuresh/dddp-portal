@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  nextPeriod, previousPeriod, readMonthFor, parseReadings, normaliseFlat, jumpWarning,
+  nextPeriod, previousPeriod, readMonthFor, parseReadings, normaliseFlat, jumpWarning, dropWarning,
 } from '../functions/lib/admin.js';
 
 describe('period arithmetic', () => {
@@ -169,5 +169,33 @@ describe('implausible jump warning', () => {
   it('warns rather than blocks — a genuine spike must be enterable', () => {
     // Returning a warning object, not throwing, is the contract.
     expect(() => jumpWarning(999, history)).not.toThrow();
+  });
+});
+
+describe('implausibly LOW warning — the error nobody reports', () => {
+  const history = [4.38, 4.19, 3.98, 4.01];
+
+  it('stays quiet for an ordinary month', () => {
+    expect(dropWarning(4.1, history)).toBe(null);
+  });
+
+  it('warns when a dropped digit under-bills the flat', () => {
+    // 18.867 typed as 18.100: still above last month, so nothing rejects it and
+    // no resident ever complains about being charged too little.
+    const w = dropWarning(0.4, history);
+    expect(w.level).toBe('warn');
+    expect(w.fraction).toBeLessThan(0.34);
+  });
+
+  it('says NOTHING about zero, which is how an empty month is recorded', () => {
+    // A flat that used nothing is entered by repeating last month's reading.
+    // Warning about it would train the treasurer to dismiss the warning that
+    // matters — and the vacant flats are exactly the legitimate zeros.
+    expect(dropWarning(0, history)).toBe(null);
+  });
+
+  it('says nothing without enough history to judge against', () => {
+    expect(dropWarning(0.4, [])).toBe(null);
+    expect(dropWarning(0.4, [4.38])).toBe(null);
   });
 });

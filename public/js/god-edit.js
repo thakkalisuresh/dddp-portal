@@ -57,6 +57,7 @@ function render() {
       tabButton('people', `People (${data.people.length})`),
       tabButton('bills', `Bills (${data.bills.length})`),
       tabButton('log', `What I've changed (${data.edits.length})`),
+      tabButton('meters', 'Meters'),
       tabButton('health', healthLabel())),
     el('div', { class: 'panel', style: 'padding:var(--s-3) var(--s-4)' },
       el('p', { class: 'small muted' }, blurb())),
@@ -152,10 +153,107 @@ function healthLabel() {
 function body() {
   if (tab === 'people') return data.people.map(personRow);
   if (tab === 'bills')  return data.bills.map(billRow);
+  if (tab === 'meters') return metersBody();
   if (tab === 'health') return healthBody();
   return data.edits.length
     ? data.edits.map(editRow)
     : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nothing has been edited yet.')];
+}
+
+/* ── meters ──────────────────────────────────────────────────────────────── */
+
+/**
+ * A replaced meter. Here rather than on the readings screen on purpose: this
+ * restates what a month's consumption MEANS, it happens perhaps once in three
+ * years, and a control that rare sitting on a monthly screen is one the
+ * treasurer learns to scroll past.
+ *
+ * The readings themselves are never touched. This sits beside them and is
+ * consulted for the one month the swap falls in, which is what keeps the
+ * resident's history and the archive honest.
+ */
+function metersBody() {
+  const flat = el('input', { class: 'input', placeholder: '12F', id: 'mc-flat' });
+  const period = el('input', { class: 'input', placeholder: '2026-07', id: 'mc-period' });
+  const oldFinal = el('input', { class: 'input num', placeholder: '19.900', id: 'mc-old', inputmode: 'decimal' });
+  const newStart = el('input', { class: 'input num', value: '0', id: 'mc-new', inputmode: 'decimal' });
+  const changedOn = el('input', { class: 'input', type: 'date', id: 'mc-on' });
+  const note = el('input', { class: 'input', placeholder: 'Reported by the caretaker', id: 'mc-note' });
+  const status = el('div');
+  const listing = el('div', { class: 'stack small' });
+
+  const refresh = async () => {
+    if (!/^\d{4}-\d{2}$/.test(period.value)) { listing.replaceChildren(); return; }
+    try {
+      const { changes } = await api.god.meterChanges(period.value);
+      listing.replaceChildren(
+        el('p', { class: 'label' }, `Recorded for ${periodLabel(period.value)}`),
+        ...(changes.length
+          ? changes.map((c) => el('div', {},
+              el('b', {}, c.flat), ` — old meter ended ${c.old_final}, new one started `,
+              `${c.new_start}, changed ${c.changed_on}. `,
+              el('button', {
+                class: 'btn btn--sm btn--ghost', type: 'button',
+                onclick: async () => {
+                  await api.god.clearMeterChange(c.flat, c.period);
+                  await refresh();
+                },
+              }, 'Remove')))
+          : [el('p', { class: 'muted' }, 'None.')])
+      );
+    } catch (err) { showError(listing, err); }
+  };
+
+  period.addEventListener('change', refresh);
+
+  return [
+    el('div', { class: 'panel stack', style: 'padding:var(--s-4)' },
+      el('h2', {}, 'Meter replaced'),
+      el('p', { class: 'small muted' },
+        'A new meter starts at zero, so its first reading is lower than last '
+        + 'month\'s and the grid refuses it — which stops the whole month '
+        + 'generating, not just this flat. Record the swap here and the month '
+        + 'bills both halves: what the old meter counted before it came off, '
+        + 'plus what the new one has counted since. The readings themselves are '
+        + 'left exactly as they were taken.'),
+
+      el('div', { class: 'field' }, el('label', { for: 'mc-flat' }, 'Flat'), flat),
+      el('div', { class: 'field' }, el('label', { for: 'mc-period' }, 'Usage month'), period,
+        el('span', { class: 'field__hint' }, 'The month the gas was used, e.g. 2026-07.')),
+      el('div', { class: 'field' }, el('label', { for: 'mc-old' }, 'Old meter\'s final reading'), oldFinal,
+        el('span', { class: 'field__hint' }, 'What it read the day it came off.')),
+      el('div', { class: 'field' }, el('label', { for: 'mc-new' }, 'New meter started at'), newStart,
+        el('span', { class: 'field__hint' }, 'Usually 0. A refurbished meter may not be.')),
+      el('div', { class: 'field' }, el('label', { for: 'mc-on' }, 'Date changed'), changedOn,
+        el('span', { class: 'field__hint' },
+          'The day it was actually swapped — backdate it. The caretaker often '
+          + 'mentions this weeks later.')),
+      el('div', { class: 'field' }, el('label', { for: 'mc-note' }, 'Note'), note),
+      status,
+      el('button', {
+        class: 'btn', type: 'button',
+        onclick: async (event) => {
+          const button = event.currentTarget;
+          button.disabled = true;
+          status.replaceChildren();
+          try {
+            await api.god.setMeterChange({
+              flat: flat.value, period: period.value,
+              oldFinal: Number(oldFinal.value), newStart: Number(newStart.value || 0),
+              changedOn: changedOn.value, note: note.value || null,
+            });
+            trackAction('god.meter-change');
+            status.replaceChildren(el('div', { class: 'note note--good' },
+              `Recorded. ${flat.value} will bill both meters for ${periodLabel(period.value)}.`));
+            await refresh();
+          } catch (err) {
+            showError(status, err);
+          }
+          button.disabled = false;
+        },
+      }, 'Record the change')),
+    el('div', { class: 'panel', style: 'padding:var(--s-4)' }, listing),
+  ];
 }
 
 /* ── people ──────────────────────────────────────────────────────────────── */

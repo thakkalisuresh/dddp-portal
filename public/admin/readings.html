@@ -26,9 +26,16 @@
   .grid td { padding: var(--s-2) var(--s-4); border-bottom: 1px solid var(--border); height: 56px; }
   .grid .flat { font-family: var(--font-ui); font-weight: 600; width: 64px; }
   .grid .prev { color: var(--ink-muted); font-family: var(--font-ui); width: 96px; }
-  .grid .used { font-family: var(--font-ui); width: 92px; }
+  /* 92px wrapped "3.34 kg" onto two lines, which grew the row and made the
+     misaligned divider below impossible to miss. */
+  .grid .used { font-family: var(--font-ui); width: 112px; white-space: nowrap; }
   .cell { width: 124px; }
-  .msg { font-size: var(--text-sm); display: flex; align-items: baseline; gap: var(--s-3); }
+  /* NOT display:flex — this is a <td>. A table cell that becomes a flex
+     container stops stretching to the row's height, takes `height: 56px` from
+     .grid td literally, and draws its border-bottom 10-15px above every other
+     cell's. The flex lives on an inner element instead. */
+  .msg { font-size: var(--text-sm); vertical-align: middle; }
+  .msg__row { display: flex; align-items: baseline; gap: var(--s-3); flex-wrap: wrap; }
   .msg__saved { font-family: var(--font-ui); font-size: var(--text-xs); white-space: nowrap; }
   .msg--error { color: var(--overdue); }
   .msg--warn  { color: var(--awaiting); }

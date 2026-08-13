@@ -52,6 +52,7 @@ Ask the bot a code and it will explain it.
 | `DDP-BILL-011` | warn | retired | Rate differs sharply from the previous period (retired — a rate change is not an error) |
 | `DDP-BILL-012` | warn | live | Rate change refused — the month is locked |
 | `DDP-BILL-013` | warn | live | Rate changed on a month that already has bills — totals recalculated |
+| `DDP-BILL-014` | error | live | Meter change is not consistent with the readings either side of it |
 
 ## PAY
 
@@ -125,6 +126,9 @@ Ask the bot a code and it will explain it.
 | `DDP-ADMIN-012` | error | live | God edit would lock the superadmin out of their own account |
 | `DDP-ADMIN-013` | warn | live | God edit rejected — mobile or email already belongs to someone else |
 | `DDP-ADMIN-014` | error | live | Password reset attempted against an equal or higher role |
+| `DDP-ADMIN-015` | warn | live | Bill edit approval refused — approver is the requester or the bill is theirs |
+| `DDP-ADMIN-016` | error | live | Bill edit cannot reach quorum — too few eligible admins |
+| `DDP-ADMIN-017` | warn | live | Bill edit request is no longer open |
 
 ## SYS
 
@@ -141,7 +145,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-81 codes across 10 domains — 12 fatal, 3 awaiting their call site, 3 retired.
+85 codes across 10 domains — 12 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.
