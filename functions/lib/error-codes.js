@@ -60,6 +60,7 @@ export const ERROR_CODES = {
 
   'DDP-BILL-012': { severity: 'warn',  message: 'Rate change refused — the month is locked' },
   'DDP-BILL-013': { severity: 'warn',  message: 'Rate changed on a month that already has bills — totals recalculated' },
+  'DDP-BILL-014': { severity: 'error', message: 'Meter change is not consistent with the readings either side of it' },
 
   // ── MAIL ───────────────────────────────────────────────────────────────
   'DDP-MAIL-001': { severity: 'error', message: 'Reset email could not be sent' },

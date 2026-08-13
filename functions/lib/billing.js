@@ -58,11 +58,40 @@ export function meterDelta(current, previous) {
 }
 
 /** Billable consumption in kilograms. */
-export function computeConsumption(current, previous, conversionFactor = DEFAULT_CONVERSION) {
+/**
+ * The meter movement across a month in which the meter itself was replaced.
+ *
+ * Two segments, because two meters counted the gas: what the old one recorded
+ * between last month's reading and the day it came off, plus what the new one
+ * has recorded since it was fitted.
+ *
+ * Both halves are checked. A changeover whose old_final is below last month's
+ * reading, or whose current reading is below what the new meter started at,
+ * describes a meter that ran backwards on one side of the swap — which is the
+ * same impossibility the swap was invented to explain, and quietly billing it
+ * would turn one mistyped number into a bill nobody can account for.
+ */
+export function meterDeltaAcrossChange(current, previous, change) {
+  const oldFinal = Number(change.old_final ?? change.oldFinal);
+  const newStart = Number(change.new_start ?? change.newStart ?? 0);
+
+  if (![current, previous, oldFinal, newStart].every(Number.isFinite)) {
+    fail('DDP-BILL-014', { current, previous, oldFinal, newStart });
+  }
+  if (oldFinal < previous) fail('DDP-BILL-014', { reason: 'old-final-below-previous', oldFinal, previous });
+  if (current < newStart) fail('DDP-BILL-014', { reason: 'reading-below-new-start', current, newStart });
+
+  return Math.round(((oldFinal - previous) + (current - newStart)) * 1000) / 1000;
+}
+
+export function computeConsumption(current, previous, conversionFactor = DEFAULT_CONVERSION, change = null) {
   if (!Number.isFinite(conversionFactor) || conversionFactor <= 0) {
     fail('DDP-BILL-005', { conversionFactor });
   }
-  return round2(meterDelta(current, previous) * conversionFactor);
+  const delta = change
+    ? meterDeltaAcrossChange(current, previous, change)
+    : meterDelta(current, previous);
+  return round2(delta * conversionFactor);
 }
 
 /** Build a bill total: gas + charges + any late fee, rounded up to a whole rupee. */
@@ -252,7 +281,7 @@ export function previewGeneration({ rows, ratePerKg, conversionFactor = DEFAULT_
 
   for (const row of rows) {
     try {
-      const consumption = computeConsumption(row.reading, row.previous, conversionFactor);
+      const consumption = computeConsumption(row.reading, row.previous, conversionFactor, row.meterChange);
       const { gasAmount, total } = computeBill({ consumption, ratePerKg });
       bills.push({ flat: row.flat, consumption, gasAmount, total });
 

@@ -459,7 +459,14 @@ function consumptionSection(readings, bills = []) {
             // The meter closing June's usage is read in early July. Showing both
             // stops "why is my June bill from a July reading?"
             el('td', { class: 'muted small' }, r.readOn ? dayLabel(r.readOn) : '—'),
-            el('td', { class: 'r' }, r.reading.toFixed(3)),
+            el('td', { class: 'r' },
+              r.reading.toFixed(3),
+              // A new meter starts near zero, so this column drops by twenty
+              // without explanation and reads as a fault in the portal. Said on
+              // the row itself, where the surprising number is.
+              r.meterChangedOn
+                ? el('div', { class: 'small muted' }, `new meter ${dayLabel(r.meterChangedOn)}`)
+                : null),
             el('td', { class: 'r' }, r.consumption == null ? '—' : kg(r.consumption)))))))
   );
 }

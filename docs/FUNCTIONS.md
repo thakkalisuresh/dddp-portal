@@ -123,6 +123,7 @@ Pure billing arithmetic.
 | fn | `isWholeRupees` |  |
 | const | `DEFAULT_CONVERSION` | DEFAULT_CONVERSION is derived, not guessed. |
 | fn | `meterDelta` |  |
+| fn | `meterDeltaAcrossChange` | The meter movement across a month in which the meter itself was replaced. |
 | fn | `computeConsumption` |  |
 | fn | `computeBill` |  |
 | fn | `applyLateFee` | Add a late fee to an existing total, then round up as usual. |
@@ -758,4 +759,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-401 exports. 211 have no doc comment.
+402 exports. 211 have no doc comment.

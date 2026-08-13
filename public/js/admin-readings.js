@@ -298,7 +298,11 @@ function row(f) {
       message.textContent = 'Not a number';
       return null;
     }
-    if (f.previous != null && value < f.previous) {
+    // A flat whose meter was replaced this month is EXPECTED to read lower —
+    // the new meter started near zero. The superadmin has recorded the swap, so
+    // the grid must stop refusing it, or recording it changed nothing.
+    const mc = f.meterChange;
+    if (f.previous != null && value < f.previous && !mc) {
       // Blocked inline, with last month's value shown — meters don't run back.
       // The remedy is offered beside it, because the two cases that land here
       // are a typo and a flat that used nothing, and only one of them is wrong.
@@ -308,6 +312,15 @@ function row(f) {
       sameAsLast.hidden = false;
       sameAsLast.textContent = `Nothing used — ${f.previous}`;
       return null;
+    }
+    if (f.previous != null && mc) {
+      // Both segments, matching meterDeltaAcrossChange on the server.
+      const delta = (mc.old_final - f.previous) + (value - (mc.new_start ?? 0));
+      const consumption = Math.round(delta * grid.conversionFactor * 100) / 100;
+      used.textContent = kg(consumption);
+      message.classList.add('msg--warn');
+      message.textContent = `New meter from ${mc.changed_on} — billing both`;
+      return value;
     }
     if (f.previous != null) {
       const consumption = Math.round((value - f.previous) * grid.conversionFactor * 100) / 100;

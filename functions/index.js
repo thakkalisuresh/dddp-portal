@@ -10,7 +10,7 @@ import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex, deriv
 import { dashboardPayload } from './lib/dashboard.js';
 import {
   readingGrid, saveReadings, generateBills, openPeriod, parseReadings,
-  previousPeriod, jumpWarning, changeRate,
+  previousPeriod, jumpWarning, changeRate, normaliseFlat,
 } from './lib/admin.js';
 import { previewGeneration, computeBill, isExempt } from './lib/billing.js';
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
@@ -381,6 +381,13 @@ export default {
         if (route === 'GET /api/god/stats') return godStats(env, url);
         if (route.startsWith('PATCH /api/god/owner/')) return editOwner(request, env, session, path);
         if (route.startsWith('PATCH /api/god/bill/'))  return editBill(request, env, session, path);
+        // A replaced meter is a superadmin decision, not a monthly chore: it
+        // restates what a month's consumption MEANS, and it is rare enough
+        // (once in years) that putting it on the readings screen would only
+        // teach the treasurer to ignore it.
+        if (route === 'GET /api/god/meter-changes')  return listMeterChanges(env, url);
+        if (route === 'POST /api/god/meter-change')  return postMeterChange(request, env, session);
+        if (route === 'DELETE /api/god/meter-change') return deleteMeterChange(request, env, session);
       }
 
       return problem(404, 'DDP-SYS-001', 'No such endpoint.');
@@ -2600,6 +2607,7 @@ async function getPreview(env, url) {
     .filter((f) => f.reading != null && f.previous != null)
     .map((f) => ({
       flat: f.flat, reading: f.reading, previous: f.previous,
+      meterChange: f.meterChange,
       history: byFlat.get(f.flat) ?? [],
     }));
 
@@ -2868,6 +2876,110 @@ async function editOwner(request, env, session, path) {
               { ...change, targetName: target.name, targetFlat: target.flat });
 
   return json({ ok: true, field, value, confirm: verdict.confirm ?? null });
+}
+
+/**
+ * Meter changes for a period, with the readings either side so the superadmin
+ * can see the arithmetic rather than trust it.
+ */
+async function listMeterChanges(env, url) {
+  const period = periodFrom(url);
+  if (!period) return problem(400, 'DDP-BILL-005', 'Specify a period, e.g. ?period=2026-07.');
+
+  const rows = await env.DB.prepare(
+    `SELECT mc.flat, mc.period, mc.changed_on, mc.old_final, mc.new_start, mc.note,
+            mc.entered_at, o.name AS entered_by_name,
+            prv.reading AS previous, cur.reading AS reading
+       FROM meter_changes mc
+       LEFT JOIN owners o ON o.id = mc.entered_by
+       LEFT JOIN readings prv ON prv.flat = mc.flat AND prv.period = ?
+       LEFT JOIN readings cur ON cur.flat = mc.flat AND cur.period = mc.period
+      WHERE mc.period = ?
+      ORDER BY mc.flat`
+  ).bind(previousPeriod(period), period).all();
+
+  return json({ period, changes: rows.results ?? [] });
+}
+
+async function postMeterChange(request, env, session) {
+  if (session.impersonating) {
+    await reportError(env, 'DDP-AUTH-007', { action: 'meter-change' });
+    return problem(403, 'DDP-AUTH-007', 'Not while impersonating.');
+  }
+
+  const body = await readJson(request);
+  const flat = normaliseFlat(String(body?.flat ?? ''));
+  const period = String(body?.period ?? '');
+  const oldFinal = Number(body?.oldFinal);
+  const newStart = Number(body?.newStart ?? 0);
+  // BACKDATED BY DESIGN. The caretaker reads the meters and mentions the swap
+  // afterwards, sometimes weeks later, so this is a date somebody types.
+  const changedOn = String(body?.changedOn ?? '').slice(0, 10);
+  const note = body?.note ? String(body.note).slice(0, 500) : null;
+
+  if (!flat || !/^\d{4}-\d{2}$/.test(period)) {
+    return problem(400, 'DDP-BILL-014', 'Give a flat and a usage month.');
+  }
+  if (!Number.isFinite(oldFinal) || !Number.isFinite(newStart)) {
+    return problem(400, 'DDP-BILL-014', 'The old meter\'s final reading is required.');
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(changedOn)) {
+    return problem(400, 'DDP-BILL-014', 'Give the date the meter was changed.');
+  }
+
+  const periodRow = await env.DB.prepare('SELECT status FROM periods WHERE period = ?')
+    .bind(period).first();
+  if (!periodRow) return problem(404, 'DDP-BILL-005', 'That month does not exist yet.');
+  // A locked month's bills are already written and already on residents'
+  // dashboards; changing what its consumption means would leave the bills
+  // saying one thing and the arithmetic another. Correct those bills directly.
+  if (periodRow.status === 'locked') {
+    return problem(409, 'DDP-BILL-007',
+      'That month is already generated. Correct the bill itself instead.');
+  }
+
+  const prev = await env.DB.prepare(
+    'SELECT reading FROM readings WHERE flat = ? AND period = ?'
+  ).bind(flat, previousPeriod(period)).first();
+
+  // Checked here as well as at generation, so the refusal arrives while the
+  // superadmin is looking at the form rather than a fortnight later when the
+  // month refuses to close.
+  if (prev && oldFinal < prev.reading) {
+    return problem(409, 'DDP-BILL-014',
+      `The old meter's final reading (${oldFinal}) is below last month's (${prev.reading}).`);
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO meter_changes (flat, period, changed_on, old_final, new_start, note,
+                                entered_by, entered_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (flat, period) DO UPDATE SET
+       changed_on = excluded.changed_on, old_final = excluded.old_final,
+       new_start = excluded.new_start, note = excluded.note,
+       entered_by = excluded.entered_by, entered_at = excluded.entered_at`
+  ).bind(flat, period, changedOn, oldFinal, newStart, note,
+         session.actor.id, new Date().toISOString()).run();
+
+  await audit(env, session, 'meter.change', { flat, period, changedOn, oldFinal, newStart, note });
+  return json({ ok: true, flat, period, changedOn, oldFinal, newStart });
+}
+
+async function deleteMeterChange(request, env, session) {
+  const body = await readJson(request);
+  const flat = normaliseFlat(String(body?.flat ?? ''));
+  const period = String(body?.period ?? '');
+
+  const periodRow = await env.DB.prepare('SELECT status FROM periods WHERE period = ?')
+    .bind(period).first();
+  if (periodRow?.status === 'locked') {
+    return problem(409, 'DDP-BILL-007', 'That month is already generated.');
+  }
+
+  await env.DB.prepare('DELETE FROM meter_changes WHERE flat = ? AND period = ?')
+    .bind(flat, period).run();
+  await audit(env, session, 'meter.change.remove', { flat, period });
+  return json({ ok: true, flat, period });
 }
 
 async function editBill(request, env, session, path) {

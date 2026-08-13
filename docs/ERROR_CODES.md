@@ -52,6 +52,7 @@ Ask the bot a code and it will explain it.
 | `DDP-BILL-011` | warn | retired | Rate differs sharply from the previous period (retired — a rate change is not an error) |
 | `DDP-BILL-012` | warn | live | Rate change refused — the month is locked |
 | `DDP-BILL-013` | warn | live | Rate changed on a month that already has bills — totals recalculated |
+| `DDP-BILL-014` | error | live | Meter change is not consistent with the readings either side of it |
 
 ## PAY
 
@@ -141,7 +142,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-81 codes across 10 domains — 12 fatal, 3 awaiting their call site, 3 retired.
+82 codes across 10 domains — 12 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.
