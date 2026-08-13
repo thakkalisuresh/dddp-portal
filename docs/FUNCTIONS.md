@@ -23,8 +23,6 @@ Admin billing: the reading grid, and generation.
 | fn | `previousPeriod` |  |
 | fn | `readMonthFor` |  |
 | fn | `readingGrid` | Every active flat, with last month's reading and this month's if entered. |
-| const | `JUMP_MULTIPLE` |  |
-| fn | `jumpWarning` |  |
 | fn | `generateBills` | Generation. |
 | fn | `openPeriod` | Open a period. |
 | fn | `planRateChange` | What changing a month's rate would do to the bills already in it. |
@@ -133,7 +131,10 @@ Pure billing arithmetic.
 | fn | `rateSanity` |  |
 | fn | `deriveRate` | Many RWAs do not get a published per-kg tariff — they get one bulk invoice and divide it across the sub-metered flats, which is why the effective rate moves every month even when the supplier's tariff hasn't. |
 | fn | `meterReconciliation` | Sub-meters never sum to the bulk meter — there are line losses and unmetered common usage. |
-| fn | `previewGeneration` | What a month's import will actually bill, computed BEFORE anything is written. |
+| const | `JUMP_MULTIPLE` |  |
+| fn | `jumpWarning` |  |
+| fn | `dropWarning` | The mirror of jumpWarning: a reading that is wrong DOWNWARD. |
+| fn | `previewGeneration` |  |
 | fn | `isExempt` | Is this resident exempt on this date? Inclusive of the end date: "exempt until 30 November" means the 30th is still covered, which is how anyone reads it. |
 | const | `CLAIM_HOLD_DAYS` | How long a claim of payment holds off the late fee. |
 | fn | `lateFeeDecision` | Which bills the nightly cron should charge. |
@@ -757,4 +758,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-400 exports. 210 have no doc comment.
+401 exports. 211 have no doc comment.

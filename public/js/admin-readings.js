@@ -74,12 +74,20 @@ function render() {
 
 /** Keep the counter honest as rows save — it is the treasurer's sense of progress. */
 function refreshProgress() {
-  const entered = [...main.querySelectorAll('[data-flat]')]
-    .filter((i) => i.value !== '' && !i.classList.contains('input--error')).length;
+  const cells = [...main.querySelectorAll('[data-flat]')];
+  const entered = cells.filter((i) => i.value !== '' && !i.classList.contains('input--error')).length;
+  // A REFUSED ROW IS NOT AN EMPTY ONE. The count only ever named saved rows, so
+  // a flat where a value had been typed and rejected was indistinguishable from
+  // one nobody had touched — and the footer sent the treasurer hunting for
+  // empty boxes that were not empty. Reported from testing on 2026-08-13.
+  const rejected = cells.filter((i) => i.classList.contains('input--error')).length;
   const fill = main.querySelector('.progress__fill');
   const label = main.querySelector('.progress__label');
   if (fill) fill.style.width = `${grid.total ? Math.round((entered / grid.total) * 100) : 0}%`;
-  if (label) label.textContent = `${entered} of ${grid.total} entered`;
+  if (label) {
+    label.textContent = `${entered} of ${grid.total} entered`
+      + (rejected ? ` · ${rejected} need${rejected > 1 ? '' : 's'} fixing` : '');
+  }
 }
 
 function header() {
@@ -135,13 +143,38 @@ function importPanel() {
         const input = main.querySelector(`[data-flat="${CSS.escape(row.flat)}"]`);
         if (input) { input.value = row.reading; input.dispatchEvent(new Event('change')); }
       }
+
+      // PARSED IS NOT ACCEPTED. This counted rows the parser understood and
+      // announced "Nothing skipped", while the grid was in the same breath
+      // rejecting some of them for running backwards — so an import of 99 rows
+      // where two were refused reported a clean run. What the treasurer needs
+      // is the count that survived the grid.
+      const cells = parsed.rows
+        .map((r) => main.querySelector(`[data-flat="${CSS.escape(r.flat)}"]`))
+        .filter(Boolean);
+      const refused = cells.filter((i) => i.classList.contains('input--error'));
+      const odd = cells.filter((i) => i.classList.contains('input--warn'));
+      const accepted = cells.length - refused.length;
+      const flatOf = (i) => i.getAttribute('data-flat');
+
       out.replaceChildren(
-        el('span', {}, `${parsed.rows.length} filled in as a draft. `),
+        el('span', {}, `${accepted} filled in as a draft. `),
         parsed.errors.length
           ? el('strong', { style: 'color:var(--overdue)' },
               `${parsed.errors.length} could not be read: ` +
-              parsed.errors.map((e) => `${e.flat ?? '?'} (${e.reason})`).join(', '))
-          : el('span', { style: 'color:var(--accent)' }, 'Nothing skipped.')
+              parsed.errors.map((e) => `${e.flat ?? '?'} (${e.reason})`).join(', ') + ' ')
+          : null,
+        refused.length
+          ? el('strong', { style: 'color:var(--overdue)' },
+              `${refused.length} refused by the grid: ${refused.map(flatOf).join(', ')}. `)
+          : null,
+        odd.length
+          ? el('strong', { style: 'color:var(--awaiting)' },
+              `${odd.length} look unusual for the flat: ${odd.map(flatOf).join(', ')}. `)
+          : null,
+        !parsed.errors.length && !refused.length && !odd.length
+          ? el('span', { style: 'color:var(--accent)' }, 'Nothing skipped.')
+          : null
       );
     } catch (err) {
       // Same lesson as the Generate button: an import that fails silently
@@ -223,7 +256,25 @@ function row(f) {
   // while deleting the sentence explaining why.
   const message = el('span', { class: 'msg__text' });
   const saved = el('span', { class: 'msg__saved' });
-  const status = el('td', { class: 'msg' }, message, saved);
+
+  // "Nothing used" is entered by typing LAST MONTH'S reading again, because the
+  // box holds a cumulative meter total and a flat that burned no gas has the
+  // same total it had before. Everyone's first instinct is to type 0, which
+  // claims the meter itself reads zero — a meter that ran backwards — and is
+  // refused. The old message stated the problem and not the remedy, and a
+  // treasurer with a resident away for the month had no way to record it.
+  const sameAsLast = el('button', {
+    class: 'btn btn--sm btn--ghost', type: 'button', hidden: true,
+    onclick: () => {
+      input.value = String(f.previous);
+      input.dispatchEvent(new Event('change'));
+    },
+  }, 'Nothing used');
+
+  // All three in the one flex row, so "saved" still sits beside the message
+  // rather than dropping below it now that the cell itself is not the flex box.
+  const status = el('td', { class: 'msg' },
+    el('span', { class: 'msg__row' }, message, sameAsLast, saved));
   const used = el('td', { class: 'used muted' }, f.consumption == null ? '—' : kg(f.consumption));
 
   const input = el('input', {
@@ -238,6 +289,7 @@ function row(f) {
     message.className = 'msg__text';
     message.textContent = '';
     used.textContent = '—';
+    sameAsLast.hidden = true;
 
     if (input.value === '') { refreshProgress(); return null; }
     if (!Number.isFinite(value)) {
@@ -248,9 +300,13 @@ function row(f) {
     }
     if (f.previous != null && value < f.previous) {
       // Blocked inline, with last month's value shown — meters don't run back.
+      // The remedy is offered beside it, because the two cases that land here
+      // are a typo and a flat that used nothing, and only one of them is wrong.
       input.classList.add('input--error');
       message.classList.add('msg--error');
-      message.textContent = `Lower than last month (${f.previous})`;
+      message.textContent = `Meters don't go down. Last month was ${f.previous}.`;
+      sameAsLast.hidden = false;
+      sameAsLast.textContent = `Nothing used — ${f.previous}`;
       return null;
     }
     if (f.previous != null) {
@@ -262,6 +318,13 @@ function row(f) {
         input.classList.add('input--warn');
         message.classList.add('msg--warn');
         message.textContent = `Unusually high. Usually about ${kg(f.average)}`;
+      } else if (f.average != null && consumption > 0 && consumption * JUMP_MULTIPLE < f.average) {
+        // The mirror case, and the one nobody reports: a digit dropped from
+        // 18.867 to 18.100 still passes every check and under-bills the flat.
+        // Zero is exempt — that is the documented way to record an empty month.
+        input.classList.add('input--warn');
+        message.classList.add('msg--warn');
+        message.textContent = `Unusually low. Usually about ${kg(f.average)}`;
       }
     }
     return value;
@@ -361,12 +424,40 @@ function previewSummary(p) {
       !p.rateSanity.ok ? 'Set this month\'s rate. ' : '');
   }
 
+  const outliers = p.outliers ?? [];
+
   return el('div', { class: 'stack', style: 'gap:var(--s-2)' },
     el('div', { class: 'note note--good' },
       el('div', {}, `${p.willBill} flats · ${kg(p.totalKg)} · rate ₹${p.ratePerKg.toFixed(2)}`),
       el('strong', { style: 'font-size:var(--text-md)' }, `Total ${money(p.totalAmount)}`),
       el('div', { class: 'small' },
         'Check this against the supplier invoice before generating.')),
+
+    // NAMED HERE, NOT ONLY IN THE GRID. A transposed digit — 15.405 typed as
+    // 65.405 — passes every check the portal has: the meter still went up, the
+    // rate is fine, the month is complete. It shows up only as one flat billed
+    // fifty times its usual, and the person clicking Generate was reading a
+    // total, not ninety-nine rows. This is the last screen before bills reach
+    // residents, so it is the last chance to catch it.
+    outliers.length
+      ? el('div', { class: 'note note--warn' },
+          el('strong', {},
+            `${outliers.length} reading${outliers.length > 1 ? 's look' : ' looks'} wrong for the flat`),
+          el('div', { class: 'stack small', style: 'gap:var(--s-1);margin-top:var(--s-2)' },
+            ...outliers.slice(0, 6).map((o) =>
+              el('div', {},
+                el('b', {}, o.flat), ' · ', kg(o.consumption), ' · ', money(o.total),
+                el('span', { class: 'muted' },
+                  o.direction === 'high'
+                    ? ` — ${o.multiple}× its usual ${kg(o.average)}`
+                    : ` — usually about ${kg(o.average)}`))),
+            outliers.length > 6
+              ? el('div', { class: 'muted' }, `…and ${outliers.length - 6} more`)
+              : null),
+          el('div', { class: 'small', style: 'margin-top:var(--s-2)' },
+            'Worth a call to the caretaker before generating. Once bills exist '
+            + 'the month is locked, and each one has to be corrected by hand.'))
+      : null,
     p.rateSanity.level === 'notice'
       ? el('div', { class: 'note' }, p.rateSanity.message)
       : null,

@@ -102,19 +102,11 @@ export async function readingGrid(env, period) {
   };
 }
 
-/** Flag an implausible jump. Warns; never blocks. */
-export const JUMP_MULTIPLE = 3;
-
-export function jumpWarning(consumption, history) {
-  const past = history.filter((n) => Number.isFinite(n) && n > 0);
-  if (past.length < 2 || !Number.isFinite(consumption)) return null;
-  const avg = past.reduce((a, b) => a + b, 0) / past.length;
-  if (avg <= 0) return null;
-  if (consumption > avg * JUMP_MULTIPLE) {
-    return { level: 'warn', average: Math.round(avg * 100) / 100, multiple: +(consumption / avg).toFixed(1) };
-  }
-  return null;
-}
+// jumpWarning moved to billing.js so previewGeneration can call it — the
+// confirmation screen has to name the same outliers the grid flagged, and
+// billing.js cannot import this module without a cycle. Re-exported because
+// index.js and the tests already take it from here.
+export { JUMP_MULTIPLE, jumpWarning, dropWarning } from './billing.js';
 
 /**
  * Generation. Refuses on a locked period, an inherited or absent rate, any

@@ -2584,9 +2584,24 @@ async function getPreview(env, url) {
   const prev = await env.DB.prepare('SELECT rate_per_kg FROM periods WHERE period = ?')
     .bind(previousPeriod(period)).first();
 
+  // Each flat's own past months, so the preview can say which readings are
+  // implausible. Same query the grid uses for its amber warnings — the two
+  // screens must agree, or the confirmation contradicts the row above it.
+  const history = await env.DB.prepare(
+    `SELECT flat, consumption FROM bills WHERE period < ? ORDER BY period DESC LIMIT 400`
+  ).bind(period).all();
+  const byFlat = new Map();
+  for (const row of history.results ?? []) {
+    if (!byFlat.has(row.flat)) byFlat.set(row.flat, []);
+    byFlat.get(row.flat).push(row.consumption);
+  }
+
   const rows = grid.flats
     .filter((f) => f.reading != null && f.previous != null)
-    .map((f) => ({ flat: f.flat, reading: f.reading, previous: f.previous }));
+    .map((f) => ({
+      flat: f.flat, reading: f.reading, previous: f.previous,
+      history: byFlat.get(f.flat) ?? [],
+    }));
 
   return json({
     ...previewGeneration({

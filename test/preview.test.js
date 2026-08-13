@@ -8,6 +8,62 @@ const rows = [
   { flat: '5B', reading: 4.221, previous: 2.600 },
 ];
 
+describe('outliers reach the screen shown before generating (B35)', () => {
+  // 10C's real July: 14.404 read as 67.405 instead of 15.405, one digit out.
+  // It billed ₹12,466 against a 2.76 kg average and every check passed — the
+  // meter went up, the rate was fine, the month was complete.
+  const history = [2.8, 2.7, 2.9, 2.6];
+
+  it('names a transposed digit rather than burying it in the total', () => {
+    const p = previewGeneration({
+      rows: [{ flat: '10C', reading: 67.405, previous: 14.404, history }],
+      ratePerKg: 90.46, expectedFlats: 1,
+    });
+    expect(p.outliers).toHaveLength(1);
+    expect(p.outliers[0].flat).toBe('10C');
+    expect(p.outliers[0].direction).toBe('high');
+    expect(p.outliers[0].multiple).toBeGreaterThan(3);
+  });
+
+  it('still generates — this warns, it does not block', () => {
+    // A genuine spike (a joint family home for the holidays) must remain
+    // billable. The judgement is the treasurer's; the portal only has to make
+    // sure they were told.
+    const p = previewGeneration({
+      rows: [{ flat: '10C', reading: 67.405, previous: 14.404, history }],
+      ratePerKg: 90.46, previousRate: 90, expectedFlats: 1,
+    });
+    expect(p.canGenerate).toBe(true);
+  });
+
+  it('catches the downward error too', () => {
+    const p = previewGeneration({
+      rows: [{ flat: '4A', reading: 14.5, previous: 14.404, history }],
+      ratePerKg: 90.46, expectedFlats: 1,
+    });
+    expect(p.outliers[0].direction).toBe('low');
+  });
+
+  it('lists the most expensive first, so the worst is never cut off', () => {
+    const p = previewGeneration({
+      rows: [
+        { flat: '10B', reading: 45.769, previous: 19.884, history },
+        { flat: '10C', reading: 67.405, previous: 14.404, history },
+      ],
+      ratePerKg: 90.46, expectedFlats: 2,
+    });
+    expect(p.outliers.map((o) => o.flat)).toEqual(['10C', '10B']);
+  });
+
+  it('says nothing about an ordinary month', () => {
+    const p = previewGeneration({
+      rows: [{ flat: '4A', reading: 17.2, previous: 14.404, history: [7.2, 7.4, 7.1] }],
+      ratePerKg: 90.46, expectedFlats: 1,
+    });
+    expect(p.outliers).toEqual([]);
+  });
+});
+
 describe('what this month will bill, before anything is written', () => {
   it('totals the month so it can be checked against the supplier invoice', () => {
     // 4A 329 + 4B 180 + 5B 316

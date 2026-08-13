@@ -193,21 +193,90 @@ export function meterReconciliation(bulkKg, sumOfFlatsKg) {
  *
  * Pure. `rows` are { flat, reading, previous }.
  */
+/** Flag an implausible jump. Warns; never blocks. */
+export const JUMP_MULTIPLE = 3;
+
+/** The average of a flat's own past months, or null if there is too little. */
+function averageOf(history) {
+  const past = (history ?? []).filter((n) => Number.isFinite(n) && n > 0);
+  if (past.length < 2) return null;
+  const avg = past.reduce((a, b) => a + b, 0) / past.length;
+  return avg > 0 ? avg : null;
+}
+
+export function jumpWarning(consumption, history) {
+  const avg = averageOf(history);
+  if (avg == null || !Number.isFinite(consumption)) return null;
+  if (consumption > avg * JUMP_MULTIPLE) {
+    return { level: 'warn', average: Math.round(avg * 100) / 100, multiple: +(consumption / avg).toFixed(1) };
+  }
+  return null;
+}
+
+/**
+ * The mirror of jumpWarning: a reading that is wrong DOWNWARD.
+ *
+ * 18.867 mistyped as 18.100 is still above last month, so nothing rejects it,
+ * nothing warns, and the flat is under-billed. Nobody ever reports being
+ * charged too little, so this class of error is invisible forever — which is
+ * precisely why it needs a machine to notice it.
+ *
+ * Zero is deliberately NOT flagged. A flat that used nothing is the documented
+ * way to record an empty month, it is entered by typing last month's reading
+ * again, and warning about it would train the treasurer to dismiss the warning
+ * that matters. Only a suspiciously small NON-zero figure is suspect.
+ */
+export function dropWarning(consumption, history) {
+  const avg = averageOf(history);
+  if (avg == null || !Number.isFinite(consumption)) return null;
+  if (!(consumption > 0)) return null;
+  if (consumption * JUMP_MULTIPLE < avg) {
+    return { level: 'warn', average: Math.round(avg * 100) / 100, fraction: +(consumption / avg).toFixed(2) };
+  }
+  return null;
+}
+
 export function previewGeneration({ rows, ratePerKg, conversionFactor = DEFAULT_CONVERSION,
                                     previousRate = null, expectedFlats = null }) {
   const sanity = rateSanity(ratePerKg, previousRate);
   const bills = [];
   const blocked = [];
+  // Flats whose reading is improbable against their OWN history. Carried out of
+  // here so the confirmation screen can name them: the grid already flags these
+  // in amber as they are typed, but that warning sits ninety rows up the page
+  // and never reached the one screen shown before the irreversible click. A
+  // caretaker walks the meters and sends the numbers on, so the person typing
+  // cannot check a suspect figure against anything — this is the only place the
+  // building gets told.
+  const outliers = [];
 
   for (const row of rows) {
     try {
       const consumption = computeConsumption(row.reading, row.previous, conversionFactor);
       const { gasAmount, total } = computeBill({ consumption, ratePerKg });
       bills.push({ flat: row.flat, consumption, gasAmount, total });
+
+      const high = jumpWarning(consumption, row.history);
+      const low = high ? null : dropWarning(consumption, row.history);
+      if (high || low) {
+        outliers.push({
+          flat: row.flat,
+          direction: high ? 'high' : 'low',
+          consumption,
+          total,
+          average: (high ?? low).average,
+          multiple: high?.multiple ?? null,
+          fraction: low?.fraction ?? null,
+        });
+      }
     } catch (err) {
       blocked.push({ flat: row.flat, reason: err.code ?? 'DDP-BILL-001' });
     }
   }
+
+  // Worst first: the screen shows a handful, and the ₹12,000 one must not be
+  // the entry that got cut off.
+  outliers.sort((a, b) => b.total - a.total);
 
   const totalKg = round2(bills.reduce((sum, b) => sum + b.consumption, 0));
   const totalAmount = round2(bills.reduce((sum, b) => sum + b.total, 0));
@@ -219,6 +288,7 @@ export function previewGeneration({ rows, ratePerKg, conversionFactor = DEFAULT_
     rateSanity: sanity,
     willBill: bills.length,
     blocked,
+    outliers,
     missing: expectedFlats == null ? null : expectedFlats - bills.length - blocked.length,
     totalKg,
     totalAmount,
