@@ -53,3 +53,40 @@ describe('every browser module parses', () => {
     });
   }
 });
+
+/**
+ * The same class of failure as the missing bracket above: invisible, and
+ * invisible in a way a green suite cannot see.
+ *
+ * `document.createElement('svg')` returns an element that accepts every
+ * attribute, keeps its children, reports `svg` as its tag name — and renders
+ * nothing. Every icon in the bottom nav and the warning triangle on the
+ * impersonation banner were blank from the day they were written until
+ * 2026-08-13, and the bar still looked like a bar because the labels were
+ * there.
+ *
+ * There is no DOM in this suite, and adding jsdom to assert one line would cost
+ * more than the line. So this asserts on the source instead: the shared builder
+ * must know that SVG has a namespace of its own.
+ */
+describe('the shared element builder knows about SVG', () => {
+  const ui = readFileSync('public/js/ui.js', 'utf8');
+
+  it('creates SVG tags through createElementNS', () => {
+    expect(ui).toMatch(/createElementNS\(\s*'http:\/\/www\.w3\.org\/2000\/svg'/);
+  });
+
+  it('lists svg and path among the namespaced tags', () => {
+    const listed = ui.match(/SVG_TAGS = new Set\(\[([\s\S]*?)\]\)/)?.[1] ?? '';
+    expect(listed).toContain("'svg'");
+    expect(listed).toContain("'path'");
+  });
+
+  it('sets class by attribute, never by assigning className', () => {
+    // On an SVG element className is a read-only SVGAnimatedString. These are
+    // ES modules, so assigning to it throws and takes the whole render with it
+    // — the impersonation banner is the one SVG here that carries a class.
+    expect(ui).toMatch(/k === 'class'\) node\.setAttribute\('class'/);
+    expect(ui).not.toMatch(/node\.className\s*=/);
+  });
+});
