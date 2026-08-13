@@ -299,29 +299,27 @@ function breakdownSection(bill) {
 }
 
 /**
- * The brand mark if we have it, a lettered tile if we do not.
+ * The brand mark, with the lettered tile still behind it as a fallback.
  *
- * WHY THERE IS NO LOGO IN THE REPOSITORY. `public/img/upi/` holds a README and
- * nothing else. These marks are registered trademarks with published rules on
- * size, clear space and recolouring, so they have to come from each brand's own
- * press or developer page — not from an image search, and not drawn by hand. An
- * approximation would be a trademark used wrongly AND would look worse than no
- * logo, because a mark everybody knows is a mark everybody can see is off.
+ * THE LOGOS ARE NOW IN THE REPOSITORY, added 2026-08-13 on Sabarish's explicit
+ * instruction that trademark use is not a concern for this association's own
+ * portal. `public/img/upi/README.md` records where each file came from — worth
+ * reading before replacing one, because provenance is the part that is hard to
+ * reconstruct later.
  *
- * WHAT CHANGED, and why it was worth changing. The fallback used to be a plain
- * block of brand colour, which read exactly like an image that had failed to
- * load — reported that way from the live site on 2026-08-12. It now carries the
- * app's initials, which is the same amount of information a colour swatch
- * carried and none of the suggestion that something is broken. The name is
- * beside it either way; this tile only has to look deliberate.
+ * They are NOT drawn here, and that part has not changed: a mark everybody
+ * recognises is a mark everybody can see is slightly wrong, so an approximation
+ * would look worse than no logo at all. These are the real vectors.
  *
- * The initials are NOT logos and are not styled to imitate one: two plain
- * letters in the interface's own font on a rounded tile.
+ * THE FALLBACK STAYS, and is not dead code. It is what renders if a file is
+ * ever removed, renamed, or fails to load, and it is per-app — the `error`
+ * handler swaps that one row without touching the others. It also still covers
+ * a brand added to UPI_APPS before its file arrives.
  *
- * DROPPING THE REAL FILES IN IS STILL THE WHOLE INSTALLATION. Put `gpay.svg`,
- * `phonepe.svg` or `paytm.svg` in `public/img/upi/` and it is used instead,
- * with no code change — the `error` handler below is what makes the swap
- * automatic and per-file, so three brands can arrive on three different days.
+ * `loading="lazy"` is deliberate and was CHECKED rather than assumed, because
+ * this project has been bitten by it before: the embedded map in B15 stayed
+ * permanently blank behind it. Here all three decode with it on, verified by
+ * awaiting img.decode() on the live page. It is left alone.
  */
 function appMark(app) {
   // aria-hidden, exactly as the img is: the row already says "Google Pay", and
@@ -331,7 +329,7 @@ function appMark(app) {
   }, app.initials ?? '');
   const img = el('img', {
     class: 'pay-app__logo', src: `/img/upi/${app.key}.svg`, alt: '', 'aria-hidden': 'true',
-    width: '22', height: '22', loading: 'lazy',
+    width: '30', height: '30', loading: 'lazy',
   });
   img.addEventListener('error', () => img.replaceWith(tile));
   return img;
