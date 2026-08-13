@@ -468,4 +468,10 @@ a { color: var(--accent); }
 .picker__row:last-child { border-bottom: 0; }
 .picker__row:hover { background: var(--accent-wash); }
 .picker__row input { width: 18px; height: 18px; accent-color: var(--accent); flex: 0 0 auto; }
-.pay-app__logo { width: 22px; height: 22px; object-fit: contain; flex: 0 0 auto; }
+/* 30px, matching the fallback tile exactly, so a row sits in the same place
+   whether its brand file is present or not. It was 22px, which is fine for a
+   square app icon and cramped for a WORDMARK — Google Pay and Paytm are both
+   wordmarks, and `contain` shrank them to the width of the box until they were
+   a smudge. The two shapes have to share one column, so the column is sized
+   for the harder of them. */
+.pay-app__logo { width: 30px; height: 30px; object-fit: contain; flex: 0 0 auto; }
