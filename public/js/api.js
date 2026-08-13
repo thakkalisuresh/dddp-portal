@@ -242,6 +242,7 @@ export const api = {
     bills:       (params = '') => request('GET',  `/api/god/bills${params}`),
     edits:       (params = '') => request('GET',  `/api/god/edits${params}`),
     diagnostics: (params = '') => request('GET',  `/api/god/diagnostics${params}`),
+    stats:       (days = 14)   => request('GET',  `/api/god/stats?days=${days}`),
     editOwner:   (id, field, value, reason) =>
                    request('PATCH', `/api/god/owner/${id}`, { field, value, reason }),
     editBill:    (id, field, value, reason) =>

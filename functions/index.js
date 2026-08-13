@@ -40,6 +40,10 @@ import {
 } from './lib/godedit.js';
 import { runChecks, summarise, toMarkdown } from './lib/diagnostics.js';
 import {
+  dayRange, windowStart, mergeDaily, weekHeat, deviceSplit, reachOf, topList,
+  adoptionCurve, seriesByKey, funnelOf, summarise as summariseWindow,
+} from './lib/analytics.js';
+import {
   generateCode, normaliseCode, expiryFrom, canIssue, resetState, failureMessage,
   validateNewPassword, resetEmail, neutralReply,
   tempPasswordState, expiredPasswordMessage, tempPasswordExpiry, tempPasswordEmail,
@@ -374,6 +378,7 @@ export default {
         if (route === 'GET /api/god/bills')  return godBills(env, url);
         if (route === 'GET /api/god/edits')  return godEdits(env, url);
         if (route === 'GET /api/god/diagnostics') return godDiagnostics(env, url);
+        if (route === 'GET /api/god/stats') return godStats(env, url);
         if (route.startsWith('PATCH /api/god/owner/')) return editOwner(request, env, session, path);
         if (route.startsWith('PATCH /api/god/bill/'))  return editBill(request, env, session, path);
       }
@@ -2955,6 +2960,195 @@ async function godDiagnostics(env, url) {
     markdown: url.searchParams.get('md') === '1'
       ? toMarkdown({ findings, errors: recent, meta })
       : undefined,
+  });
+}
+
+/**
+ * Usage analytics for god mode — see functions/lib/analytics.js for why.
+ *
+ * Every count is a GROUP BY over rows the portal already writes. Nothing new
+ * is recorded to make this page work, and no query here reads a bill amount,
+ * a mobile number or a proof: this screen is about traffic, not money.
+ *
+ * The grouping is done in SQL because it is indexed on `at` and the alternative
+ * is dragging tens of thousands of rows into a Worker to count them. The IST
+ * shift is applied inside each query for the reason set out in the module: the
+ * building's busiest hours belong to the previous UTC day.
+ */
+async function godStats(env, url) {
+  const days = Math.max(1, Math.min(Number(url.searchParams.get('days') ?? 14), 90));
+  const now = new Date().toISOString();
+  const range = dayRange(days, now);
+  const since = windowStart(days, now);
+  // The equal-length window before this one, so every headline number has
+  // something to be compared against.
+  const previousSince = windowStart(days * 2, now);
+  const online = new Date(Date.now() - 15 * 60_000).toISOString();
+
+  const IST = "'+5 hours', '+30 minutes'";
+
+  const [
+    daily, dailyLogins, dailyClientErrors, dailyServerErrors,
+    weekHours, pageDays, pages, actions, errorCodes, agents,
+    owners, firstLogins, lastLogins, activeIds, live, capture, funnel,
+  ] = await Promise.all([
+    env.DB.prepare(
+      `SELECT date(at, ${IST}) AS day, COUNT(*) AS events,
+              SUM(CASE WHEN kind = 'page' THEN 1 ELSE 0 END) AS pages,
+              SUM(CASE WHEN kind = 'action' THEN 1 ELSE 0 END) AS actions,
+              COUNT(DISTINCT actor_id) AS people
+         FROM activity WHERE at >= ? GROUP BY day`
+    ).bind(previousSince).all(),
+
+    env.DB.prepare(
+      `SELECT date(at, ${IST}) AS day, COUNT(*) AS logins,
+              COUNT(DISTINCT actor_id) AS people
+         FROM audit_log WHERE action = 'login' AND at >= ? GROUP BY day`
+    ).bind(previousSince).all(),
+
+    // A browser error and a server error are both "something broke for a
+    // resident", so they are counted together rather than in two charts.
+    env.DB.prepare(
+      `SELECT date(at, ${IST}) AS day, COUNT(*) AS errors
+         FROM activity WHERE kind = 'client-error' AND at >= ? GROUP BY day`
+    ).bind(previousSince).all(),
+    env.DB.prepare(
+      `SELECT date(at, ${IST}) AS day, COUNT(*) AS errors
+         FROM error_log WHERE at >= ? GROUP BY day`
+    ).bind(previousSince).all(),
+
+    // Split by weekday as well as hour, which is the difference between
+    // "evenings are busy" and "Sunday evening is busy".
+    env.DB.prepare(
+      `SELECT CAST(strftime('%w', at, ${IST}) AS INTEGER) AS weekday,
+              CAST(strftime('%H', at, ${IST}) AS INTEGER) AS hour,
+              COUNT(*) AS events
+         FROM activity WHERE at >= ? GROUP BY weekday, hour`
+    ).bind(since).all(),
+
+    // Per-page daily counts, for the sparkline in each row of the pages table.
+    // Capped to the pages that could plausibly make that table.
+    env.DB.prepare(
+      `SELECT name, date(at, ${IST}) AS day, COUNT(*) AS count
+         FROM activity
+        WHERE kind = 'page' AND at >= ?
+          AND name IN (SELECT name FROM activity WHERE kind = 'page' AND at >= ?
+                        GROUP BY name ORDER BY COUNT(*) DESC LIMIT 12)
+        GROUP BY name, day`
+    ).bind(since, since).all(),
+
+    env.DB.prepare(
+      `SELECT name, COUNT(*) AS views, COUNT(DISTINCT actor_id) AS people
+         FROM activity WHERE kind = 'page' AND at >= ?
+        GROUP BY name ORDER BY views DESC LIMIT 12`
+    ).bind(since).all(),
+
+    env.DB.prepare(
+      `SELECT action AS name, COUNT(*) AS count, COUNT(DISTINCT actor_id) AS people
+         FROM audit_log WHERE at >= ?
+        GROUP BY action ORDER BY count DESC LIMIT 12`
+    ).bind(since).all(),
+
+    env.DB.prepare(
+      `SELECT code, COUNT(*) AS count, MAX(at) AS lastAt
+         FROM error_log WHERE at >= ? GROUP BY code ORDER BY count DESC LIMIT 10`
+    ).bind(since).all(),
+
+    env.DB.prepare(
+      `SELECT user_agent, COUNT(*) AS events, COUNT(DISTINCT actor_id) AS people
+         FROM activity WHERE at >= ? AND user_agent IS NOT NULL GROUP BY user_agent`
+    ).bind(since).all(),
+
+    env.DB.prepare('SELECT id, flat, name, active FROM owners').all(),
+
+    // FIRST login per resident, for the adoption curve. A flat joins that
+    // curve once and never leaves it, so the earliest login is the only one
+    // that matters and the window does not bound this query.
+    env.DB.prepare(
+      "SELECT actor_id, MIN(at) AS at FROM audit_log WHERE action = 'login' GROUP BY actor_id"
+    ).all(),
+
+    // Every login ever, not just this window — "has this flat ever used the
+    // portal" is a rollout question and does not reset when the window does.
+    env.DB.prepare(
+      "SELECT actor_id, MAX(at) AS at FROM audit_log WHERE action = 'login' GROUP BY actor_id"
+    ).all(),
+
+    env.DB.prepare(
+      'SELECT DISTINCT actor_id FROM activity WHERE at >= ? AND actor_id IS NOT NULL'
+    ).bind(since).all(),
+
+    env.DB.prepare(
+      'SELECT COUNT(DISTINCT actor_id) AS people FROM activity WHERE at >= ?'
+    ).bind(online).first(),
+
+    env.DB.prepare("SELECT value, expires_at FROM settings WHERE key = 'click_capture'").first(),
+
+    // The paying funnel, in distinct people per step. Opening the bill is a
+    // page view; the other three are audit actions. See funnelOf() for why the
+    // last step is not a payment rate.
+    env.DB.prepare(
+      `SELECT
+         (SELECT COUNT(DISTINCT actor_id) FROM activity
+           WHERE kind = 'page' AND name = '/dashboard' AND at >= ?) AS opened,
+         (SELECT COUNT(DISTINCT actor_id) FROM audit_log
+           WHERE action = 'payment.intent' AND at >= ?) AS intents,
+         (SELECT COUNT(DISTINCT actor_id) FROM audit_log
+           WHERE action = 'proof.upload' AND at >= ?) AS proofs,
+         (SELECT COUNT(DISTINCT subject_id) FROM audit_log
+           WHERE action = 'proof.approve' AND at >= ?) AS approvals`
+    ).bind(since, since, since, since).first(),
+  ]);
+
+  const rows = (r) => r?.results ?? [];
+
+  // Errors from both sources land on the same day key before merging, so the
+  // series carries one honest "things broke" count per day.
+  const errorsByDay = new Map();
+  for (const r of [...rows(dailyClientErrors), ...rows(dailyServerErrors)]) {
+    errorsByDay.set(r.day, { day: r.day, errors: (errorsByDay.get(r.day)?.errors ?? 0) + Number(r.errors ?? 0) });
+  }
+
+  const raw = {
+    activity: rows(daily),
+    logins: rows(dailyLogins),
+    errors: [...errorsByDay.values()],
+  };
+  const series = mergeDaily(raw, range);
+  const previous = mergeDaily(raw, dayRange(days * 2, now).slice(0, days));
+
+  const today = series[series.length - 1];
+
+  return json({
+    days,
+    from: range[0],
+    to: range[range.length - 1],
+    generatedAt: toIST(now),
+    online: Number(live?.people ?? 0),
+    capture: { on: isCaptureOn(capture), expiresAt: toIST(capture?.expires_at) },
+    today,
+    daily: series,
+    totals: summariseWindow(series, previous),
+    week: weekHeat(rows(weekHours)),
+    pages: topList(rows(pages), { count: 'views' }),
+    pageTrends: seriesByKey(rows(pageDays), range),
+    funnel: funnelOf(funnel ?? {}),
+    adoption: adoptionCurve({
+      firstLogins: rows(firstLogins),
+      range,
+      residents: rows(owners).filter((o) => Number(o.active) === 1).length,
+    }),
+    actions: topList(rows(actions)),
+    errorCodes: rows(errorCodes).map((e) => ({
+      ...e, atIST: toIST(e.lastAt), message: ERROR_CODES[e.code]?.message ?? '',
+    })),
+    devices: deviceSplit(rows(agents)),
+    reach: reachOf({
+      owners: rows(owners),
+      lastLogins: rows(lastLogins),
+      activeIds: rows(activeIds).map((r) => r.actor_id),
+      now,
+    }),
   });
 }
 

@@ -33,6 +33,28 @@ Admin billing: the reading grid, and generation.
 | fn | `parseReadings` | Parse pasted or uploaded readings. |
 | fn | `normaliseFlat` |  |
 
+### `functions/lib/analytics.js`
+
+Portal analytics — who is actually using this thing.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `istDay` |  |
+| fn | `istHour` |  |
+| fn | `dayRange` | The last `days` IST days, oldest first, ending with today. |
+| fn | `windowStart` | The UTC instant at which the window starts — midnight IST on its first day. |
+| fn | `mergeDaily` | One row per day in the window, whether or not anything happened on it. |
+| const | `WEEKDAYS` |  |
+| fn | `weekHeat` | The 7 × 24 grid, every cell present. |
+| fn | `adoptionCurve` | The rollout curve: how many flats had EVER logged in, as of each day. |
+| fn | `seriesByKey` | Per-key daily series, for the sparkline that belongs inside a table row. |
+| fn | `funnelOf` | The paying funnel: opened the bill → tapped Pay → sent a proof → approved. |
+| fn | `classifyDevice` | User agent → a word a human can act on. |
+| fn | `deviceSplit` |  |
+| fn | `summarise` | Window totals, plus the comparison that makes them mean anything. |
+| fn | `reachOf` | Rollout reach — the number the committee actually asks for. |
+| fn | `topList` |  |
+
 ### `functions/lib/attachments.js`
 
 Attachments on notices and comments.
@@ -597,6 +619,14 @@ Dialling codes, and what a valid national number looks like under each.
 | fn | `splitMobile` | Split an E.164 number into its dialling code and the rest. |
 | fn | `countryName` | The country's own name for itself is not what an admin here is scanning for; the English name is. |
 
+### `public/js/god-dash.js`
+
+The god-mode dashboard — is anyone actually using this portal? The activity log below it answers "what happened to 4A on Tuesday".
+
+| | Export | What it does |
+|---|---|---|
+| fn | `renderDashboard` | Returns the container immediately and fills it when the numbers arrive. |
+
 ### `public/js/i18n.js`
 
 Formatting for the things a resident reads: money, weight, months, dates.
@@ -714,4 +744,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-378 exports. 204 have no doc comment.
+394 exports. 209 have no doc comment.

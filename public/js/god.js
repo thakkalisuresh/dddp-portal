@@ -1,5 +1,9 @@
 /**
- * The activity log — everything that has happened, newest first.
+ * God mode — the usage dashboard, then everything that has happened.
+ *
+ * The dashboard came second and sits first: the log answers "what happened to
+ * 4A on Tuesday", and the question actually being asked of this page most days
+ * is "is anyone using the portal at all". See js/god-dash.js.
  *
  * Superadmin only. Actions, page views and errors are merged into one
  * timeline, because "what happened to this resident on Tuesday" is a question
@@ -12,12 +16,18 @@
  */
 
 import { api, ApiError } from './api.js';
+import { renderDashboard } from './god-dash.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
 import { $, el, esc, renderViewBanner, showError, setChildren } from './ui.js';
 
 const main = $('#main');
 let filters = { flat: '', kind: '', q: '', since: '' };
+
+// Built once and moved between renders rather than rebuilt with them. Typing in
+// the timeline search re-renders the page on every keystroke, and a dashboard
+// rebuilt each time would re-run its aggregate query on every letter.
+let dash = null;
 
 trackPage('/god');
 init();
@@ -32,6 +42,7 @@ async function init() {
     $('#who').innerHTML = `God mode <span>· ${esc(me.name)}</span>`;
     renderViewBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
     renderNav(me, '/god');
+    dash = renderDashboard();
     await load();
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) { location.href = '/login'; return; }
@@ -63,7 +74,9 @@ function render(rows, generatedAt) {
   });
 
   setChildren(main,
+    dash,
     controls(),
+    el('p', { class: 'label', style: 'padding-top:var(--s-4)' }, 'Activity log'),
     filterBar(),
     el('div', { class: 'panel', style: 'padding:var(--s-3) var(--s-4)' },
       el('p', { class: 'small muted' },
