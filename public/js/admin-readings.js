@@ -107,7 +107,17 @@ function header() {
     el('div', { class: 'progress' },
       el('span', { class: 'progress__track' },
         el('span', { class: 'progress__fill', style: `width:${pct}%` })),
-      el('span', { class: 'progress__label' }, `${grid.entered} of ${grid.total} entered`))
+      el('span', { class: 'progress__label' }, `${grid.entered} of ${grid.total} entered`)),
+
+    // Unsent readings, said out loud. The old code claimed a failed save was
+    // queued and would sync, and neither half was true — so the one state that
+    // could lose a meter walk was also the only one with no indicator.
+    el('div', { class: 'unsaved note note--bad', hidden: true },
+      el('span', { class: 'unsaved__text' }, ''),
+      el('button', {
+        class: 'btn btn--sm', type: 'button', style: 'margin-left:var(--s-3)',
+        onclick: () => flush(),
+      }, 'Retry now'))
   );
 }
 
@@ -347,8 +357,11 @@ function row(f) {
     const value = validate();
     if (value == null) return;
     pending.set(f.flat, value);
+    indicators.set(f.flat, saved);
+    saved.className = 'msg__saved muted';
+    saved.textContent = 'saving…';
     refreshProgress();
-    save(f.flat, saved);
+    scheduleFlush();
   });
 
   if (f.reading != null) validate();
@@ -388,18 +401,88 @@ function excludedPanel() {
       '.'));
 }
 
-/** Autosave per row. A corridor is a dead spot, so failures queue and retry. */
-async function save(flat, saved) {
-  try {
-    await api.admin.saveReadings(period, [{ flat, reading: pending.get(flat) }]);
-    pending.delete(flat);
-    saved.className = 'msg__saved msg--ok';
-    saved.textContent = '\u2713 saved';
-  } catch {
-    saved.className = 'msg__saved msg--warn';
-    saved.textContent = 'saved on this phone \u00b7 will sync';
+/**
+ * Autosave, batched. A corridor is a dead spot, so failures queue and retry \u2014
+ * and this time that sentence is true.
+ *
+ * IT USED TO BE ONE REQUEST PER FLAT. Pasting a month dispatched `change` on
+ * all 99 rows at once, so 99 PUTs left the browser inside a second. They mostly
+ * arrive; "mostly" is the problem, and the endpoint has always accepted an
+ * array, so the burst bought nothing.
+ *
+ * AND THE FAILURE MESSAGE WAS A LIE. It said "saved on this phone \u00b7 will sync"
+ * while `pending` was an in-memory Map that nothing ever retried, drained or
+ * persisted \u2014 the value lived until the tab was closed and then did not. A
+ * treasurer who trusted that sentence lost the reading and had no way to know.
+ * Now the queue is genuinely retried: on the next edit, on `online`, on demand,
+ * and the tab refuses to close quietly while anything is unsent.
+ */
+const indicators = new Map();   // flat -> the \u2713/! element for that row
+let flushTimer = null;
+let flushing = false;
+
+function scheduleFlush(delay = 400) {
+  clearTimeout(flushTimer);
+  flushTimer = setTimeout(flush, delay);
+}
+
+function markRows(flats, className, text) {
+  for (const flat of flats) {
+    const node = indicators.get(flat);
+    if (!node) continue;
+    node.className = `msg__saved ${className}`;
+    node.textContent = text;
   }
 }
+
+async function flush() {
+  if (flushing || !pending.size) return;
+  flushing = true;
+
+  // Snapshotted before the await: a treasurer types on while the request is in
+  // flight, and anything added afterwards belongs to the NEXT flush rather than
+  // being marked saved by this one.
+  const batch = [...pending.entries()].map(([flat, reading]) => ({ flat, reading }));
+  const flats = batch.map((b) => b.flat);
+
+  try {
+    await api.admin.saveReadings(period, batch);
+    for (const { flat, reading } of batch) {
+      // Only clear if unchanged since the snapshot, or an edit made mid-flight
+      // would be dropped without ever being sent.
+      if (pending.get(flat) === reading) pending.delete(flat);
+    }
+    markRows(flats.filter((f) => !pending.has(f)), 'msg--ok', '\u2713 saved');
+  } catch {
+    markRows(flats, 'msg--error', 'not saved \u00b7 will retry');
+    // Backing off rather than hammering: the usual cause is a dead spot in a
+    // stairwell, and it comes back on its own.
+    scheduleFlush(5000);
+  } finally {
+    flushing = false;
+    refreshUnsaved();
+    if (pending.size) scheduleFlush(1500);
+  }
+}
+
+/** A banner while anything is unsent, because a lost reading is silent. */
+function refreshUnsaved() {
+  const bar = main.querySelector('.unsaved');
+  if (!bar) return;
+  bar.hidden = pending.size === 0;
+  bar.querySelector('.unsaved__text').textContent =
+    `${pending.size} reading${pending.size > 1 ? 's' : ''} not saved yet`;
+}
+
+// The retries that make the promise honest.
+addEventListener('online', () => scheduleFlush(0));
+addEventListener('beforeunload', (event) => {
+  if (!pending.size) return;
+  event.preventDefault();
+  // Wording is the browser's; what matters is that the tab no longer closes
+  // silently on unsent readings.
+  event.returnValue = '';
+});
 
 function footbar() {
   const generate = el('button', {
@@ -407,6 +490,11 @@ function footbar() {
     onclick: async () => {
       previewPanel.replaceChildren(el('p', { class: 'small muted' }, 'Checking…'));
       try {
+        // Anything still queued is flushed FIRST. The preview asks the server
+        // what it holds, so an unsent row reads back as a flat nobody entered —
+        // the check would report the month incomplete and point at rows that
+        // are filled in on screen.
+        await flush();
         const p = await api.admin.preview(period);
         previewPanel.replaceChildren(previewSummary(p));
       } catch (err) {
