@@ -20,11 +20,26 @@ export function esc(value) {
   ));
 }
 
+// createElement always builds an HTML element, so el('svg') produced an
+// HTMLUnknownElement named "svg" that rendered as nothing at all — the bottom
+// nav showed labels with a blank space where each icon should be. SVG elements
+// only work in their own namespace. Children set through `html:` are fine
+// without listing them here: innerHTML parses in the context element's
+// namespace, so the paths inside a real <svg> come out as real SVG nodes.
+const SVG_TAGS = new Set([
+  'svg', 'path', 'g', 'circle', 'ellipse', 'rect', 'line',
+  'polyline', 'polygon', 'defs', 'use',
+]);
+
 export function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
+  const node = SVG_TAGS.has(tag)
+    ? document.createElementNS('http://www.w3.org/2000/svg', tag)
+    : document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
     if (v == null || v === false) continue;
-    if (k === 'class') node.className = v;
+    // setAttribute, not .className: on an SVG element className is a read-only
+    // SVGAnimatedString, and assigning to it throws.
+    if (k === 'class') node.setAttribute('class', v);
     else if (k === 'html') node.innerHTML = v;
     else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
     else node.setAttribute(k, v === true ? '' : v);
