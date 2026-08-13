@@ -13,6 +13,9 @@ import {
   previousPeriod, jumpWarning, changeRate, normaliseFlat,
 } from './lib/admin.js';
 import { previewGeneration, computeBill, isExempt } from './lib/billing.js';
+import {
+  approvalPolicy, canApprove, isSatisfied, needsApproval, expiresAt,
+} from './lib/approvals.js';
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { validateStatement, parseStatement, reconcile, sweepAbandonedStatements } from './lib/statement.js';
 import { readReceipt } from './lib/vision.js';
@@ -243,6 +246,15 @@ export default {
         }
         if (request.method === 'POST' && /^\/api\/admin\/bills\/\d+\/mark-paid$/.test(path)) {
           return markPaid(request, env, session, path);
+        }
+        // Approving is an ADMIN action, not a god one — the whole point is that
+        // the superadmin who raised the edit cannot also wave it through.
+        if (route === 'GET /api/admin/bill-edits') return listBillEditRequests(env, session);
+        if (request.method === 'POST' && /^\/api\/admin\/bill-edits\/\d+\/approve$/.test(path)) {
+          return decideBillEdit(request, env, session, path, 'approve');
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/bill-edits\/\d+\/reject$/.test(path)) {
+          return decideBillEdit(request, env, session, path, 'reject');
         }
         if (route === 'GET /api/admin/late-fees') return lateFeePanel(env);
         if (route === 'POST /api/admin/late-fee-exemption/bulk') {
@@ -2982,6 +2994,199 @@ async function deleteMeterChange(request, env, session) {
   return json({ ok: true, flat, period });
 }
 
+/** Everyone who could ever approve: the admins and the superadmin. */
+async function approvalBench(env) {
+  const rows = await env.DB.prepare(
+    `SELECT id, role, flat FROM owners
+      WHERE active = 1 AND role IN ('admin','superadmin') ORDER BY id`
+  ).all();
+  return rows.results ?? [];
+}
+
+async function policyFor(env, { bill, requesterId }) {
+  return approvalPolicy({
+    admins: await approvalBench(env),
+    requesterId,
+    billFlat: bill.flat,
+  });
+}
+
+/** The single place a bill's money actually changes, however it was agreed. */
+async function writeBillEdit(env, session, { bill, field, value, reason, actorId }) {
+  const { bill: next, derived, computed } = applyBillEdit(bill, field, value);
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(
+    `UPDATE bills SET gas_amount = ?, other_charges = ?, additional_charges = ?,
+            late_fee = ?, total = ?, status = ?, manual_total = ?,
+            adjusted_by = ?, adjusted_at = ?, adjust_reason = ?
+      WHERE id = ?`
+  ).bind(
+    next.gas_amount, next.other_charges, next.additional_charges, next.late_fee,
+    next.total, next.status, next.manual_total,
+    actorId, now, reason, bill.id
+  ).run();
+
+  return { next, derived, computed };
+}
+
+/**
+ * Hold the edit until the committee agrees. Nothing about the bill changes
+ * here: the proposed value waits in its own row, because a bill that briefly
+ * says something nobody approved is exactly what this is preventing.
+ */
+async function requestBillEdit(env, session, { bill, field, value, reason, totalAfter }) {
+  const policy = await policyFor(env, { bill, requesterId: session.actor.id });
+
+  if (!policy.satisfiable) {
+    await reportError(env, 'DDP-ADMIN-016', {
+      billId: bill.id, eligible: policy.approverIds.length, required: policy.required,
+    });
+    return problem(409, 'DDP-ADMIN-016',
+      'There are not enough admins available to approve this. Add an admin, or '
+      + 'ask the committee before changing the bill.');
+  }
+
+  const now = new Date().toISOString();
+  const numeric = typeof value === 'number' ? value : null;
+  const text = typeof value === 'number' ? null : String(value);
+
+  const res = await env.DB.prepare(
+    `INSERT INTO bill_edit_requests
+       (bill_id, field, value, value_text, reason, total_before, total_after,
+        requested_by, requested_at, expires_at, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
+  ).bind(bill.id, field, numeric, text, reason, bill.total, totalAfter,
+         session.actor.id, now, expiresAt(now)).run();
+
+  await audit(env, session, 'bill.edit.request', {
+    billId: bill.id, flat: bill.flat, period: bill.period, field,
+    totalBefore: bill.total, totalAfter, required: policy.required,
+  });
+
+  return json({
+    ok: true,
+    pending: true,
+    requestId: res?.meta?.last_row_id ?? null,
+    required: policy.required,
+    approvers: policy.approverIds,
+    subjectIsAdmin: policy.subjectIsAdmin,
+    totalBefore: bill.total,
+    totalAfter,
+    note: policy.subjectIsAdmin
+      ? 'This bill belongs to an admin, so every other eligible admin must approve.'
+      : `Waiting for ${policy.required} other admins to approve.`,
+  });
+}
+
+/** Open requests, with everything an approver needs to judge one. */
+async function listBillEditRequests(env, session) {
+  const rows = await env.DB.prepare(
+    `SELECT r.*, b.flat, b.period, o.name AS requested_by_name,
+            (SELECT COUNT(*) FROM bill_edit_approvals a
+              WHERE a.request_id = r.id AND a.decision = 'approve') AS approvals
+       FROM bill_edit_requests r
+       JOIN bills b ON b.id = r.bill_id
+       LEFT JOIN owners o ON o.id = r.requested_by
+      WHERE r.status = 'pending'
+      ORDER BY r.requested_at`
+  ).all();
+
+  const bench = await approvalBench(env);
+  const out = [];
+  for (const r of rows.results ?? []) {
+    const policy = approvalPolicy({ admins: bench, requesterId: r.requested_by, billFlat: r.flat });
+    const verdict = canApprove({ policy, approver: session.actor, request: r });
+    out.push({
+      ...r,
+      required: policy.required,
+      // So the screen can grey the button and say why, rather than offering an
+      // action that will be refused.
+      canApprove: verdict.ok,
+      substitute: verdict.substitute ?? false,
+      blockedBecause: verdict.ok ? null : verdict.reason,
+      hoursLeft: verdict.hoursLeft ?? null,
+    });
+  }
+  return json({ requests: out });
+}
+
+async function decideBillEdit(request, env, session, path, decision) {
+  const id = Number(path.split('/')[4]);
+  const req = await env.DB.prepare(
+    `SELECT r.*, b.flat FROM bill_edit_requests r JOIN bills b ON b.id = r.bill_id
+      WHERE r.id = ?`
+  ).bind(id).first();
+  if (!req) return problem(404, 'DDP-ADMIN-017', 'No such request.');
+
+  // Lapsed on read rather than by a job: the expiry only has to be true at the
+  // moment somebody acts on it, and a cron for it would be one more thing to
+  // fail quietly.
+  if (req.status === 'pending' && Date.parse(req.expires_at) < Date.now()) {
+    await env.DB.prepare(
+      "UPDATE bill_edit_requests SET status = 'expired', resolved_at = ? WHERE id = ? AND status = 'pending'"
+    ).bind(new Date().toISOString(), id).run();
+    return problem(409, 'DDP-ADMIN-017', 'That request has lapsed. Raise it again if it still stands.');
+  }
+
+  const policy = await policyFor(env, { bill: req, requesterId: req.requested_by });
+  const verdict = canApprove({ policy, approver: session.actor, request: req });
+  if (!verdict.ok) {
+    await reportError(env, verdict.code, { requestId: id, actor: session.actor.id, reason: verdict.reason });
+    return problem(403, verdict.code,
+      verdict.reason === 'requester' ? 'You raised this edit, so you cannot approve it.'
+      : verdict.reason === 'too-soon' ? `An admin still has ${verdict.hoursLeft}h to answer.`
+      : 'This is not yours to approve.');
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO bill_edit_approvals (request_id, approver_id, decision, substitute, at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (request_id, approver_id) DO UPDATE SET
+       decision = excluded.decision, at = excluded.at, substitute = excluded.substitute`
+  ).bind(id, session.actor.id, decision, verdict.substitute ? 1 : 0, now).run();
+
+  if (decision === 'reject') {
+    await env.DB.prepare(
+      "UPDATE bill_edit_requests SET status = 'rejected', resolved_at = ? WHERE id = ?"
+    ).bind(now, id).run();
+    await audit(env, session, 'bill.edit.reject', { requestId: id, billId: req.bill_id });
+    return json({ ok: true, status: 'rejected' });
+  }
+
+  const approvals = await env.DB.prepare(
+    'SELECT approver_id, decision FROM bill_edit_approvals WHERE request_id = ?'
+  ).bind(id).all();
+
+  if (!isSatisfied(policy, approvals.results ?? [])) {
+    const yes = (approvals.results ?? []).filter((a) => a.decision === 'approve').length;
+    await audit(env, session, 'bill.edit.approve', { requestId: id, billId: req.bill_id, yes });
+    return json({ ok: true, status: 'pending', approvals: yes, required: policy.required });
+  }
+
+  // The last approval lands: now, and only now, the bill changes.
+  const bill = await env.DB.prepare('SELECT * FROM bills WHERE id = ?').bind(req.bill_id).first();
+  const value = req.value_text ?? req.value;
+  const { next, derived, computed } = await writeBillEdit(env, session, {
+    bill, field: req.field, value, reason: req.reason, actorId: req.requested_by,
+  });
+
+  await env.DB.prepare(
+    "UPDATE bill_edit_requests SET status = 'applied', resolved_at = ? WHERE id = ?"
+  ).bind(now, id).run();
+
+  await audit(env, session, `god.edit.bill.${req.field}`, {
+    requestId: id, billId: req.bill_id, flat: bill.flat, period: bill.period,
+    field: req.field, before: bill[req.field], after: value,
+    totalBefore: bill.total, totalAfter: next.total, reason: req.reason,
+    approvedBy: (approvals.results ?? []).filter((a) => a.decision === 'approve').map((a) => a.approver_id),
+    derived, computed,
+  });
+
+  return json({ ok: true, status: 'applied', total: next.total });
+}
+
 async function editBill(request, env, session, path) {
   if (session.impersonating) {
     await reportError(env, 'DDP-AUTH-007', { actor: session.actor.id });
@@ -3005,18 +3210,19 @@ async function editBill(request, env, session, path) {
   if (!change) return json({ ok: true, unchanged: true });
 
   const { bill: next, derived, computed } = applyBillEdit(bill, field, value);
-  const now = new Date().toISOString();
 
-  await env.DB.prepare(
-    `UPDATE bills SET gas_amount = ?, other_charges = ?, additional_charges = ?,
-            late_fee = ?, total = ?, status = ?, manual_total = ?,
-            adjusted_by = ?, adjusted_at = ?, adjust_reason = ?
-      WHERE id = ?`
-  ).bind(
-    next.gas_amount, next.other_charges, next.additional_charges, next.late_fee,
-    next.total, next.status, next.manual_total,
-    session.actor.id, now, reason, id
-  ).run();
+  // MONEY DOES NOT MOVE ON ONE PERSON'S SAY-SO. Readings are checked before
+  // they are submitted, so an edit after generation means somebody already got
+  // it wrong — and correcting it quietly is the thing the committee decided
+  // must not be possible. An edit that leaves the total alone still applies at
+  // once; there is nothing for a second pair of eyes to protect.
+  if (needsApproval({ totalBefore: bill.total, totalAfter: next.total })) {
+    return requestBillEdit(env, session, {
+      bill, field, value, reason, totalAfter: next.total, computed, derived,
+    });
+  }
+
+  await writeBillEdit(env, session, { bill, field, value, reason, actorId: session.actor.id });
 
   await audit(env, session, `god.edit.bill.${field}`, {
     ...change, flat: bill.flat, period: bill.period,

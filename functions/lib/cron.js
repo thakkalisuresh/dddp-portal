@@ -72,8 +72,14 @@ export async function applyLateFees(env, { today = istToday() } = {}) {
       // arrives as undefined, reads as "no claim", and charges every held bill
       // on the first run. Unit tests would not catch it — they hand the
       // decision a bill object directly and never go through this query.
+      // pending_edit rides along for the same reason claimed_at does: a column
+      // left out of this SELECT arrives as undefined, reads as "no pending
+      // edit", and charges the bill anyway. Unit tests would not catch it —
+      // they hand the decision a bill object directly.
       `SELECT b.id, b.flat, b.status, b.total, b.late_fee_at, b.claimed_at,
-              o.late_fee_exempt_until
+              o.late_fee_exempt_until,
+              EXISTS (SELECT 1 FROM bill_edit_requests r
+                       WHERE r.bill_id = b.id AND r.status = 'pending') AS pending_edit
          FROM bills b LEFT JOIN owners o ON o.id = b.owner_id
         WHERE b.period = ?`
     ).bind(p.period).all();
@@ -128,7 +134,9 @@ export async function applyLateFeeToBill(env, billId, { today = istToday() } = {
   const bill = await env.DB.prepare(
     `SELECT b.id, b.status, b.total, b.late_fee, b.late_fee_at, b.claimed_at,
             p.due_date, p.late_fee AS period_late_fee, p.late_fee_after,
-            o.late_fee_exempt_until
+            o.late_fee_exempt_until,
+            EXISTS (SELECT 1 FROM bill_edit_requests r
+                     WHERE r.bill_id = b.id AND r.status = 'pending') AS pending_edit
        FROM bills b
        JOIN periods p ON p.period = b.period
        LEFT JOIN owners o ON o.id = b.owner_id

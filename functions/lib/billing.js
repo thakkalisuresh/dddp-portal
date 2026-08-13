@@ -374,6 +374,13 @@ export function lateFeeDecision(bill, {
   if (bill.status === 'paid' || bill.status === 'waived') return { action: 'skip', reason: 'settled' };
   if (bill.status === 'awaiting') return { action: 'skip', reason: 'proof-under-review' };
 
+  // A CORRECTION IN FLIGHT FREEZES THE CLOCK. Two admins have to agree before a
+  // total moves, and they are allowed to take their time — so without this the
+  // fee lands at midnight on a bill everybody already agrees is wrong, and
+  // removing it needs its own waiver on top. The resident is not late because
+  // the committee is deliberating.
+  if (bill.pending_edit) return { action: 'skip', reason: 'edit-pending' };
+
   // NOTHING OWED IS NOT LATE. A flat that consumed nothing — empty for the
   // month, or between tenants — bills at zero, which is correct and stays
   // visible so the flat is still accounted for. But an unpaid zero sailed

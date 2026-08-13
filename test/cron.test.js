@@ -81,6 +81,15 @@ describe('planning a month of late fees', () => {
     expect(dayBefore.skip[0].reason).toBe('not-yet-due');
   });
 
+  it('freezes the clock while a correction is waiting for approval (B35)', () => {
+    // Two admins must agree before a total moves and they may take their time.
+    // Without this the fee lands at midnight on a bill everyone already agrees
+    // is wrong, and removing it needs its own waiver on top.
+    const plan = planLateFees([bill({ pending_edit: 1 })], opts);
+    expect(plan.charge).toHaveLength(0);
+    expect(plan.skip[0].reason).toBe('edit-pending');
+  });
+
   it('never charges a proof already under review', () => {
     const plan = planLateFees([bill({ status: 'awaiting' })], opts);
     expect(plan.charge).toHaveLength(0);

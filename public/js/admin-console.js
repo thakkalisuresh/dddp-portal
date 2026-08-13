@@ -42,6 +42,7 @@ const TABS = [
   { id: 'proofs',    label: 'Proofs',    href: '/admin/proofs.html' },
   { id: 'statement', label: 'Reconcile', href: '/admin/statement.html' },
   { id: 'latefees',  label: 'Late fees', render: lateFeesPanel },
+  { id: 'approvals', label: 'Approvals', render: approvalsPanel },
   { id: 'residents', label: 'Residents', render: residentsPanel },
   { id: 'notices',   label: 'Notices',   render: noticesPanel },
   { id: 'messages',  label: 'Messages',  render: messagesPanel },
@@ -1310,6 +1311,85 @@ async function errorsPanel() {
  * carries is an exemption granted during one dispute and still running two
  * years later, invisible to whoever inherited the treasurer's job.
  */
+/**
+ * Bill corrections waiting on the committee.
+ *
+ * The rule the building agreed: readings are checked before they are
+ * submitted, so an edit afterwards means somebody already got it wrong, and
+ * money must not move on one person's say-so. Two other admins agree — every
+ * other admin when the bill belongs to one of them — and never the person who
+ * raised it or the household it belongs to.
+ *
+ * The screen states WHY a button is unavailable rather than hiding it. "You
+ * raised this" and "this is your flat's bill" are the safeguard working, and an
+ * admin who cannot tell the difference between that and a broken page will ring
+ * somebody about it.
+ */
+async function approvalsPanel() {
+  const list = el('div', { class: 'stack' });
+  const status = el('div');
+
+  const load = async () => {
+    try {
+      const { requests } = await api.admin.billEdits();
+      if (!requests.length) {
+        list.replaceChildren(el('p', { class: 'muted' },
+          'Nothing waiting. Bill corrections appear here for a second pair of eyes.'));
+        return;
+      }
+      list.replaceChildren(...requests.map((r) => card(r)));
+    } catch (err) { showError(list, err); }
+  };
+
+  const decide = async (id, how) => {
+    status.replaceChildren();
+    try {
+      const res = how === 'approve'
+        ? await api.admin.approveEdit(id)
+        : await api.admin.rejectEdit(id);
+      status.replaceChildren(el('div', { class: 'note note--good' },
+        res.status === 'applied' ? 'Approved — the bill has been corrected.'
+        : res.status === 'rejected' ? 'Rejected. The bill is unchanged.'
+        : `Approved. Waiting for ${res.required - res.approvals} more.`));
+      await load();
+    } catch (err) { showError(status, err); }
+  };
+
+  // .rowitem, because that is what this page defines. .rec lives in
+  // god-edit.html and would arrive here unstyled.
+  const card = (r) => el('div', { class: 'rowitem' },
+    el('div', { class: 'rowitem__main' },
+      el('b', {}, `${r.flat} · ${periodLabel(r.period)}`),
+      el('div', {},
+        `${r.field}: `, money(r.total_before), ' → ', money(r.total_after),
+        ` · ${r.approvals} of ${r.required} approved`),
+      el('div', {}, `Asked by ${r.requested_by_name ?? 'an admin'} · ${r.reason}`)),
+    r.canApprove
+      ? el('div', { style: 'display:flex;gap:var(--s-3)' },
+          el('button', { class: 'btn btn--sm', type: 'button',
+            onclick: () => decide(r.id, 'approve') },
+            r.substitute ? 'Approve (standing in)' : 'Approve'),
+          el('button', { class: 'btn btn--sm btn--ghost', type: 'button',
+            onclick: () => decide(r.id, 'reject') }, 'Reject'))
+      : el('div', { class: 'small muted' },
+          r.blockedBecause === 'requester' ? 'You raised this, so you cannot approve it.'
+          : r.blockedBecause === 'too-soon'
+            ? `Waiting on an admin — you can stand in in ${r.hoursLeft}h.`
+            : 'Not yours to approve.'));
+
+  await load();
+
+  return el('div', { class: 'panel stack' },
+    el('h2', {}, 'Bill corrections'),
+    el('p', { class: 'small muted' },
+      'A correction that moves a total needs two other admins. If the bill '
+      + 'belongs to an admin, every other admin has to agree, and nobody ever '
+      + 'approves a bill for their own flat. While a correction is waiting, the '
+      + 'late fee on that bill is frozen.'),
+    status,
+    list);
+}
+
 async function lateFeesPanel() {
   const wrap = el('div', { class: 'stack' }, el('p', { class: 'muted' }, 'Loading…'));
 

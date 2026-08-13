@@ -51,6 +51,20 @@ Portal analytics — who is actually using this thing.
 | fn | `reachOf` | Rollout reach — the number the committee actually asks for. |
 | fn | `topList` |  |
 
+### `functions/lib/approvals.js`
+
+Who may approve a bill edit, and how many of them it takes.
+
+| | Export | What it does |
+|---|---|---|
+| const | `SUBSTITUTE_AFTER_HOURS` |  |
+| const | `REQUEST_TTL_DAYS` |  |
+| fn | `approvalPolicy` | @param admins [{ id, role, flat }] — active admins AND the superadmin @param requesterId who raised the edit @param billFlat the flat the bill belongs to |
+| fn | `canApprove` | May this person approve this request, right now? `substitute` is not a second class of approval — it is the same decision, recorded as having been made by the superadmin in place of an admin who did not answer, so it can be read back as exactly that. |
+| fn | `isSatisfied` |  |
+| fn | `expiresAt` |  |
+| fn | `needsApproval` | Does this edit need approval at all? Bill totals are whole rupees — the paise tag was retired and `toWholeRupees` ceilings every total — so the smallest move any edit can make is ₹1. |
+
 ### `functions/lib/attachments.js`
 
 Attachments on notices and comments.
@@ -759,4 +773,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-402 exports. 211 have no doc comment.
+409 exports. 215 have no doc comment.
