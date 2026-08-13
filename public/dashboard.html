@@ -20,7 +20,15 @@
     background: var(--surface); color: var(--ink); text-decoration: none;
   }
   .pay-app:hover { border-color: var(--accent); }
-  .pay-app__mark { width: 30px; height: 30px; border-radius: 8px; flex: none; }
+  /* The lettered tile shown until a brand's real SVG is dropped into
+     public/img/upi/. Deliberately the interface's own font rather than
+     anything resembling a wordmark — see appMark() in dashboard.js. */
+  .pay-app__mark {
+    width: 30px; height: 30px; border-radius: 8px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-family: var(--font-ui); font-weight: 600;
+    font-size: var(--text-xs); letter-spacing: .02em;
+  }
   .helper { font-size: var(--text-sm); color: var(--ink-muted); text-align: center; }
   .chart { display: flex; align-items: flex-end; gap: var(--s-2); height: 88px; }
   .chart__bar { flex: 1; background: #DCE8E2; border-top: 2.5px solid var(--accent); position: relative; min-height: 2px; }

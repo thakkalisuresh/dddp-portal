@@ -16,10 +16,12 @@ import { treasurerLine } from './contact.js';
 
 const main = $('#main');
 
+// `initials` is the fallback mark, NOT an attempt at the brand's logo. See
+// appMark() for why there is no logo here and what to do about it.
 const UPI_APPS = [
-  { key: 'gpay',    label: 'Google Pay', colour: '#1A73E8' },
-  { key: 'phonepe', label: 'PhonePe',    colour: '#5F259F' },
-  { key: 'paytm',   label: 'Paytm',      colour: '#00BAF2' },
+  { key: 'gpay',    label: 'Google Pay', colour: '#1A73E8', initials: 'GP' },
+  { key: 'phonepe', label: 'PhonePe',    colour: '#5F259F', initials: 'Pe' },
+  { key: 'paytm',   label: 'Paytm',      colour: '#00BAF2', initials: 'Pm' },
 ];
 
 trackPage('/dashboard');
@@ -296,14 +298,42 @@ function breakdownSection(bill) {
   );
 }
 
-/** The brand mark if we have it, the coloured dot if we do not. */
+/**
+ * The brand mark if we have it, a lettered tile if we do not.
+ *
+ * WHY THERE IS NO LOGO IN THE REPOSITORY. `public/img/upi/` holds a README and
+ * nothing else. These marks are registered trademarks with published rules on
+ * size, clear space and recolouring, so they have to come from each brand's own
+ * press or developer page — not from an image search, and not drawn by hand. An
+ * approximation would be a trademark used wrongly AND would look worse than no
+ * logo, because a mark everybody knows is a mark everybody can see is off.
+ *
+ * WHAT CHANGED, and why it was worth changing. The fallback used to be a plain
+ * block of brand colour, which read exactly like an image that had failed to
+ * load — reported that way from the live site on 2026-08-12. It now carries the
+ * app's initials, which is the same amount of information a colour swatch
+ * carried and none of the suggestion that something is broken. The name is
+ * beside it either way; this tile only has to look deliberate.
+ *
+ * The initials are NOT logos and are not styled to imitate one: two plain
+ * letters in the interface's own font on a rounded tile.
+ *
+ * DROPPING THE REAL FILES IN IS STILL THE WHOLE INSTALLATION. Put `gpay.svg`,
+ * `phonepe.svg` or `paytm.svg` in `public/img/upi/` and it is used instead,
+ * with no code change — the `error` handler below is what makes the swap
+ * automatic and per-file, so three brands can arrive on three different days.
+ */
 function appMark(app) {
-  const dot = el('span', { class: 'pay-app__mark', style: `background:${app.colour}` });
+  // aria-hidden, exactly as the img is: the row already says "Google Pay", and
+  // without this a screen reader announces the link as "GP Google Pay".
+  const tile = el('span', {
+    class: 'pay-app__mark', style: `background:${app.colour}`, 'aria-hidden': 'true',
+  }, app.initials ?? '');
   const img = el('img', {
     class: 'pay-app__logo', src: `/img/upi/${app.key}.svg`, alt: '', 'aria-hidden': 'true',
     width: '22', height: '22', loading: 'lazy',
   });
-  img.addEventListener('error', () => img.replaceWith(dot));
+  img.addEventListener('error', () => img.replaceWith(tile));
   return img;
 }
 
