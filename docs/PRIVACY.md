@@ -58,6 +58,30 @@ from the browser.
 submissions and nothing else. There is no analytics script, no third-party
 tag, and no font CDN request.
 
+## The usage dashboard records nothing new
+
+Added 2026-08-12. The god page opens with counts — daily actives, logins, page
+views, a weekday-by-hour grid, the device split, how far people get towards
+paying, how many flats have ever logged in and which ones never have — and
+every one of them is a `GROUP BY` over the three tables above. No new column,
+no new table, no new event: the dashboard is a second reading of rows the
+portal already wrote, and switching it on changed the recording surface by
+nothing at all.
+
+The weekday-and-hour grid deserves a note of its own, because a 7 × 24 grid of
+a *single* resident's activity would be a picture of when that person is at
+home. It is building-wide only, and there is no per-resident version of it.
+
+Two lines it deliberately does not cross. It shows no money — not a bill, not a
+balance, not a payment — because "is anyone using this" is a traffic question.
+And it buckets devices into phone / tablet / desktop rather than reporting
+browser and version, which in a building where most people own exactly one
+device would be a fingerprint with a flat number attached.
+
+The one part of it that names people is the list of flats that have never
+logged in, because "23 flats" cannot be knocked on and those names are already
+one click away in the roster.
+
 ## Who can read it
 
 Reading the activity log is itself logged (`god:timeline`), including which

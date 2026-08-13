@@ -25,6 +25,127 @@
   .ev__name { font-family: var(--font-ui); font-weight: 600; }
   .ev__detail { color: var(--ink-muted); font-size: var(--text-xs); word-break: break-word; }
   @media (max-width: 640px) { .ev { grid-template-columns: 1fr; gap: var(--s-1); } }
+
+  /* ── dashboard ──────────────────────────────────────────────────────────
+     Hairlines and one accent, same as everywhere else. No shadows, no second
+     colour, no chart library: the bars are divs with a height. */
+  #dash { gap: var(--s-4); }
+  .dash-panel { padding: var(--s-4); display: flex; flex-direction: column; gap: var(--s-3); }
+  /* align-items:start, or every panel in a row stretches to the tallest one and
+     a short list ends up with 600px of white under it. */
+  .dash-cols { display: grid; gap: var(--s-4); align-items: start;
+               grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .dash-panel--wide { grid-column: 1 / -1; }
+  /* Four columns of its own — a sparkline plus two figures does not fit a third
+     of the row without the last header truncating to a single letter. */
+  .dash-panel--two { grid-column: span 2; }
+  @media (max-width: 1000px) { .dash-panel--two { grid-column: 1 / -1; } }
+
+  .tiles { display: grid; gap: var(--s-3); grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .tile { border: 1px solid var(--border); border-radius: var(--radius);
+          background: var(--surface); padding: var(--s-3) var(--s-4);
+          display: flex; flex-direction: column; gap: 2px; }
+  .tile__num { font-family: var(--font-ui); font-size: var(--text-xl);
+               font-variant-numeric: tabular-nums; line-height: var(--leading-tight); }
+  .tile__note { font-size: var(--text-xs); color: var(--ink-muted); }
+  /* Tone is a left rule, never fill alone — the status rule from the plan
+     applies to a number as much as to a chip. */
+  .tile--live { border-left: 3px solid var(--accent); }
+  .tile--good { border-left: 3px solid var(--paid); }
+  .tile--bad  { border-left: 3px solid var(--overdue); }
+  .tile--bad .tile__num { color: var(--overdue); }
+
+  .dchart { display: flex; align-items: flex-end; gap: 3px; height: 120px; }
+  .dbar { flex: 1; min-width: 3px; background: #DCE8E2; border-top: 2.5px solid var(--accent); }
+  .dbar--now { background: #C4DDD1; }
+  .dbar--empty { border-top-color: var(--border-strong); }
+  .dbar:focus-visible, .dcol:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* The x axis is its own row rather than a label inside each bar: a stacked
+     column has no single bar to hang it on, and a line has no bars at all. */
+  .daxis { display: flex; gap: 3px; margin-top: var(--s-1); }
+  /* Overflow visible, not hidden: at 90 days a slot is three pixels wide and a
+     clipped label renders as two pixels of a digit. Only every tenth slot has
+     text, so it has its neighbours' room to spill into. */
+  .daxis span { flex: 1; min-width: 3px; text-align: center; overflow: visible;
+                white-space: nowrap; font-family: var(--font-ui); font-size: 10px;
+                color: var(--ink-muted); }
+
+  .dcol { flex: 1; min-width: 3px; display: flex; flex-direction: column; }
+  .dseg { width: 100%; }
+  .dseg--views   { background: #DCE8E2; }
+  .dseg--actions { background: var(--accent); }
+  .dseg--errors  { background: var(--overdue); }
+  .dseg--tablet  { background: var(--border-strong); }
+
+  .dline { position: relative; height: 120px; }
+  .dline__svg, .dline__svg svg { display: block; width: 100%; height: 120px; }
+  .dline__fill   { fill: #E9F1EC; }
+  .dline__stroke { fill: none; stroke: var(--accent); stroke-width: 2;
+                   vector-effect: non-scaling-stroke; }
+  .dline__target { stroke: var(--border-strong); stroke-width: 1; stroke-dasharray: 4 4;
+                   vector-effect: non-scaling-stroke; }
+  /* Invisible per-day columns over the line, so touch and Tab reach a day the
+     same way they reach a bar. */
+  .dhits { position: absolute; inset: 0; display: flex; }
+  .dhits > div { flex: 1; }
+  .dhits > div:hover { background: var(--accent-wash); mix-blend-mode: multiply; }
+  .dhits > div:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  .keyrow { flex-wrap: wrap; gap: var(--s-3); font-size: var(--text-xs); color: var(--ink-muted); }
+  .keyrow__item { display: flex; align-items: center; gap: var(--s-1); }
+  .keyrow__swatch { width: 10px; height: 10px; border-radius: 2px; display: block; }
+
+  .heat { display: grid; grid-template-columns: 34px repeat(24, minmax(12px, 1fr));
+          gap: 2px; align-items: center; min-width: 380px; }
+  .heat__day  { font-family: var(--font-ui); font-size: 10px; color: var(--ink-muted); }
+  .heat__hour { font-family: var(--font-ui); font-size: 10px; color: var(--ink-muted);
+                text-align: center; }
+  .heat__cell { aspect-ratio: 1; border-radius: 2px; }
+  .heat__cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* Four steps, not a continuous ramp: a reader distinguishes four shades and
+     guesses at fifty, and every cell carries its count in the readout anyway. */
+  .heat--0 { background: var(--paper); box-shadow: inset 0 0 0 1px var(--border); }
+  .heat--1 { background: #E4EEE9; }
+  .heat--2 { background: #A8CDBC; }
+  .heat--3 { background: var(--accent); }
+
+  .split { display: flex; height: 26px; border-radius: var(--radius); overflow: hidden; }
+  .split__part { display: block; }
+  .split__part + .split__part { border-left: 1px solid var(--surface); }
+
+  .fstep { display: grid; grid-template-columns: 1fr 3fr auto auto; gap: var(--s-3);
+           align-items: center; font-size: var(--text-sm); }
+  .fstep__track { background: var(--paper); border: 1px solid var(--border);
+                  border-radius: var(--radius); height: 18px; display: block; }
+  .fstep__bar { display: block; height: 100%; background: #DCE8E2;
+                border-right: 2.5px solid var(--accent); }
+  .fstep__num { font-family: var(--font-ui); font-variant-numeric: tabular-nums; }
+  .fstep__drop { font-size: var(--text-xs); color: var(--overdue); min-width: 38px;
+                 text-align: right; font-variant-numeric: tabular-nums; }
+  /* On a phone the bar drops to its own line, but the count stays beside the
+     step it belongs to — a number stranded under a bar reads as the next row. */
+  @media (max-width: 560px) {
+    .fstep { grid-template-columns: 1fr auto auto; gap: var(--s-1) var(--s-3); }
+    .fstep__label { grid-area: 1 / 1; }
+    .fstep__num   { grid-area: 1 / 2; }
+    .fstep__drop  { grid-area: 1 / 3; }
+    .fstep__track { grid-area: 2 / 1 / 2 / -1; }
+  }
+
+  .spark { display: inline-block; line-height: 0; }
+  .spark__line { fill: none; stroke: var(--accent); stroke-width: 1.25;
+                 stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+
+  /* The bar sits behind the figure rather than beside it — a ranked table has
+     no room for a second column, and the number stays the thing being read. */
+  .rank { position: relative; }
+  .rank__bar { position: absolute; right: 0; top: 4px; bottom: 4px; display: block;
+               background: var(--accent-wash); border-right: 2px solid var(--accent-line);
+               border-radius: 2px 0 0 2px; }
+  .rank__num { position: relative; }
+
+  .flatlist { font-size: var(--text-sm); color: var(--ink-muted); line-height: 1.8; }
 </style>
 </head>
 <body>
