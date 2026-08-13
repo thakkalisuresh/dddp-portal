@@ -293,9 +293,19 @@ export function lateFeeDecision(bill, {
   // is the real one — "exempt" rather than "not yet due".
   if (isExempt(exemptUntil, today)) return { action: 'skip', reason: 'exempt' };
 
+  // THE FEE LANDS ON THE DUE DATE, AT 00:00 IST — not the morning after.
+  //
+  // This was `<=`, which meant a bill due on the 10th was charged on the 11th,
+  // and the nightly job runs at 08:30 IST, so the real moment was 32 hours
+  // after the one residents were told about. The committee's rule is that
+  // payment must be complete before the due date begins; `<` is that rule.
+  //
+  // Consequence worth stating plainly: the last payable day is the one BEFORE
+  // due_date. Anything labelled "due 20 Aug" must therefore be worded as a
+  // deadline the 20th ends, not one it includes (see shapeBill).
   const cutoff = new Date(dueDate);
   cutoff.setUTCDate(cutoff.getUTCDate() + graceDays);
-  if (new Date(today) <= cutoff) return { action: 'skip', reason: 'not-yet-due' };
+  if (new Date(today) < cutoff) return { action: 'skip', reason: 'not-yet-due' };
 
   if (bill.status === 'initiated') {
     // No claim time at all means nothing is known about when they tapped, and

@@ -16,7 +16,7 @@ import { previewGeneration, computeBill, isExempt } from './lib/billing.js';
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { validateStatement, parseStatement, reconcile, sweepAbandonedStatements } from './lib/statement.js';
 import { readReceipt } from './lib/vision.js';
-import { runScheduled, applyLateFees, staleIntents } from './lib/cron.js';
+import { runScheduled, runLateFees, isLateFeeCron, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden, markNoticesSeen, NOTICE_SCOPES,
          canSeeAttachment, listArchivedNotices, purgeNotice } from './lib/notices.js';
 // r2Key is aliased: lib/proof.js exports one of its own, and the two build
@@ -390,12 +390,20 @@ export default {
   async scheduled(event, env, ctx) {
     await assertAlerting(env);
 
-    // Two triggers, and which one fired decides the work. The backup runs at
+    // Three triggers, and which one fired decides the work. The backup runs at
     // 03:30 IST because that was asked for; the digest cannot follow it there,
     // because a Telegram message at 3:30am is a notification somebody mutes,
     // and muting it takes the 22 warnings only the digest reports with it.
     if (isBackupCron(event.cron)) {
       await runBackup(env, ctx);
+      return;
+    }
+
+    // Midnight IST: fees only. The 08:30 run below still calls applyLateFees,
+    // which is the backstop for anything this one missed — it is idempotent, so
+    // the overlap costs nothing and the guarantee is worth more than the query.
+    if (isLateFeeCron(event.cron)) {
+      await runLateFees(env, ctx);
       return;
     }
 

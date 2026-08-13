@@ -39,8 +39,6 @@ Portal analytics — who is actually using this thing.
 
 | | Export | What it does |
 |---|---|---|
-| fn | `istDay` |  |
-| fn | `istHour` |  |
 | fn | `dayRange` | The last `days` IST days, oldest first, ending with today. |
 | fn | `windowStart` | The UTC instant at which the window starts — midnight IST on its first day. |
 | fn | `mergeDaily` | One row per day in the window, whether or not anything happened on it. |
@@ -193,7 +191,11 @@ Scheduled work: late fees, and the nudge for bills stuck claiming payment.
 |---|---|---|
 | fn | `planLateFees` | Decide what to do with a month's bills. |
 | fn | `applyLateFees` |  |
+| fn | `applyLateFeeToBill` | Apply the fee to ONE bill, right now, if it is due one. |
 | fn | `staleIntents` | Bills where the resident tapped Pay and sent nothing. |
+| const | `LATE_FEE_CRON` | 00:00 IST. |
+| fn | `isLateFeeCron` |  |
+| fn | `runLateFees` | The midnight run: fees, and nothing else. |
 | fn | `runScheduled` |  |
 | fn | `sendDigest` |  |
 
@@ -537,6 +539,17 @@ Ownership changes: a flat is sold, or the builder hands one to a new buyer.
 | fn | `describeRelationship` |  |
 | fn | `planDeparture` | A tenant is leaving. |
 
+### `functions/lib/time.js`
+
+The building's clock.
+
+| | Export | What it does |
+|---|---|---|
+| const | `IST_OFFSET_MS` | The building's clock. |
+| fn | `istDay` |  |
+| fn | `istHour` |  |
+| fn | `istToday` | Today, in Kerala. |
+
 ### `functions/lib/upi.js`
 
 UPI deep links.
@@ -744,4 +757,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-394 exports. 209 have no doc comment.
+400 exports. 210 have no doc comment.

@@ -1,0 +1,23 @@
+-- There is no grace period. There never was one in the committee's rule.
+--
+-- `late_fee_after` was carrying 5 on every period the portal has ever opened,
+-- so a bill "due on the 10th" actually attracted its fee on the 16th — and the
+-- nightly job then ran at 08:30 IST, so the real moment was the morning of the
+-- 16th. Residents were told the 10th. Nobody noticed because the direction of
+-- the error was generous.
+--
+-- The rule, stated once: a bill unpaid at 00:00 IST on its due date is late.
+--
+-- The column stays. Zeroing the data rather than dropping the column keeps the
+-- cron's query and its tests intact, and leaves the concept available if the
+-- committee ever votes itself a grace period — at which point it needs a field
+-- on the form, which is the actual reason it went wrong: openPeriod hardcoded
+-- 0 while every existing row said 5, so the policy silently changed the moment
+-- somebody opened a month through the new console.
+--
+-- SAFE ON EXISTING ROWS. Every period before 2026-07 is months past its due
+-- date, so it was already chargeable under +5 days and the nightly run has long
+-- since processed it; `late_fee_at IS NULL` stops anything being charged twice.
+-- The only period this can move is one whose due date falls inside the next
+-- five days, which today means 2026-07 alone.
+UPDATE periods SET late_fee_after = 0 WHERE late_fee_after <> 0;

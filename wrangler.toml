@@ -78,19 +78,29 @@ PBKDF2_ITERATIONS = "100000"
 # days and the backup then stops silently.
 
 [triggers]
-# UTC, always — Cloudflare crons have no timezone, and neither expression below
-# shifts with daylight saving anywhere.
+# UTC, always — Cloudflare crons have no timezone, and none of the expressions
+# below shifts with daylight saving anywhere.
 #
-#   0 3  * * *  →  08:30 IST — late fees, the sweep, and the Telegram digest.
-#   0 22 * * *  →  03:30 IST (next day) — the Drive backup, and only that.
+#   30 18 * * *  →  00:00 IST (next day) — late fees, and ONLY late fees.
+#   0  3  * * *  →  08:30 IST — the sweep and the Telegram digest.
+#   0  22 * * *  →  03:30 IST (next day) — the Drive backup, and only that.
 #
-# Two triggers rather than one moved. The backup was asked to run at 3:30 IST;
-# the digest must not, because it is a message to a treasurer's phone and 3:30am
-# is not when anyone wants to read that a bill is overdue. Late fees stay with
-# the digest for the same reason — money moving is worth announcing at an hour
-# somebody is awake.
+# LATE FEES MOVED TO MIDNIGHT because that is the committee's rule: a bill not
+# paid when the due date begins is late, full stop. They used to ride with the
+# digest at 08:30, which charged residents 32 hours after the moment they were
+# told about — the fee applied the day AFTER the due date, and then only once
+# somebody's morning job woke up.
+#
+# The digest stays at 08:30 regardless. A Telegram message at midnight is one
+# somebody mutes, and muting it takes the 22 warnings only the digest reports
+# with it. It now reports fees applied eight hours earlier, which is fine — the
+# digest's job is to tell the treasurer what happened, not to make it happen.
+#
+# Cron triggers are scheduled, not punctual, so this alone would deliver
+# "midnight, roughly". applyLateFeeToBill closes the gap on the read path; see
+# the note there for why the QR makes that a money question and not a nicety.
 #
 # The IST times are the anchor. Pacific was the other candidate and drifts by an
 # hour twice a year against it; the building is in Thrissur, so Kerala's clock
 # is the one held still.
-crons = ["0 3 * * *", "0 22 * * *"]
+crons = ["30 18 * * *", "0 3 * * *", "0 22 * * *"]

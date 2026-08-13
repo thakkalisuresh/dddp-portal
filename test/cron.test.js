@@ -63,6 +63,24 @@ describe('planning a month of late fees', () => {
     expect(plan.charge).toHaveLength(1);
   });
 
+  it('charges ON the due date, not the morning after (B35)', () => {
+    // The committee's rule: unpaid at 00:00 IST on the due date is late. This
+    // was `<=`, which meant the 10th was still free and the fee landed on the
+    // 11th — and since the job ran at 08:30 IST, 32 hours after the moment
+    // residents were told about.
+    const onTheDay = planLateFees([bill()], { ...opts, today: '2026-08-10' });
+    expect(onTheDay.charge).toHaveLength(1);
+    expect(onTheDay.charge[0].newTotal).toBe(379);
+  });
+
+  it('does not charge the day before the due date', () => {
+    // The other half of the boundary. Without this, "charges on the due date"
+    // passes just as well for code that charges a day early.
+    const dayBefore = planLateFees([bill()], { ...opts, today: '2026-08-09' });
+    expect(dayBefore.charge).toHaveLength(0);
+    expect(dayBefore.skip[0].reason).toBe('not-yet-due');
+  });
+
   it('never charges a proof already under review', () => {
     const plan = planLateFees([bill({ status: 'awaiting' })], opts);
     expect(plan.charge).toHaveLength(0);

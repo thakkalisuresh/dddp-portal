@@ -8,6 +8,8 @@
 
 import { buildUpiLinks, payTargetFor, manualPayment } from './upi.js';
 import { computeConsumption, DEFAULT_CONVERSION } from './billing.js';
+import { applyLateFeeToBill } from './cron.js';
+import { istToday } from './time.js';
 import { billAccess, occupantOf, describeRelationship } from './tenancy.js';
 import { unreadNoticeCount } from './notices.js';
 
@@ -19,12 +21,15 @@ const BILL_HISTORY = 12;
  * "overdue" and "the CTA must disappear once settled", both of which are
  * decisions rather than data.
  */
-export function shapeBill(bill, period, today = new Date().toISOString().slice(0, 10)) {
+export function shapeBill(bill, period, today = istToday()) {
   if (!bill) return null;
 
   const settled = bill.status === 'paid' || bill.status === 'waived';
   const claimed = bill.status === 'initiated' || bill.status === 'awaiting';
-  const pastDue = !settled && period?.due_date != null && today > period.due_date;
+  // `>=`, because the fee lands at 00:00 IST ON the due date. A bill that is
+  // being charged today must not still read "due today" while the resident is
+  // looking at a total that already includes the fee.
+  const pastDue = !settled && period?.due_date != null && today >= period.due_date;
 
   return {
     id: bill.id,
@@ -110,6 +115,21 @@ export async function dashboardPayload(env, subject, userAgent = '', origin = ''
   const period = billRow
     ? { due_date: billRow.due_date, late_fee: billRow.period_late_fee, status: billRow.period_status }
     : null;
+
+  // The fee is charged the moment it is due, not when the nightly job wakes up.
+  // Doing it here — on the read, before the QR below is built — is what stops a
+  // resident opening the portal at 00:05 and being handed a pre-fee amount to
+  // pay. The write is guarded and idempotent, so this is safe on a GET and safe
+  // against the cron running at the same instant.
+  if (billRow && !billRow.late_fee_at) {
+    const charged = await applyLateFeeToBill(env, billRow.id);
+    if (charged.applied) {
+      billRow.late_fee = charged.lateFee;
+      billRow.total = charged.total;
+      billRow.late_fee_at = charged.lateFeeAt;
+    }
+  }
+
   const bill = shapeBill(billRow, period);
 
   // The QR and the button are built from the same URI, so a late fee changes
