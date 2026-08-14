@@ -103,7 +103,16 @@ function header() {
         ? el('p', { class: 'small', style: 'color:var(--overdue);font-family:var(--font-ui)' },
             'Set this month\u2019s rate before generating.')
         : el('p', { class: 'small muted' },
-            `Rate ₹${grid.rate.toFixed(2)} / kg · ${grid.conversionFactor} kg per unit`)),
+            `Rate ₹${grid.rate.toFixed(2)} / kg · ${grid.conversionFactor} kg per unit`),
+
+      // Said once, at the top, rather than discovered by typing into a box that
+      // will not take it.
+      grid.status === 'locked'
+        ? el('p', { class: 'small', style: 'color:var(--awaiting);font-family:var(--font-ui)' },
+            'This month is generated and locked. Readings can no longer be '
+            + 'changed — a correction is made on the bill itself, in god mode, '
+            + 'and needs two other admins to approve it.')
+        : null),
     el('div', { class: 'progress' },
       el('span', { class: 'progress__track' },
         el('span', { class: 'progress__fill', style: `width:${pct}%` })),
@@ -292,10 +301,19 @@ function row(f) {
     el('span', { class: 'msg__row' }, message, sameAsLast, saved));
   const used = el('td', { class: 'used muted' }, f.consumption == null ? '—' : kg(f.consumption));
 
+  // A GENERATED MONTH IS NOT EDITABLE. The server has always refused these
+  // saves; the screen went on offering them, so the treasurer typed into boxes
+  // that could never be written and the failures looked like a broken portal.
+  // Reported on 2026-08-14 — and it was worse than cosmetic, because each
+  // refusal fed a retry that alerted the treasurer's phone every two seconds.
+  const locked = grid.status === 'locked';
+
   const input = el('input', {
     class: 'input cell num', type: 'text', inputmode: 'decimal',
     'data-flat': f.flat, value: f.reading ?? '',
     'aria-label': `Reading for flat ${f.flat}`,
+    disabled: locked || null,
+    title: locked ? 'This month is generated. Correct the bill instead.' : null,
   });
 
   const validate = () => {
@@ -361,6 +379,14 @@ function row(f) {
   input.addEventListener('change', () => {
     const value = validate();
     if (value == null) return;
+    // A CHECK GOES STALE THE MOMENT A READING MOVES. The panel is a statement
+    // about numbers that have since changed — leaving it on screen means a
+    // corrected flat is still listed in red, and the treasurer cannot tell
+    // whether their fix worked without noticing the panel is old.
+    if (previewPanel.hasChildNodes()) {
+      previewPanel.replaceChildren(el('p', { class: 'small muted' },
+        'A reading changed. Check again to see what this month will bill.'));
+    }
     pending.set(f.flat, value);
     indicators.set(f.flat, saved);
     saved.className = 'msg__saved muted';
@@ -458,7 +484,30 @@ async function flush() {
       if (pending.get(flat) === reading) pending.delete(flat);
     }
     markRows(flats.filter((f) => !pending.has(f)), 'msg--ok', '\u2713 saved');
-  } catch {
+  } catch (err) {
+    // NOT EVERY FAILURE IS WORTH RETRYING, and treating them alike is how a
+    // safety net becomes a hammer. A locked month, a refused value, any 4xx:
+    // the same request will fail identically forever. On 2026-08-14 a reading
+    // typed after July closed retried every two seconds, and each attempt
+    // logged an error and pushed a Telegram alert \u2014 56 in a minute.
+    //
+    // 408 and 429 are the exceptions: a timeout and a rate limit are both
+    // "later, not never".
+    const permanent = err?.status >= 400 && err?.status < 500
+                   && err.status !== 408 && err.status !== 429;
+
+    if (permanent) {
+      // Dropped from the queue, because retrying is the bug. The rows keep
+      // their red "not saved" so nothing looks accepted that was not.
+      for (const { flat } of batch) pending.delete(flat);
+      markRows(flats, 'msg--error', 'not saved');
+      refusal = err?.code === 'DDP-BILL-007'
+        ? 'This month is generated and locked \u2014 readings can no longer be changed. '
+          + 'Corrections are made on the bill now, under god mode.'
+        : (err?.message ?? 'Those readings were refused.');
+      return;
+    }
+
     markRows(flats, 'msg--error', 'not saved \u00b7 will retry');
     // Backing off rather than hammering: the usual cause is a dead spot in a
     // stairwell, and it comes back on its own.
@@ -470,11 +519,27 @@ async function flush() {
   }
 }
 
-/** A banner while anything is unsent, because a lost reading is silent. */
+/**
+ * A banner while anything is unsent, because a lost reading is silent — and a
+ * different one when the server has refused outright, which is not the same
+ * thing and must not offer a Retry button that cannot help.
+ */
+let refusal = null;
+
 function refreshUnsaved() {
   const bar = main.querySelector('.unsaved');
   if (!bar) return;
+  const retry = bar.querySelector('button');
+
+  if (refusal) {
+    bar.hidden = false;
+    bar.querySelector('.unsaved__text').textContent = refusal;
+    if (retry) retry.hidden = true;
+    return;
+  }
+
   bar.hidden = pending.size === 0;
+  if (retry) retry.hidden = false;
   bar.querySelector('.unsaved__text').textContent =
     `${pending.size} reading${pending.size > 1 ? 's' : ''} not saved yet`;
 }
@@ -507,7 +572,10 @@ function footbar() {
       }
       previewPanel.scrollIntoView({ block: 'nearest' });
     },
-  }, 'Check this month');
+    // "Check this month" read like a health check you could run any time, and
+    // gave no hint that it was the only route to generating. It is the step
+    // before the irreversible one, and it should say so.
+  }, grid.status === 'locked' ? 'Show this month' : 'Check before generating');
 
   return el('div', { class: 'footbar' },
     el('button', {

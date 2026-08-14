@@ -45,7 +45,7 @@ Ask the bot a code and it will explain it.
 | `DDP-BILL-004` | **fatal** | retired | Bill total paise do not match the flat paise_tag (retired — paise tags removed) |
 | `DDP-BILL-005` | error | live | Period has no rate set |
 | `DDP-BILL-006` | error | live | Duplicate bill for (flat, period) |
-| `DDP-BILL-007` | error | live | Generation attempted on a locked period |
+| `DDP-BILL-007` | warn | live | Reading or generation attempted on a locked period |
 | `DDP-BILL-008` | error | live | Late fee is negative, fractional or not a number |
 | `DDP-BILL-009` | error | live | Late fee cron re-applied to an already-charged bill |
 | `DDP-BILL-010` | **fatal** | live | Rate was inherited from a previous period instead of set for this one |
