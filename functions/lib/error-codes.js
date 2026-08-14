@@ -118,6 +118,7 @@ export const ERROR_CODES = {
   'DDP-ADMIN-015': { severity: 'warn',  message: 'Bill edit approval refused — approver is the requester or the bill is theirs' },
   'DDP-ADMIN-016': { severity: 'error', message: 'Bill edit cannot reach quorum — too few eligible admins' },
   'DDP-ADMIN-017': { severity: 'warn',  message: 'Bill edit request is no longer open' },
+  'DDP-ADMIN-018': { severity: 'warn',  message: 'Bill edit awaiting approval could not be emailed to any admin' },
 
   // ── SYS ────────────────────────────────────────────────────────────────
   'DDP-SYS-001': { severity: 'fatal', message: 'Unhandled exception in a Worker route' },

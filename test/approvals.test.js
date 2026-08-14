@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  approvalPolicy, canApprove, isSatisfied, needsApproval, expiresAt,
+  approvalPolicy, canApprove, isSatisfied, needsApproval, expiresAt, approvalMessage,
   SUBSTITUTE_AFTER_HOURS,
 } from '../functions/lib/approvals.js';
 
@@ -195,5 +195,46 @@ describe('a request does not sit open forever', () => {
 
   it('waits two days before the superadmin may stand in', () => {
     expect(SUBSTITUTE_AFTER_HOURS).toBe(48);
+  });
+});
+
+describe('what the approvers are actually told', () => {
+  const msg = approvalMessage({
+    flat: '1D', period: '2026-07', totalBefore: 12276, totalAfter: 380,
+    reason: 'reading was 71.378, should be 21.378', requestedBy: 'Mukesh',
+    required: 2, origin: 'https://diamondpark.pages.dev',
+  });
+
+  it('names the flat and month in the subject, for a phone lock screen', () => {
+    expect(msg.subject).toContain('1D');
+    expect(msg.subject).toContain('2026-07');
+  });
+
+  it('carries BOTH amounts, which is the whole decision', () => {
+    // "A correction is waiting" tells an approver nothing they can act on.
+    expect(msg.text).toContain('₹12,276');
+    expect(msg.text).toContain('₹380');
+  });
+
+  it('says who asked and why', () => {
+    expect(msg.text).toContain('Mukesh');
+    expect(msg.text).toContain('should be 21.378');
+  });
+
+  it('is explicit that nothing has changed yet', () => {
+    expect(msg.text).toMatch(/bill is unchanged/i);
+  });
+
+  it('links straight to the queue when it knows where it lives', () => {
+    expect(msg.text).toContain('https://diamondpark.pages.dev/admin/#approvals');
+  });
+
+  it('still reads sensibly with no origin to link to', () => {
+    const bare = approvalMessage({
+      flat: '1D', period: '2026-07', totalBefore: 100, totalAfter: 200,
+      reason: 'x', requestedBy: 'Joy', required: 2,
+    });
+    expect(bare.text).toContain('Admin → Approvals');
+    expect(bare.text).not.toContain('undefined');
   });
 });

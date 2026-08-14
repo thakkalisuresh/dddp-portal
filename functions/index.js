@@ -14,7 +14,7 @@ import {
 } from './lib/admin.js';
 import { previewGeneration, computeBill, isExempt } from './lib/billing.js';
 import {
-  approvalPolicy, canApprove, isSatisfied, needsApproval, expiresAt,
+  approvalPolicy, canApprove, isSatisfied, needsApproval, expiresAt, approvalMessage,
 } from './lib/approvals.js';
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { validateStatement, parseStatement, reconcile, sweepAbandonedStatements } from './lib/statement.js';
@@ -3047,7 +3047,7 @@ async function writeBillEdit(env, session, { bill, field, value, reason, actorId
  * here: the proposed value waits in its own row, because a bill that briefly
  * says something nobody approved is exactly what this is preventing.
  */
-async function requestBillEdit(env, session, { bill, field, value, reason, totalAfter }) {
+async function requestBillEdit(env, session, { bill, field, value, reason, totalAfter, origin = '' }) {
   const policy = await policyFor(env, { bill, requesterId: session.actor.id });
 
   if (!policy.satisfiable) {
@@ -3076,6 +3076,15 @@ async function requestBillEdit(env, session, { bill, field, value, reason, total
     totalBefore: bill.total, totalAfter, required: policy.required,
   });
 
+  // TELLING THEM IS THE POINT. Without this the request sits in a tab until an
+  // admin happens to open the console, while the resident looks at a bill
+  // everybody agrees is wrong. Never allowed to fail the request: the
+  // correction is recorded either way, and an alert that throws must not undo
+  // money work — the same rule the digest follows.
+  const alerted = await alertApprovers(env, {
+    policy, bill, totalAfter, reason, requestedBy: session.actor.name, origin,
+  }).catch(() => ({ emailed: 0, missing: [], telegram: false }));
+
   return json({
     ok: true,
     pending: true,
@@ -3088,7 +3097,60 @@ async function requestBillEdit(env, session, { bill, field, value, reason, total
     note: policy.subjectIsAdmin
       ? 'This bill belongs to an admin, so every other eligible admin must approve.'
       : `Waiting for ${policy.required} other admins to approve.`,
+    // Reported back so the screen can say who was actually reached. An alert
+    // nobody received looks identical to one nobody has answered yet.
+    alerted,
   });
+}
+
+/**
+ * Tell the people who have to decide.
+ *
+ * Email to each eligible approver who has an address, and a Telegram message
+ * to the committee channel regardless — the two have different failure modes
+ * and the point is that somebody hears. Gmail is unconfigured on this
+ * deployment today and admins mostly have no address on file, so Telegram is
+ * the one that works; the email path is here because it is what was asked for
+ * and because both of those are fixable without touching code again.
+ *
+ * WHO WAS NOT REACHED IS RETURNED, not swallowed. An approval queue whose
+ * notifications quietly went nowhere is worse than one with no notifications
+ * at all, because the second is at least known to need checking.
+ */
+async function alertApprovers(env, { policy, bill, totalAfter, reason, requestedBy, origin }) {
+  if (!policy.approverIds.length) return { emailed: 0, missing: [], telegram: false };
+
+  const people = await env.DB.prepare(
+    `SELECT id, name, email FROM owners
+      WHERE id IN (${policy.approverIds.map(() => '?').join(',')})`
+  ).bind(...policy.approverIds).all();
+
+  const { subject, text } = approvalMessage({
+    flat: bill.flat, period: bill.period, totalBefore: bill.total, totalAfter,
+    reason, requestedBy, required: policy.required, origin,
+  });
+
+  let emailed = 0;
+  const missing = [];
+  for (const person of people.results ?? []) {
+    if (!person.email) { missing.push(person.name); continue; }
+    const sent = await sendEmail(env, { to: person.email, subject, text });
+    if (sent.sent) emailed += 1;
+    else missing.push(`${person.name} (${sent.reason})`);
+  }
+
+  const telegram = await postToTelegram(env,
+    `Bill correction awaiting approval\n${bill.flat} ${bill.period}: `
+    + `₹${bill.total} → ₹${totalAfter}\nAsked by ${requestedBy} — needs ${policy.required} `
+    + `admin${policy.required === 1 ? '' : 's'}\nReason: ${reason}`);
+
+  // Recorded, at warn, when the email half reached nobody. Somebody reading the
+  // digest a week later needs to know the queue was silent, not empty.
+  if (!emailed && missing.length) {
+    await reportError(env, 'DDP-ADMIN-018', { billId: bill.id, missing });
+  }
+
+  return { emailed, missing, telegram };
 }
 
 /** Open requests, with everything an approver needs to judge one. */
@@ -3231,6 +3293,9 @@ async function editBill(request, env, session, path) {
   if (needsApproval({ totalBefore: bill.total, totalAfter: next.total, field })) {
     return requestBillEdit(env, session, {
       bill, field, value, reason, totalAfter: next.total, computed, derived,
+      // So the email can carry a link somebody can tap, rather than telling an
+      // admin to go and find the console.
+      origin: new URL(request.url).origin,
     });
   }
 
