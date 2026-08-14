@@ -21,7 +21,8 @@ import { validateStatement, parseStatement, reconcile, sweepAbandonedStatements 
 import { readReceipt } from './lib/vision.js';
 import { runScheduled, runLateFees, isLateFeeCron, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden, markNoticesSeen, NOTICE_SCOPES,
-         canSeeAttachment, listArchivedNotices, purgeNotice } from './lib/notices.js';
+         canSeeAttachment, listArchivedNotices, purgeNotice,
+         isCommittee, canManageNotice } from './lib/notices.js';
 // r2Key is aliased: lib/proof.js exports one of its own, and the two build
 // different key shapes for different buckets' worth of rules.
 import { validateAttachment, validateThumb, safeFilename, r2Key as attachmentKey, assertRoom,
@@ -62,7 +63,7 @@ import { isCaptureOn, captureWindow, validateBatch } from './lib/clicks.js';
 import { runBackup, backupHealth, driveConfigured, committeeFolderSeparate, isBackupCron, pruneOldRows, dumpTable, dumpAll, bundle, toCsv, TABLES } from './lib/backup.js';
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
-  cookieHeader, clearCookieHeader, hasRole,
+  cookieHeader, clearCookieHeader, hasRole, committeeMayUse,
   RESIDENT_TTL_DAYS, SHARED_DEVICE_TTL_DAYS, IMPERSONATE_TTL_MIN,
 } from './lib/session.js';
 
@@ -166,9 +167,23 @@ export default {
         return json({ notices });
       }
       if (request.method === 'GET' && /^\/api\/notices\/\d+$/.test(path)) {
+        // The second half is the committee member: they read hidden comments,
+        // and they are asked for on the VIEWER, which is the only role that
+        // should ever decide a read. The actor-based half is left as it was —
+        // narrowing an admin's own reads is a separate argument from adding a
+        // role, and quietly settling it here would be the wrong place to.
         const notice = await getNotice(env, Number(path.split('/')[3]),
-          { isAdmin: hasRole(session, 'admin'), viewer: session.subject });
-        return notice ? json(notice) : problem(404, 'DDP-NOTICE-001', 'That notice could not be found.');
+          { isAdmin: hasRole(session, 'admin') || isCommittee(session.subject),
+            viewer: session.subject });
+        if (!notice) return problem(404, 'DDP-NOTICE-001', 'That notice could not be found.');
+        // Drives whether the page offers Edit and Withdraw. Decided here, from
+        // the same function the PATCH route uses, so the buttons cannot appear
+        // for somebody the server would then refuse — the client is told the
+        // answer rather than working one out from a role it half understands.
+        return json({
+          ...notice,
+          canManage: canManageNotice({ posted_by: notice.postedBy }, session.actor),
+        });
       }
       if (request.method === 'POST' && /^\/api\/notices\/\d+\/comments$/.test(path)) {
         return postComment(request, env, session, path);
@@ -187,7 +202,13 @@ export default {
 
       // ── admin ─────────────────────────────────────────────────────────
       if (path.startsWith('/api/admin/')) {
-        if (!hasRole(session, 'admin')) {
+        // A committee member is not an admin and does not get past this on
+        // rank. They get past it on a named route and no other — the list is
+        // in session.js, where it can be read whole. Ownership of the notice
+        // itself is checked again in the handlers that need the row.
+        const committeeRoute =
+          session.actor.role === 'committee' && committeeMayUse(request.method, path);
+        if (!hasRole(session, 'admin') && !committeeRoute) {
           await reportError(env, 'DDP-ADMIN-004', { path, actor: session.actor.id });
           return problem(403, 'DDP-ADMIN-004', 'Admins only.');
         }
@@ -949,12 +970,15 @@ async function postNotice(request, env, session) {
   // that looks exactly like a notice nobody replied to.
   const scope = NOTICE_SCOPES.includes(b?.scope) ? b.scope : 'all';
 
+  // The ACTOR, always — under view-as the author is the admin doing the
+  // typing, not the resident whose screen they borrowed. Recording it the
+  // other way would put a resident's name on a notice they never wrote.
   const row = await env.DB.prepare(
-    `INSERT INTO notices (title, body, kind, event_date, allow_comments, scope, active, posted_at)
-     VALUES (?, ?, ?, ?, ?, ?, 1, ?) RETURNING id`
+    `INSERT INTO notices (title, body, kind, event_date, allow_comments, scope, active, posted_at, posted_by)
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?) RETURNING id`
   ).bind(title, body, b?.kind === 'event' ? 'event' : 'notice',
          b?.eventDate ?? null, b?.allowComments ? 1 : 0, scope,
-         new Date().toISOString()).first();
+         new Date().toISOString(), session.actor.id).first();
 
   await audit(env, session, 'notice.create', { id: row.id, title, scope });
   return json({ id: row.id }, { status: 201 });
@@ -962,6 +986,18 @@ async function postNotice(request, env, session) {
 
 async function patchNotice(request, env, session, path) {
   const id = Number(path.split('/')[4]);
+
+  // Yours to change? An admin's answer is always yes; a committee member's is
+  // yes only for a notice they posted. Fetched before the body is parsed so a
+  // refusal costs one query and says nothing about what was attempted.
+  const owned = await env.DB.prepare('SELECT id, posted_by FROM notices WHERE id = ?')
+    .bind(id).first();
+  if (!owned) return problem(404, 'DDP-NOTICE-001', 'That notice could not be found.');
+  if (!canManageNotice(owned, session.actor)) {
+    await reportError(env, 'DDP-ADMIN-004', { noticeId: id, actor: session.actor.id });
+    return problem(403, 'DDP-ADMIN-004', 'You can only change a notice you posted.');
+  }
+
   const b = await readJson(request);
   const fields = [];
   const values = [];
@@ -1153,9 +1189,15 @@ async function announceLargeUpload(env, session, { filename, bytes, parent }) {
 
 async function postNoticeAttachment(request, env, session, path, ctx) {
   const noticeId = Number(path.split('/')[4]);
-  const notice = await env.DB.prepare('SELECT id FROM notices WHERE id = ? AND active = 1')
-    .bind(noticeId).first();
+  const notice = await env.DB.prepare(
+    'SELECT id, posted_by FROM notices WHERE id = ? AND active = 1'
+  ).bind(noticeId).first();
   if (!notice) return problem(404, 'DDP-NOTICE-001', 'That notice could not be found.');
+  // Same rule as editing the words. A file on a notice is part of the notice.
+  if (!canManageNotice(notice, session.actor)) {
+    await reportError(env, 'DDP-ADMIN-004', { noticeId, actor: session.actor.id });
+    return problem(403, 'DDP-ADMIN-004', 'You can only add files to a notice you posted.');
+  }
   return storeAttachment(request, env, session, { noticeId }, ctx);
 }
 
@@ -1247,6 +1289,22 @@ async function deleteAttachment(env, session, id) {
     'SELECT id, r2_key, thumb_key, notice_id, comment_id FROM attachments WHERE id = ? AND deleted_at IS NULL'
   ).bind(id).first();
   if (!row) return problem(404, 'DDP-ATTACH-003', 'That file could not be found.');
+
+  // A committee member may take back a file they attached to their own notice.
+  // They may NOT touch a file hanging off a comment: that is a resident's
+  // photograph and removing it is a moderation act, which is an admin's job
+  // and nothing to do with posting notices. `notice_id` being null is exactly
+  // that case, and canManageNotice(null, …) refuses it for them.
+  if (session.actor.role === 'committee') {
+    const parent = row.notice_id
+      ? await env.DB.prepare('SELECT id, posted_by FROM notices WHERE id = ?')
+          .bind(row.notice_id).first()
+      : null;
+    if (!canManageNotice(parent, session.actor)) {
+      await reportError(env, 'DDP-ADMIN-004', { attachmentId: id, actor: session.actor.id });
+      return problem(403, 'DDP-ADMIN-004', 'You can only remove a file from a notice you posted.');
+    }
+  }
 
   // Both objects go; the row stays. Keeping the bytes of something a committee
   // has decided to remove is the one outcome nobody wants — and a thumbnail is
