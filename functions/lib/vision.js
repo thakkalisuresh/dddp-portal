@@ -75,7 +75,11 @@ async function callGroq(env, base64, contentType, signal) {
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: env.GROQ_VISION_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct',
+      // Groq deprecated llama-4-scout on 17 June 2026 and it is now gone; this
+      // is the only image-capable model they serve. It is a *preview* model —
+      // Groq reserve the right to withdraw it at short notice, so if proofs
+      // start queueing as unreadable en masse, check here first.
+      model: env.GROQ_VISION_MODEL || 'qwen/qwen3.6-27b',
       temperature: 0,
       response_format: { type: 'json_object' },
       messages: [{
@@ -93,7 +97,10 @@ async function callGroq(env, base64, contentType, signal) {
 }
 
 async function callGemini(env, base64, contentType, signal) {
-  const model = env.GEMINI_VISION_MODEL || 'gemini-2.0-flash';
+  // gemini-2.0-flash was retired; flash-lite is the cheap tier and reads a
+  // payment screenshot fine. Note the fallback is unused in practice: Groq
+  // wins whenever both keys are set (see readReceipt).
+  const model = env.GEMINI_VISION_MODEL || 'gemini-3.5-flash-lite';
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`,
     {
