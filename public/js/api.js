@@ -249,6 +249,9 @@ export const api = {
                    request('PATCH', `/api/god/bill/${id}`, { field, value, reason }),
     // Deliberately NOT under god: the superadmin who raised an edit must not be
     // able to approve it, so approving lives with the admins.
+    bills:       (params = '') => request('GET', `/api/admin/bills${params}`),
+    editBill:    (id, field, value, reason) =>
+                   request('PATCH', `/api/admin/bill/${id}`, { field, value, reason }),
     billEdits:   ()   => request('GET',  '/api/admin/bill-edits'),
     approveEdit: (id) => request('POST', `/api/admin/bill-edits/${id}/approve`),
     rejectEdit:  (id) => request('POST', `/api/admin/bill-edits/${id}/reject`),

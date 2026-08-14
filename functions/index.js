@@ -247,6 +247,18 @@ export default {
         if (request.method === 'POST' && /^\/api\/admin\/bills\/\d+\/mark-paid$/.test(path)) {
           return markPaid(request, env, session, path);
         }
+        // ADMINS CORRECT BILLS, because admins are the ones in the building.
+        // Editing lived under /api/god/ and so needed the superadmin — who is
+        // frequently abroad — for every correction, while the treasurer who
+        // generated the bills and takes the phone call could only watch. The
+        // approval gate is what makes this safe to open: an admin raising an
+        // edit still cannot approve it, and their own flat's bill needs
+        // everyone else.
+        if (route === 'GET /api/admin/bills') return godBills(env, url);
+        if (route.startsWith('PATCH /api/admin/bill/')) {
+          return editBill(request, env, session, path);
+        }
+
         // Approving is an ADMIN action, not a god one — the whole point is that
         // the superadmin who raised the edit cannot also wave it through.
         if (route === 'GET /api/admin/bill-edits') return listBillEditRequests(env, session);
@@ -3216,7 +3228,7 @@ async function editBill(request, env, session, path) {
   // it wrong — and correcting it quietly is the thing the committee decided
   // must not be possible. An edit that leaves the total alone still applies at
   // once; there is nothing for a second pair of eyes to protect.
-  if (needsApproval({ totalBefore: bill.total, totalAfter: next.total })) {
+  if (needsApproval({ totalBefore: bill.total, totalAfter: next.total, field })) {
     return requestBillEdit(env, session, {
       bill, field, value, reason, totalAfter: next.total, computed, derived,
     });

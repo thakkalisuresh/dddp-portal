@@ -42,6 +42,7 @@ const TABS = [
   { id: 'proofs',    label: 'Proofs',    href: '/admin/proofs.html' },
   { id: 'statement', label: 'Reconcile', href: '/admin/statement.html' },
   { id: 'latefees',  label: 'Late fees', render: lateFeesPanel },
+  { id: 'bills',     label: 'Bills',     render: billsPanel },
   { id: 'approvals', label: 'Approvals', render: approvalsPanel },
   { id: 'residents', label: 'Residents', render: residentsPanel },
   { id: 'notices',   label: 'Notices',   render: noticesPanel },
@@ -1311,6 +1312,91 @@ async function errorsPanel() {
  * carries is an exemption granted during one dispute and still running two
  * years later, invisible to whoever inherited the treasurer's job.
  */
+/**
+ * Correcting a bill, from the admin console.
+ *
+ * This used to be superadmin-only, under god mode, which meant every wrong
+ * amount waited on somebody who is often in another country while the
+ * treasurer who generated the bill and took the phone call could do nothing.
+ * The approval gate is what makes opening it safe: raising an edit is not
+ * making one, the requester can never approve their own, and an admin's own
+ * flat needs every other admin.
+ */
+async function billsPanel() {
+  const search = el('input', { class: 'input', placeholder: '10C', id: 'b-flat' });
+  const list = el('div', { class: 'stack' });
+  const status = el('div');
+
+  const load = async () => {
+    const flat = search.value.trim().toUpperCase();
+    list.replaceChildren(el('p', { class: 'muted' }, 'Loading…'));
+    try {
+      const { bills } = await api.admin.bills(flat ? `?flat=${encodeURIComponent(flat)}` : '');
+      // Newest first and capped: the console is for finding the bill somebody
+      // just rang about, not for reading a year of them.
+      const shown = bills.slice(0, flat ? 24 : 40);
+      list.replaceChildren(...(shown.length
+        ? shown.map(billRow)
+        : [el('p', { class: 'muted' }, 'No bills for that flat.')]));
+    } catch (err) { showError(list, err); }
+  };
+
+  const billRow = (b) => {
+    const amount = el('input', {
+      class: 'input num', value: b.total, inputmode: 'decimal',
+      'aria-label': `Total for ${b.flat} ${b.period}`,
+    });
+    const reason = el('input', { class: 'input', placeholder: 'Why is it changing?' });
+    const said = el('div', { class: 'small' });
+
+    return el('div', { class: 'rowitem' },
+      el('div', { class: 'rowitem__main' },
+        el('b', {}, `${b.flat} · ${periodLabel(b.period)}`),
+        el('div', {},
+          `${kg(b.consumption)} at ₹${b.rate_per_kg} · now ${money(b.total)} · ${b.status}`,
+          b.manual_total ? ' · manually set' : '',
+          b.mismatch ? ' · does not match its own components' : ''),
+        el('div', { style: 'display:flex;gap:var(--s-2);flex-wrap:wrap;margin-top:var(--s-2)' },
+          amount, reason,
+          el('button', {
+            class: 'btn btn--sm', type: 'button',
+            onclick: async (event) => {
+              const button = event.currentTarget;
+              button.disabled = true;
+              said.replaceChildren();
+              try {
+                const res = await api.admin.editBill(
+                  b.id, 'total', Number(amount.value), reason.value);
+                trackAction('admin.bill.edit');
+                said.replaceChildren(el('span', {
+                  style: `color:var(--${res.pending ? 'awaiting' : 'accent'})`,
+                },
+                  res.pending
+                    ? `Sent for approval — ${res.note}`
+                    : res.unchanged ? 'That is already the amount.' : 'Changed.'));
+                if (!res.pending) await load();
+              } catch (err) { showError(said, err); }
+              button.disabled = false;
+            },
+          }, 'Correct this bill')),
+        said));
+  };
+
+  search.addEventListener('change', load);
+  await load();
+
+  return el('div', { class: 'panel stack' },
+    el('h2', {}, 'Bills'),
+    el('p', { class: 'small muted' },
+      'A correction does not take effect when you save it. It goes to two other '
+      + 'admins, and applies when they agree — if the bill belongs to an admin, '
+      + 'every other admin has to agree. The late fee on that bill is frozen '
+      + 'while it waits.'),
+    el('div', { class: 'field' }, el('label', { for: 'b-flat' }, 'Flat'), search),
+    status,
+    list);
+}
+
 /**
  * Bill corrections waiting on the committee.
  *
