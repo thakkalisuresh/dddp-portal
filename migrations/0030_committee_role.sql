@@ -25,14 +25,23 @@
 --   * ids are copied, not regenerated. Every one of those fifteen foreign
 --     keys is an owner id, and a renumbered table would silently repoint
 --     bills, comments and audit rows at the wrong people
---   * `defer_foreign_keys` holds enforcement to the end of the transaction,
---     which is what lets the old table be dropped while rows still reference
---     it. The constraints are checked again before the migration commits, so
---     this defers the check rather than skipping it
+--   * `foreign_keys = OFF` is what lets the old table be dropped while 105
+--     rows still reference it, and it is the pragma SQLite's own twelve-step
+--     procedure calls for. This said `defer_foreign_keys` first, which reads
+--     like the safer choice and does not work: deferring only moves the check
+--     to the end of the TRANSACTION, and dropping a parent counts every child
+--     row as a violation there and then — renaming a replacement into its
+--     place does not clear them. Applied against production on 2026-08-14 it
+--     failed at `DROP TABLE owners` and D1 rolled the database back.
+--
+--     Enforcement is off for the rebuild and on again at the end, with
+--     `PRAGMA foreign_key_check` run afterwards to prove nothing was orphaned
+--     while it was off. That is a real check, not a hopeful one: it reads
+--     every child row.
 --   * the three indexes are recreated. Dropping the table drops them with it,
 --     and losing ix_owners_flat_rel would quietly turn every bill and
 --     dashboard lookup into a table scan
-PRAGMA defer_foreign_keys = true;
+PRAGMA foreign_keys = OFF;
 
 CREATE TABLE owners_new (
   id             INTEGER PRIMARY KEY,
@@ -93,3 +102,8 @@ CREATE INDEX ix_owners_flat_rel ON owners(flat, relationship, active);
 -- only ever runs for committee members, and NULL fails it, so the pre-existing
 -- notices stay editable by admins alone. Which is what they already were.
 ALTER TABLE notices ADD COLUMN posted_by INTEGER REFERENCES owners(id);
+
+-- Enforcement back on, and then proved rather than assumed. foreign_key_check
+-- walks every child row and returns one row per violation; a clean run here is
+-- the evidence that dropping the parent with the guard rail down cost nothing.
+PRAGMA foreign_keys = ON;
