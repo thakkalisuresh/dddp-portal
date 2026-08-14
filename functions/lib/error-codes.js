@@ -48,7 +48,13 @@ export const ERROR_CODES = {
                     message: 'Bill total paise do not match the flat paise_tag (retired — paise tags removed)' },
   'DDP-BILL-005': { severity: 'error', message: 'Period has no rate set' },
   'DDP-BILL-006': { severity: 'error', message: 'Duplicate bill for (flat, period)' },
-  'DDP-BILL-007': { severity: 'error', message: 'Generation attempted on a locked period' },
+  // WARN, not error. This fires when somebody saves a reading or presses
+  // Generate on a month that is already closed — a person doing an ordinary
+  // thing against a locked month, not a fault in the system. At `error` it went
+  // to Telegram on every occurrence, and on 2026-08-14 a client retrying a save
+  // into a locked July put 56 alerts on the treasurer's phone in one minute.
+  // Same reasoning that retired DDP-BILL-011: normal business is not an error.
+  'DDP-BILL-007': { severity: 'warn', message: 'Reading or generation attempted on a locked period' },
   'DDP-BILL-008': { severity: 'error', message: 'Late fee is negative, fractional or not a number' },
   'DDP-BILL-009': { severity: 'error', message: 'Late fee cron re-applied to an already-charged bill' },
   'DDP-BILL-010': { severity: 'fatal', message: 'Rate was inherited from a previous period instead of set for this one' },

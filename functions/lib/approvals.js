@@ -123,6 +123,11 @@ export function expiresAt(requestedAt, days = REQUEST_TTL_DAYS) {
  * An edit that leaves the total alone (a reason, a status correction that costs
  * nothing) applies immediately and is announced.
  */
-export function needsApproval({ totalBefore, totalAfter }) {
+export function needsApproval({ totalBefore, totalAfter, field }) {
+  // STATUS MOVES NO MONEY AND SETTLES ALL OF IT. Marking a bill `paid` or
+  // `waived` leaves the total untouched, so an amount-only rule would let one
+  // admin write off a debt on their own — the exact thing two signatures are
+  // for. It is the one field where the size of the change tells you nothing.
+  if (field === 'status') return true;
   return Math.abs(Number(totalAfter) - Number(totalBefore)) >= 1;
 }

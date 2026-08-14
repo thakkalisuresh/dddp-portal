@@ -151,6 +151,41 @@ describe('which edits need approval at all', () => {
     // happen — what it reduces to is: if the money does not move, apply it.
     expect(needsApproval({ totalBefore: 338, totalAfter: 338 })).toBe(false);
   });
+
+  it('ALWAYS asks for status, whatever the amount says', () => {
+    // Marking a bill paid or waived settles the debt while moving the total by
+    // nothing at all. An amount-only rule would let one admin write off a bill
+    // single-handedly — the exact thing two signatures exist for.
+    expect(needsApproval({ totalBefore: 338, totalAfter: 338, field: 'status' })).toBe(true);
+  });
+});
+
+describe('an ADMIN raising the correction', () => {
+  // The reason this matters: the treasurer is an admin, the superadmin is
+  // frequently abroad, and a wrong bill should not wait on a timezone.
+  const policy = approvalPolicy({ admins: BENCH, requesterId: 3, billFlat: '10C' });
+
+  it('still needs two OTHER admins', () => {
+    expect(policy.required).toBe(2);
+    expect(policy.approverIds).not.toContain(3);
+    expect(policy.satisfiable).toBe(true);
+  });
+
+  it('cannot approve what they raised', () => {
+    const verdict = canApprove({
+      policy, approver: BENCH[2], request: request({ requested_by: 3 }),
+    });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toBe('requester');
+  });
+
+  it('needs everyone else when correcting another admin\'s bill', () => {
+    const onAdmin = approvalPolicy({ admins: BENCH, requesterId: 3, billFlat: '13E' });
+    expect(onAdmin.subjectIsAdmin).toBe(true);
+    expect(onAdmin.approverIds).not.toContain(4);   // Hari, whose bill it is
+    expect(onAdmin.required).toBe(onAdmin.approverIds.length);
+    expect(onAdmin.required).toBeGreaterThanOrEqual(2);
+  });
 });
 
 describe('a request does not sit open forever', () => {
