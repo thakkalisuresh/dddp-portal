@@ -564,6 +564,98 @@ is proof the ceiling is reachable, and it arrived well before anyone expected
 it. Revisit at the first month residents upload at volume, which is the same
 month B20 bites, for the same reason.
 
+## B25 — Reconciliation calls the whole bank account a discrepancy
+
+**Raised 2026-08-14 from a synthetic SIB statement run through the real
+parser. Not a bug — `reconcile` is behaving exactly as designed. The design
+is scoped to gas and the bank account is not.**
+
+Seventeen residents, every one paying correctly and uploading a perfect
+screenshot — a flawless month. The report still opens with a discrepancy:
+
+```
+confirmed:     17
+discrepancies:  1
+  -> credit_no_proof | Rs 312 | INTEREST CREDIT - SB
+     "Money arrived with no screenshot and no unpaid bill matches the amount."
+```
+
+The bank paid ₹312 of interest into the current account. No resident paid it, so
+no resident can ever upload a screenshot for it, so it is unmatched every single
+month. The same is true of vendor refunds, reversals, quarterly maintenance,
+Onam collections, and the association moving its own money — **the account is
+shared with everything the association does, while reconciliation only knows
+about gas.**
+
+**Why this is worth fixing even though ₹312 is obviously ignorable.** A report
+that raises a false alarm every month teaches the person reading it to skim.
+`credit_no_proof` exists to catch the rare month where money genuinely arrived
+unclaimed, and that signal is what gets lost when it sits next to a predictable
+non-event the treasurer has already dismissed eleven times.
+
+### Rejected: only look for the expected bill amounts
+
+Proposed 2026-08-14 — if the month's bills are ₹99, ₹310, ₹873 and ₹300, check
+the statement for those four amounts and ignore every other credit. It removes
+the noise completely and it is the obvious simplification.
+
+**It deletes the case reconciliation exists for.** From the loop's own comment:
+
+> Money in the bank that nobody claimed — in this building, the residents who
+> pay by UPI and never open the portal at all.
+
+For those residents the statement is the *only* evidence they paid. Filtering to
+expected amounts catches them **only when they pay exactly right**. Consider a
+flat billed ₹310 that pays ₹300 by UPI and never logs in:
+
+- today — ₹300 surfaces as `credit_no_proof` and the treasurer sees it
+- filtered — ₹300 is not an expected amount, so it is silently dropped
+
+That flat now reads unpaid, takes a ₹50 late fee on the 20th, and the resident
+is certain they paid, because they did — the money is in the account, invisible.
+Late payments against an older bill, partial payments and two-months-at-once all
+fail the same way. The filter is most wrong exactly where a human is most needed.
+
+### The change: three buckets, not two
+
+The logic is already right; the presentation flattens it. `reconcile` **already**
+checks unmatched credits against open bills and says so in `detail`:
+
+```js
+const suggestions = openBills.filter((b) => paise(b.total) === paise(c.amount))
+detail: suggestions.length
+  ? 'Money arrived with no screenshot. One or more unpaid bills match this amount.'
+  : 'Money arrived with no screenshot and no unpaid bill matches the amount.'
+```
+
+`suggestions.length` is already the discriminator. Split the report on it:
+
+| Bucket | Contents |
+|---|---|
+| Confirmed | Matched to a proof |
+| **Needs attention** | Unmatched, and an open bill matches the amount |
+| **Other account activity** | Unmatched, no bill matches — interest, refunds, maintenance |
+
+Nothing is hidden and nothing new is guessed, which keeps the conservatism the
+module opens by insisting on. The interest line drops to the bottom bucket where
+a glance dismisses it; the ₹300 underpayment stays in the middle bucket where it
+belongs. Mostly a change to `statementReport` and the admin view rather than to
+`reconcile` itself.
+
+Optionally, let the treasurer dismiss a bottom-bucket credit permanently — that
+also covers refunds and reversals, and needs no pattern matching. Rejected:
+matching narrations against `INTEREST|REFUND|REV`, which is brittle and bank-
+specific.
+
+**Blocked until there are real bills and a real statement to run against**, so
+it sits behind the cutover. Worth doing before the treasurer's first month
+rather than after they have learned to skim.
+
+**Caveat on the evidence.** The statement used was synthetic. SIB does not
+publish a specimen and the format is not obtainable online — see the note in
+`docs/COSTS.md` about confirming the header row from a real export. The
+`credit_no_proof` behaviour demonstrated here does not depend on the format.
+
 ## B12 — The nightly Drive backup — CONFIGURED 2026-08-11, first run unproven
 
 Written in phase 8, deployed, and never configured until now: no Google secrets
