@@ -155,7 +155,12 @@ export function renderLogout(onLogout) {
  * Appended once and guarded, so a page that redraws its main content does not
  * end up with three of these.
  */
-export function renderSupportFooter(support, root = document.querySelector('main') ?? document.body) {
+export function renderSupportFooter(support, root = document.body) {
+  // BODY, NOT MAIN. Every one of these screens calls renderNav first and then
+  // fills <main> with replaceChildren, which threw the footer away a moment
+  // after it was added — it rendered on exactly the pages that never redraw,
+  // and vanished on the rest. Outside main, a page render cannot reach it.
+  //
   // No contact, no footer. Better a missing line than one promising a number
   // the page does not have.
   if (!support?.wa || !root || root.querySelector('.supportfoot')) return;

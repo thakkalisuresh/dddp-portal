@@ -391,8 +391,11 @@ a { color: var(--accent); }
    design: it is the answer to a question somebody is already asking, not an
    advertisement for the committee's phone number. */
 .supportfoot {
-  margin: var(--s-7) 0 var(--s-5);
-  padding: var(--s-4) 0 0;
+  /* Sits outside .page, so it carries the same width and gutters itself or it
+     runs edge to edge while everything above it is centred. */
+  max-width: var(--page-max);
+  margin: var(--s-7) auto var(--s-5);
+  padding: var(--s-4) var(--s-4) 0;
   border-top: 1px solid var(--border);
   color: var(--ink-muted);
   font-size: var(--text-xs);
