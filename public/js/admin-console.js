@@ -1368,11 +1368,26 @@ async function billsPanel() {
                 const res = await api.admin.editBill(
                   b.id, 'total', Number(amount.value), reason.value);
                 trackAction('admin.bill.edit');
+
+                // SAID IN A DIALOG, not only in the margin. "Correct this bill"
+                // reads like a button that corrects the bill; it does not, and
+                // an admin who assumes it did will tell the resident their
+                // amount has changed when it has not yet.
+                if (res.pending) {
+                  alert(
+                    `Not changed yet.\n\n`
+                    + `${b.flat} ${periodLabel(b.period)}: ${money(res.totalBefore)} → `
+                    + `${money(res.totalAfter)}\n\n`
+                    + `${res.note}\n\n`
+                    + `They will find it under Admin → Approvals. You cannot approve `
+                    + `your own request, and the late fee on this bill is frozen until `
+                    + `it is decided.`);
+                }
                 said.replaceChildren(el('span', {
                   style: `color:var(--${res.pending ? 'awaiting' : 'accent'})`,
                 },
                   res.pending
-                    ? `Sent for approval — ${res.note}`
+                    ? `Waiting for approval — ${res.note}`
                     : res.unchanged ? 'That is already the amount.' : 'Changed.'));
                 if (!res.pending) await load();
               } catch (err) { showError(said, err); }
