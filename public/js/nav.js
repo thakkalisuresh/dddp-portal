@@ -11,6 +11,7 @@
  */
 
 import { el, $ } from './ui.js';
+import { api } from './api.js';
 
 const RESIDENT = [
   { href: '/dashboard', label: 'Bill', icon: 'M3 3h18v4H3zM3 10h18v11H3z' },
@@ -76,6 +77,9 @@ function renderAdminBack(current) {
 export function renderNav(me, current = location.pathname) {
   const items = itemsFor(me);
   renderAdminBack(current);
+  // Every screen that draws the nav also gets its way out, whether the page
+  // wired one or not.
+  wireLogout();
   const active = (href) =>
     href === '/admin/' ? current.startsWith('/admin') : current.startsWith(href);
 
@@ -127,4 +131,29 @@ export function renderLogout(onLogout) {
   const slot = $('#logout');
   if (!slot) return;
   slot.addEventListener('click', onLogout);
+}
+
+/**
+ * The way OUT, on every resident screen.
+ *
+ * Notices and Me used to put "My bill" here — a second route to a page the
+ * bottom bar already links, occupying the one slot where a person looks to
+ * leave. Logging out therefore meant going to the dashboard first and finding
+ * the button there, which nobody guesses on a shared phone.
+ *
+ * Wired here rather than per page because that is how it drifted apart in the
+ * first place: each screen answered the question its own way.
+ */
+export function wireLogout() {
+  const slot = $('#logout');
+  if (!slot || slot.dataset.wired) return;
+  slot.dataset.wired = '1';
+  slot.addEventListener('click', async () => {
+    slot.disabled = true;
+    // The redirect happens either way. A logout that fails on the network has
+    // still ended the session as far as this device is concerned, and leaving
+    // somebody on a page that looks logged in is the worse outcome.
+    await api.logout().catch(() => {});
+    location.href = '/login';
+  });
 }

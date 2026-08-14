@@ -123,6 +123,39 @@ export function expiresAt(requestedAt, days = REQUEST_TTL_DAYS) {
  * An edit that leaves the total alone (a reason, a status correction that costs
  * nothing) applies immediately and is announced.
  */
+/**
+ * What the admins are actually told. Pure, so the wording can be tested — an
+ * approval request is read once, on a phone, by somebody who was doing
+ * something else, and it has to carry the whole decision.
+ *
+ * The amounts are both named. "A correction is waiting" tells an approver
+ * nothing they can act on; ₹12,466 becoming ₹380 tells them whether to look
+ * closely or wave it through, before they have opened anything.
+ */
+export function approvalMessage({
+  flat, period, totalBefore, totalAfter, reason, requestedBy, required, origin = '',
+}) {
+  const money = (n) => `₹${Number(n).toLocaleString('en-IN')}`;
+  const subject = `Approve a bill correction — ${flat} ${period}`;
+  const text = [
+    `${requestedBy} has asked to correct a bill.`,
+    '',
+    `Flat:     ${flat}`,
+    `Month:    ${period}`,
+    `Now:      ${money(totalBefore)}`,
+    `Proposed: ${money(totalAfter)}`,
+    `Reason:   ${reason}`,
+    '',
+    `It needs ${required} other admin${required === 1 ? '' : 's'} to agree before `
+      + 'anything changes. Until then the bill is unchanged and its late fee is frozen.',
+    '',
+    origin ? `Approve or reject: ${origin}/admin/#approvals` : 'Open Admin → Approvals to decide.',
+    '',
+    'You cannot approve a request you raised yourself, or one for your own flat.',
+  ].join('\n');
+  return { subject, text };
+}
+
 export function needsApproval({ totalBefore, totalAfter, field }) {
   // STATUS MOVES NO MONEY AND SETTLES ALL OF IT. Marking a bill `paid` or
   // `waived` leaves the total untouched, so an amount-only rule would let one

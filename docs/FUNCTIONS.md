@@ -63,7 +63,8 @@ Who may approve a bill edit, and how many of them it takes.
 | fn | `canApprove` | May this person approve this request, right now? `substitute` is not a second class of approval — it is the same decision, recorded as having been made by the superadmin in place of an admin who did not answer, so it can be read back as exactly that. |
 | fn | `isSatisfied` |  |
 | fn | `expiresAt` |  |
-| fn | `needsApproval` | Does this edit need approval at all? Bill totals are whole rupees — the paise tag was retired and `toWholeRupees` ceilings every total — so the smallest move any edit can make is ₹1. |
+| fn | `approvalMessage` | What the admins are actually told. |
+| fn | `needsApproval` |  |
 
 ### `functions/lib/attachments.js`
 
@@ -696,6 +697,7 @@ Navigation.
 |---|---|---|
 | fn | `renderNav` | @param me the /api/me payload @param current pathname to mark as the active destination |
 | fn | `renderLogout` |  |
+| fn | `wireLogout` | The way OUT, on every resident screen. |
 
 ### `public/js/password-rules.js`
 
@@ -775,4 +777,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-411 exports. 212 have no doc comment.
+413 exports. 213 have no doc comment.
