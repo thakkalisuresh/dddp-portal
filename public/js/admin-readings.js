@@ -167,7 +167,12 @@ function importPanel() {
       const accepted = cells.length - refused.length;
       const flatOf = (i) => i.getAttribute('data-flat');
 
-      out.replaceChildren(
+      // FILTERED, because replaceChildren is not el(). el() skips a null child;
+      // replaceChildren stringifies it, and the treasurer reads the word "null"
+      // in the middle of their import summary. Reported during testing on
+      // 2026-08-14, from exactly the conditional-child style used everywhere
+      // else in this file.
+      out.replaceChildren(...[
         el('span', {}, `${accepted} filled in as a draft. `),
         parsed.errors.length
           ? el('strong', { style: 'color:var(--overdue)' },
@@ -184,8 +189,8 @@ function importPanel() {
           : null,
         !parsed.errors.length && !refused.length && !odd.length
           ? el('span', { style: 'color:var(--accent)' }, 'Nothing skipped.')
-          : null
-      );
+          : null,
+      ].filter(Boolean));
     } catch (err) {
       // Same lesson as the Generate button: an import that fails silently
       // leaves the treasurer believing the readings went in.
