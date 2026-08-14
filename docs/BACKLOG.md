@@ -467,6 +467,103 @@ Where it would genuinely help: plain-language error-code explanations for
 residents in English and Malayalam, and overnight triage saying which of the 57
 codes is new versus routine. Both read-only, both additive to the report.
 
+## B24 — Groq's free tier runs out of OCR at ~83 uploads in a day
+
+**Raised 2026-08-14, and revised the same day after hitting it for real.** The
+first version of this item named the wrong limit; the correction is the item.
+
+**The binding constraint is tokens per DAY, not per minute.**
+
+| | |
+|---|---|
+| Tokens per upload | **2,402** measured (1,833 prompt + 569 completion) |
+| Observed cost per answer in a real batch | **~3,900** |
+| Free tier: tokens per day | **200,000** |
+| Free tier: tokens per minute | 8,000 |
+| Free tier: requests per day | 1,000 |
+
+200,000 ÷ 2,402 is **about 83 uploads a day** at best. The 2026-08-14 batch
+actually produced **51** answers for a full day's tokens — ~3,900 each. Plan
+against 51. The building has **99 flats**.
+One bill cycle where everybody pays on the same day exceeds the daily budget by
+roughly sixteen uploads — and re-uploads after a rejected proof spend it
+twice, so real capacity is under 83 distinct flats.
+
+**How this was found.** Running the August 2026 proof test over the exported
+WhatsApp screenshots died at 58 images with `TPD: Limit 200000, Used 199160`.
+Every retry failed identically, because a per-day lockout lasts hours — the
+`x-ratelimit-*-tokens` headers showed 7,983 of 8,000 free at that exact moment,
+which is why a per-minute reading of the problem is so easy to reach and so
+wrong.
+
+**Two earlier estimates were wrong, both in the reassuring direction:**
+
+- `_HANDOFF.md` reasoned from monthly volume — "comfortable for 99 uploads a
+  month". Arithmetically true, wrong unit: nobody uploads spread evenly over a
+  month, and the limit that binds resets daily.
+- The first draft of this item said burst was the only ceiling and daily
+  allowances were "nowhere near binding". That came from extrapolating one
+  1,951-token measurement taken on an unusually small 30 KB image.
+
+**Resolution turned out NOT to drive the cost, and an earlier draft of this
+item said it did.** The same receipt measured 1,833 prompt tokens at both
+709×1000 and 1135×1600 — identical. The model tiles to a fixed budget, so
+`compress.js` earns its keep on bandwidth and R2, not on tokens. Above 1600px is
+untested: the daily budget ran out before the 4000px case could be measured.
+
+**The unexplained gap is the more useful finding.** A clean call costs 2,402
+tokens but the batch averaged ~3,900 per answer. The likely cause is work paid
+for and discarded — `TIMEOUT_MS` aborts at 12s, while Groq has already processed
+and billed the request. If that is right, every timeout costs a full upload's
+budget and returns nothing, and raising the timeout would *save* tokens rather
+than spend them. Worth confirming before anyone tunes it.
+
+**The failure is graceful but silent, and that is the real cost.** A 429 raises
+`DDP-PROOF-007`, `readReceipt` catches it, and the proof stores as unreadable
+for the treasurer. Nobody is blocked from paying — `vision.js` is explicit that
+OCR is never a gate. But an unreadable proof looks identical whether the model
+failed, the image was poor, or the provider locked the account out for the rest
+of the day. On the busiest evening of the month the treasurer would be hand-
+typing a growing backlog with nothing on screen explaining why.
+
+Two ways out, and they are not exclusive:
+
+**Put a card on Groq.** Pay-as-you-go, no monthly minimum, and it brings ~10×
+the rate limits plus a 25% discount — roughly 40 screenshots a minute, which
+lifts the daily token cap, which is the ceiling that actually binds. Usage would
+be about **₹9–13/month** at one upload per flat (see `COSTS.md`) — less than the
+free tier's own daily budget is worth. The headroom is the reason to do it; the
+discount is incidental.
+
+*The tier details — no monthly minimum, ~10× limits, 25% discount — come from
+third-party pricing trackers, not Groq's own page, which would not load.
+Confirm in the console billing screen before acting. The 200,000 TPD figure is
+not from those trackers: it came from Groq's own 429 response and is solid.*
+
+**Or defer only on 429.** Keep the inline call and its upload-time verdict
+exactly as they are, and on a 429 or timeout mark the proof for a retry sweep
+instead of burning it to `unreadable` permanently. One new column — `status` is
+already the treasurer's review state — and a pass hung off the existing 08:30
+cron, which is the right cadence now that the lockout is known to last hours
+rather than a minute. Worth having at any tier, since limits exist at all of
+them, and it is the only option here that makes the failure *visible*.
+
+**Rejected: a general upload queue.** A funnel paced at four a minute was the
+answer to the per-minute ceiling, and the per-minute ceiling turned out not to
+be the problem. Rationing a daily budget more smoothly does not create more of
+it: 99 uploads exceed 200,000 tokens whether they arrive in ten minutes or
+spread across the day. It would also cost the instant verdict that `proof.js`
+argues is the point — "telling them at upload beats the treasurer finding it
+days later" — and need a per-minute cron against the three-a-day this project
+runs now.
+
+**The trigger has already fired once, in testing.** A 58-image batch exhausted
+a full day's tokens on 2026-08-14. That was one machine running flat out rather
+than residents uploading, so it is not proof the building will hit it — but it
+is proof the ceiling is reachable, and it arrived well before anyone expected
+it. Revisit at the first month residents upload at volume, which is the same
+month B20 bites, for the same reason.
+
 ## B12 — The nightly Drive backup — CONFIGURED 2026-08-11, first run unproven
 
 Written in phase 8, deployed, and never configured until now: no Google secrets
