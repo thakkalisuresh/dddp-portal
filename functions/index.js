@@ -3130,13 +3130,21 @@ async function alertApprovers(env, { policy, bill, totalAfter, reason, requested
     reason, requestedBy, required: policy.required, origin,
   });
 
+  // Email is not set up yet, and that is a decision rather than a fault: the
+  // association's Gmail account waits on the committee reviewing the portal.
+  // Attempting a send per approver would burn a token refresh each time and
+  // return the same answer, so the whole path is skipped while it is off.
+  const mail = mailConfigured(env);
+
   let emailed = 0;
   const missing = [];
-  for (const person of people.results ?? []) {
-    if (!person.email) { missing.push(person.name); continue; }
-    const sent = await sendEmail(env, { to: person.email, subject, text });
-    if (sent.sent) emailed += 1;
-    else missing.push(`${person.name} (${sent.reason})`);
+  if (mail) {
+    for (const person of people.results ?? []) {
+      if (!person.email) { missing.push(person.name); continue; }
+      const sent = await sendEmail(env, { to: person.email, subject, text });
+      if (sent.sent) emailed += 1;
+      else missing.push(`${person.name} (${sent.reason})`);
+    }
   }
 
   const telegram = await postToTelegram(env,
@@ -3144,13 +3152,16 @@ async function alertApprovers(env, { policy, bill, totalAfter, reason, requested
     + `₹${bill.total} → ₹${totalAfter}\nAsked by ${requestedBy} — needs ${policy.required} `
     + `admin${policy.required === 1 ? '' : 's'}\nReason: ${reason}`);
 
-  // Recorded, at warn, when the email half reached nobody. Somebody reading the
-  // digest a week later needs to know the queue was silent, not empty.
-  if (!emailed && missing.length) {
+  // Recorded, at warn, when email is SET UP and still reached nobody — an
+  // address missing from an admin's record, or Gmail refusing. Not while the
+  // account is deliberately absent: a warning that fires on every correction
+  // for a state everyone already knows about is how the digest becomes
+  // something people skim past, and the one that matters goes with it.
+  if (mail && !emailed && missing.length) {
     await reportError(env, 'DDP-ADMIN-018', { billId: bill.id, missing });
   }
 
-  return { emailed, missing, telegram };
+  return { emailed, missing, telegram, mail };
 }
 
 /** Open requests, with everything an approver needs to judge one. */
