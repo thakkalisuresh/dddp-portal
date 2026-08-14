@@ -16,7 +16,7 @@
 
 import { fail } from './errors.js';
 import { round2, toWholeRupees } from './billing.js';
-import { canChangeRole } from './tenancy.js';
+import { canChangeRole, ROLES } from './tenancy.js';
 // Served to the browser as well, which is why it lives under public/. See the
 // header there: one table, imported by both sides, rather than two that drift.
 import { NATIONAL_LENGTHS, splitMobile } from '../../public/js/countries.js';
@@ -157,7 +157,9 @@ export function validateOwnerField(field, value) {
       return normaliseMobile(value);
     case 'role': {
       const role = String(value ?? '').trim();
-      if (!['owner', 'admin', 'superadmin'].includes(role)) fail('DDP-ADMIN-010', { field, value });
+      // One list, in tenancy.js, so god-edit and canChangeRole cannot come to
+      // different conclusions about what a role is.
+      if (!ROLES.includes(role)) fail('DDP-ADMIN-010', { field, value });
       return role;
     }
     case 'flat':

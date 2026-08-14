@@ -15,7 +15,21 @@ import { renderMarkdown } from './markdown.js';
 import { prepareUpload, makeThumbnail } from './compress.js';
 
 const main = $('#main');
+
+/**
+ * Two flags, because the committee member split what used to be one question.
+ *
+ * `isAdmin` is the MODERATOR: hides a reply, removes somebody else's photo.
+ * `isCommittee` is the wider READER: an admin, the superadmin, or a committee
+ * member, all of whom see a hidden comment's text and who hid it.
+ *
+ * Collapsing these back into one flag would either hand a committee member a
+ * Hide button the server refuses — the worst kind, since it looks like it
+ * worked until the page reloads — or blank out the hidden replies they were
+ * deliberately given. Neither is a display detail.
+ */
 let isAdmin = false;
+let isCommittee = false;
 
 trackPage('/notices');
 init();
@@ -24,6 +38,7 @@ async function init() {
   try {
     const me = await api.me();
     isAdmin = me.role === 'admin' || me.role === 'superadmin';
+    isCommittee = isAdmin || me.role === 'committee';
     $('#who').innerHTML = `Flat ${esc(me.flat)} <span>· ${esc(me.name)}</span>`;
     renderViewBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
     renderNav(me, '/notices');
@@ -54,6 +69,11 @@ async function renderList() {
       ? el('p', {},
           el('a', { class: 'linkish', href: '/admin/#notices' }, '+ Post a notice'))
       : null,
+    // A committee member has no admin console to be sent to — this board is
+    // the whole of their job, so the form is on it rather than behind a link
+    // to a page that would refuse them. Collapsed until asked for: the great
+    // majority of visits to this page are to READ it, including theirs.
+    isCommittee && !isAdmin ? noticeComposer() : null,
     ...(notices.length
       ? notices.map((n) =>
           el('div', { class: `notice ${n.kind === 'event' ? 'notice--event' : ''}` },
@@ -95,7 +115,11 @@ async function renderOne(id) {
       // preview stays plain text: three clamped lines of a bulleted agenda is
       // not a summary of anything.
       el('div', { class: 'prose' }, ...renderMarkdown(n.body)),
-      attachmentList(n.attachments)),
+      attachmentList(n.attachments, isAdmin || Boolean(n.canManage)),
+      // `canManage` comes from the server, which computed it with the same
+      // function the PATCH route enforces. Asking the client to work it out
+      // from a role would put a second, weaker copy of the rule here.
+      n.canManage && !isAdmin ? manageBar(n) : null),
     el('hr', { class: 'rule' }),
     el('p', { class: 'label' }, n.comments.length ? `${n.comments.length} replies` : 'No replies yet'),
     list,
@@ -104,7 +128,11 @@ async function renderOne(id) {
 }
 
 function commentRow(c) {
-  if (c.hidden && !isAdmin) return el('div');
+  // Reading a hidden reply is a committee read; UNHIDING it is a moderation
+  // act, and the button below stays with the admins. The server agrees on
+  // both halves — it sends the text to a committee member and refuses them
+  // the hide endpoint.
+  if (c.hidden && !isCommittee) return el('div');
   return el('div', { class: `comment ${c.hidden ? 'comment--hidden' : ''}` },
     el('div', { class: 'comment__head' },
       el('span', { class: 'comment__who' },
@@ -134,8 +162,13 @@ function commentRow(c) {
  *
  * Loading is lazy: a thread can carry a dozen photographs and none of them are
  * why the reader opened it.
+ *
+ * @param canRemove  who may take a file down. Defaults to the admins, which is
+ *   the answer for every file on a REPLY — a resident's photograph, removable
+ *   only as a moderation decision. A notice's own files pass the poster in as
+ *   well, so a committee member can undo their own mis-upload.
  */
-function attachmentList(attachments = []) {
+function attachmentList(attachments = [], canRemove = isAdmin) {
   if (!attachments.length) return null;
 
   return el('div', { class: 'attachments' },
@@ -156,7 +189,7 @@ function attachmentList(attachments = []) {
           el('a', { class: 'linkish', href: a.url, target: '_blank', rel: 'noopener' },
             a.isImage ? a.filename : `📎 ${a.filename}`),
           el('span', { class: 'small muted' }, a.size),
-          isAdmin
+          canRemove
             ? el('button', {
                 class: 'linkish small', type: 'button',
                 onclick: async () => {
@@ -168,6 +201,185 @@ function attachmentList(attachments = []) {
                 },
               }, 'Remove')
             : null))));
+}
+
+/** The scope select, shared by the composer and the edit form. */
+function scopeSelect(current = 'all') {
+  const sel = el('select', { class: 'input', 'aria-label': 'Who can see this' },
+    el('option', { value: 'all' }, 'Everyone in the building'),
+    el('option', { value: 'owners' }, 'Owners only — hidden from tenants'));
+  sel.value = current;
+  return sel;
+}
+
+/**
+ * Post a notice, from the board itself.
+ *
+ * WHY IT IS COLLAPSED. This form sits above the notices for the handful of
+ * people who can post, and those same people read the board far more often
+ * than they write to it. Open by default it would push every notice down a
+ * screen for the readers who need them most.
+ *
+ * The attach-after-post order is the one api.attach documents: the notice is
+ * created first, so a failed upload leaves a notice with a missing file — which
+ * can be retried — rather than a half-written notice nobody can see.
+ */
+function noticeComposer() {
+  const title = el('input', { class: 'input', type: 'text', 'aria-label': 'Title', maxlength: '120' });
+  const body  = el('textarea', { class: 'input', 'aria-label': 'Notice', rows: '6' });
+  const scope = scopeSelect();
+  const event = el('input', { class: 'input', type: 'date', 'aria-label': 'Event date' });
+  const isEvent = el('input', { type: 'checkbox' });
+  const replies = el('input', { type: 'checkbox' });
+  const status = el('div');
+  const chosen = el('p', { class: 'small muted' });
+
+  const picker = el('input', {
+    type: 'file', class: 'input', 'aria-label': 'Attach photos or a PDF',
+    accept: 'image/jpeg,image/png,image/webp,application/pdf', multiple: true,
+    onchange: () => {
+      const files = [...picker.files].slice(0, MAX_FILES);
+      chosen.replaceChildren(files.length ? files.map((f) => f.name).join(', ') : '');
+    },
+  });
+
+  const post = el('button', {
+    class: 'btn', type: 'button',
+    onclick: async () => {
+      status.replaceChildren();
+      if (!title.value.trim() || !body.value.trim()) {
+        status.replaceChildren(el('p', { class: 'small' }, 'A notice needs a title and a body.'));
+        return;
+      }
+      // Held down for the whole round trip, uploads included. Every file is a
+      // separate request, so the window in which an impatient second tap posts
+      // the notice twice is much wider than a single POST would make it.
+      post.disabled = true;
+      try {
+        const { id } = await api.admin.addNotice({
+          title: title.value.trim(),
+          body: body.value.trim(),
+          kind: isEvent.checked ? 'event' : 'notice',
+          eventDate: isEvent.checked && event.value ? event.value : null,
+          allowComments: replies.checked,
+          scope: scope.value,
+        });
+
+        const files = [...picker.files].slice(0, MAX_FILES);
+        for (const [i, file] of files.entries()) {
+          status.replaceChildren(el('p', { class: 'small muted' },
+            `Uploading ${i + 1} of ${files.length}…`));
+          const ready = await prepareUpload(file);
+          await api.attach('notice', id, ready, await makeThumbnail(ready));
+        }
+        location.href = `/notices.html?id=${id}`;
+      } catch (err) {
+        showError(status, err);
+        post.disabled = false;
+      }
+    },
+  }, 'Post notice');
+
+  const form = el('div', { class: 'stack', hidden: true },
+    el('p', { class: 'label' }, 'Title'), title,
+    el('p', { class: 'label' }, 'Notice'), body,
+    el('p', { class: 'small muted' },
+      'Lists, bold and links are honoured on the notice page.'),
+    el('p', { class: 'label' }, 'Who can see this'), scope,
+    el('label', { class: 'row', style: 'gap:var(--s-2)' }, isEvent, 'This is an event'),
+    event,
+    el('label', { class: 'row', style: 'gap:var(--s-2)' }, replies, 'Allow replies'),
+    picker, chosen, status, post);
+
+  const toggle = el('button', {
+    class: 'linkish', type: 'button',
+    onclick: () => {
+      form.hidden = !form.hidden;
+      toggle.textContent = form.hidden ? '+ Post a notice' : 'Cancel';
+      if (!form.hidden) title.focus();
+    },
+  }, '+ Post a notice');
+
+  return el('div', { class: 'stack', style: 'margin-bottom:var(--s-4)' }, toggle, form);
+}
+
+/**
+ * Edit or withdraw a notice you posted.
+ *
+ * Only ever rendered for a committee member — an admin manages the whole board
+ * from the console, and giving them a second, smaller set of the same controls
+ * here would mean two places to fix the day one of them is wrong.
+ *
+ * WITHDRAW, NOT DELETE. `active = 0` is the same soft withdrawal the console
+ * performs: the notice, its replies and its files go to the archive, where the
+ * committee can still read them. Nothing on this page destroys anything, and
+ * permanent deletion stays where it is, behind the superadmin.
+ */
+function manageBar(n) {
+  const title = el('input', { class: 'input', type: 'text', maxlength: '120', 'aria-label': 'Title' });
+  const body  = el('textarea', { class: 'input', rows: '6', 'aria-label': 'Notice' });
+  const scope = scopeSelect(n.scope);
+  const replies = el('input', { type: 'checkbox' });
+  const status = el('div');
+  title.value = n.title;
+  body.value = n.body;
+  replies.checked = Boolean(n.allowComments);
+
+  const save = el('button', {
+    class: 'btn', type: 'button',
+    onclick: async () => {
+      status.replaceChildren();
+      save.disabled = true;
+      try {
+        await api.admin.updateNotice(n.id, {
+          title: title.value.trim(),
+          body: body.value.trim(),
+          scope: scope.value,
+          allowComments: replies.checked,
+        });
+        location.reload();
+      } catch (err) {
+        showError(status, err);
+        save.disabled = false;
+      }
+    },
+  }, 'Save changes');
+
+  const withdraw = el('button', {
+    class: 'linkish small', type: 'button',
+    onclick: async () => {
+      // Asks, because it takes the notice off everybody's board at once. It is
+      // reversible by an admin from the archive, and the wording says so rather
+      // than implying a deletion this button cannot perform.
+      if (!confirm('Withdraw this notice? It leaves the board for everyone and '
+                 + 'moves to the committee archive.')) return;
+      try {
+        await api.admin.updateNotice(n.id, { active: false });
+        location.href = '/notices.html';
+      } catch (err) {
+        showError(status, err);
+      }
+    },
+  }, 'Withdraw');
+
+  const form = el('div', { class: 'stack', hidden: true },
+    el('p', { class: 'label' }, 'Title'), title,
+    el('p', { class: 'label' }, 'Notice'), body,
+    el('p', { class: 'label' }, 'Who can see this'), scope,
+    el('label', { class: 'row', style: 'gap:var(--s-2)' }, replies, 'Allow replies'),
+    status, save);
+
+  const edit = el('button', {
+    class: 'linkish small', type: 'button',
+    onclick: () => {
+      form.hidden = !form.hidden;
+      edit.textContent = form.hidden ? 'Edit' : 'Cancel';
+    },
+  }, 'Edit');
+
+  return el('div', { class: 'stack', style: 'margin-top:var(--s-3)' },
+    el('div', { class: 'row', style: 'gap:var(--s-3)' }, edit, withdraw),
+    form);
 }
 
 function composer(noticeId) {

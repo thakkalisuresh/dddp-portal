@@ -389,7 +389,8 @@ Notices and their comments.
 | const | `NOTICE_SCOPES` |  |
 | fn | `canSeeNotice` | Can this viewer see a notice with this scope? The ONE place the rule lives. |
 | fn | `canSeeAttachment` | May this viewer be served this attachment? A FUNCTION RATHER THAN THREE LINES IN THE ROUTE, because those three lines were wrong the first time they were written: they let `hasRole(session, 'admin')` short-circuit the scope check, and hasRole reads the ACTOR. |
-| fn | `isCommittee` |  |
+| fn | `isCommittee` | Committee by the viewer's own role — never the actor's. |
+| fn | `canManageNotice` | May this person edit, withdraw or attach to this notice? The asymmetry the committee role is made of: an admin manages the whole board, a committee member manages the notices they posted. |
 | fn | `listNotices` |  |
 | fn | `listArchivedNotices` | Withdrawn notices, for the committee's archive. |
 | fn | `purgeNotice` | Destroy a withdrawn notice and everything hanging off it. |
@@ -498,8 +499,9 @@ Sessions carry actor_id (who really logged in) and subject_id (whose data is sho
 | fn | `resolveSession` |  |
 | fn | `destroySession` |  |
 | fn | `destroyAllSessionsFor` |  |
-| const | `ROLE_RANK` |  |
+| const | `ROLE_RANK` | The ladder. |
 | fn | `hasRole` |  |
+| fn | `committeeMayUse` | The committee member's exception to the admins-only gate on `/api/admin/*`. |
 | const | `CREDENTIAL_ACTIONS` | Credential changes are blocked while impersonating, even in write mode — they could lock the real resident out of their own account (plan §5.5). |
 | fn | `isBlockedWhileImpersonating` |  |
 
@@ -532,7 +534,7 @@ Ownership changes: a flat is sold, or the builder hands one to a new buyer.
 
 | | Export | What it does |
 |---|---|---|
-| const | `ROLES` |  |
+| const | `ROLES` | In ladder order, low to high, matching ROLE_RANK in session.js. |
 | fn | `outstandingFor` | Outstanding balance a departing owner leaves behind. |
 | const | `SUPERADMIN_LIMIT` | There is exactly ONE superadmin, and it is the building's owner-operator. |
 | fn | `canChangeRole` |  |
@@ -773,4 +775,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-409 exports. 215 have no doc comment.
+411 exports. 212 have no doc comment.

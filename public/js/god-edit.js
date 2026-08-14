@@ -269,7 +269,7 @@ function personRow(p) {
       field(p, 'owner', 'mobile', 'Mobile'),
       field(p, 'owner', 'email', 'Email', { type: 'email', placeholder: 'none' }),
       select(p, 'owner', 'relationship', 'Owner / tenant', ['owner', 'tenant']),
-      select(p, 'owner', 'role', 'Role', ['owner', 'admin', 'superadmin']),
+      select(p, 'owner', 'role', 'Role', ['owner', 'committee', 'admin', 'superadmin']),
       select(p, 'owner', 'active', 'Active', [['1', 'Yes'], ['0', 'No']])));
 }
 

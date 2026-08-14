@@ -121,11 +121,52 @@ export async function destroyAllSessionsFor(env, ownerId) {
     .bind(ownerId, ownerId).run();
 }
 
-export const ROLE_RANK = { owner: 0, admin: 1, superadmin: 2 };
+/**
+ * The ladder. `committee` was inserted at rung 1 rather than bolted on at the
+ * top, and the insertion is the whole safety argument: every existing
+ * `hasRole(session, 'admin')` in the router — residents, billing, roster,
+ * readings, the lot — goes on refusing a committee member without one of those
+ * call sites being edited or even read. A new role that defaults to "no" is a
+ * role you can reason about; one that defaults to "yes" everywhere except
+ * where somebody remembered to say no is not.
+ *
+ * The single thing a committee member may reach lives in `committeeMayUse`,
+ * below, as an explicit list of routes.
+ */
+export const ROLE_RANK = { owner: 0, committee: 1, admin: 2, superadmin: 3 };
 
 export function hasRole(session, minimum) {
   if (!session) return false;
   return ROLE_RANK[session.actor.role] >= ROLE_RANK[minimum];
+}
+
+/**
+ * The committee member's exception to the admins-only gate on `/api/admin/*`.
+ *
+ * AN ALLOWLIST OF ROUTES, matched on method and path, and deliberately not a
+ * flag consulted inside each handler. The gate in the router is one `if` that
+ * every admin route sits behind; the way to let one role past it without
+ * weakening it for the rest is to name the routes here, where they can be read
+ * in one screen and tested without a database.
+ *
+ * Reaching a route is not the same as being allowed to change what is behind
+ * it. These five let a committee member CREATE a notice, and read the archive
+ * — the reads were asked for in full, so `listArchivedNotices` is shared with
+ * admins as it stands. Editing, withdrawing and attaching are narrowed a
+ * second time inside their handlers to notices this person actually posted;
+ * that check needs the row, so it cannot happen out here.
+ */
+export function committeeMayUse(method, path) {
+  if (method === 'POST' && path === '/api/admin/notices') return true;
+  if (method === 'PATCH' && /^\/api\/admin\/notices\/\d+$/.test(path)) return true;
+  if (method === 'POST' && /^\/api\/admin\/notices\/\d+\/attachments$/.test(path)) return true;
+  if (method === 'GET' && path === '/api/admin/notices/archive') return true;
+  if (method === 'GET' && /^\/api\/admin\/notices\/\d+\/archived$/.test(path)) return true;
+  // Removing a file from a notice is the other half of attaching one. Narrowed
+  // to the poster's own notice in the handler, which is also where a comment
+  // attachment — a resident's photograph, and a moderation act — is refused.
+  if (method === 'DELETE' && /^\/api\/admin\/attachments\/\d+$/.test(path)) return true;
+  return false;
 }
 
 /**

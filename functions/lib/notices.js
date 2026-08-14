@@ -72,7 +72,7 @@ export const NOTICE_SCOPES = ['all', 'owners'];
  */
 export function canSeeNotice(scope, viewer) {
   if (scope !== 'owners') return true;
-  if (viewer?.role === 'admin' || viewer?.role === 'superadmin') return true;
+  if (isCommittee(viewer)) return true;
   return viewer?.relationship !== 'tenant';
 }
 
@@ -101,9 +101,43 @@ export function canSeeAttachment(row, viewer) {
   return canSeeNotice(row.scope, viewer);
 }
 
-/** Committee by the viewer's own role — never the actor's. */
+/**
+ * Committee by the viewer's own role — never the actor's.
+ *
+ * A committee member counts, and it is the ONE place where they get the same
+ * answer as an admin. They write only their own notices, but they READ the
+ * board the way the committee does: the whole archive, the owners-scoped
+ * papers, and the text of a hidden comment along with who hid it. The
+ * reasoning is that a person deciding what to post has to be able to see what
+ * has already been said and what had to be taken down — a noticeboard you can
+ * write to but not fully read is how the same argument gets started twice.
+ *
+ * Read access, and nothing else. Every write a committee member cannot do is
+ * refused by the rank ladder in session.js, not by this function.
+ */
 export const isCommittee = (viewer) =>
-  viewer?.role === 'admin' || viewer?.role === 'superadmin';
+  viewer?.role === 'committee'
+  || viewer?.role === 'admin'
+  || viewer?.role === 'superadmin';
+
+/**
+ * May this person edit, withdraw or attach to this notice?
+ *
+ * The asymmetry the committee role is made of: an admin manages the whole
+ * board, a committee member manages the notices they posted. Asked of the
+ * ACTOR and not the viewer, because this decides a write — the opposite of
+ * every rule above it in this file, and the reason it says so in its name.
+ *
+ * A notice with no `posted_by` predates the column and belongs to nobody, so a
+ * committee member fails this and an admin does not. That is the honest
+ * outcome: those notices were posted by admins.
+ */
+export function canManageNotice(notice, actor) {
+  if (!notice) return false;
+  if (actor?.role === 'admin' || actor?.role === 'superadmin') return true;
+  if (actor?.role !== 'committee') return false;
+  return notice.posted_by != null && notice.posted_by === actor.id;
+}
 
 export async function listNotices(env, viewer) {
   // Built from the same predicate rather than a second copy of the rule.
@@ -309,6 +343,11 @@ export async function getNotice(env, noticeId, { isAdmin = false, viewer = null,
     allowComments: Boolean(notice.allow_comments),
     postedAt: notice.posted_at,
     scope: notice.scope ?? 'all',
+    // Who wrote it, so the caller can ask canManageNotice. Not a name and not
+    // shown anywhere — an id the router compares against the actor. The board
+    // still attributes notices to the association rather than to a person,
+    // which is what a notice from the committee is.
+    postedBy: notice.posted_by ?? null,
     attachments: shapeAttachments(all.filter((a) => a.notice_id === noticeId)),
     comments: shapeComments(rows.results ?? [], {
       isAdmin,

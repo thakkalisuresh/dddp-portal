@@ -10,7 +10,13 @@
 
 import { fail } from './errors.js';
 
-export const ROLES = ['owner', 'admin', 'superadmin'];
+/**
+ * In ladder order, low to high, matching ROLE_RANK in session.js. `committee`
+ * is a resident who may post notices and do nothing else administrative — the
+ * AGM's usual case, where somebody is trusted to talk to the building without
+ * being handed the billing.
+ */
+export const ROLES = ['owner', 'committee', 'admin', 'superadmin'];
 
 /**
  * Outstanding balance a departing owner leaves behind. Usually settled at the
@@ -256,7 +262,14 @@ export function canResetPassword({ actor, target, mailConfigured = true }) {
     // resetting another admin — that is lateral movement into an account with
     // the same powers, and no mailbox outage makes it necessary. The gate
     // restores what B21 removed and not one rung more.
-    if (!mailConfigured && target.role === 'owner') {
+    // A committee member counts as an ordinary resident here, and the test is
+    // the one the paragraph above states: lateral movement into an account
+    // with the SAME powers. Posting notices is not that. Leaving them out
+    // would have locked exactly one kind of resident out of the outage
+    // fallback for no reason anybody could name — and silently, because their
+    // role reads 'committee' rather than 'owner' and the condition would
+    // simply stop matching.
+    if (!mailConfigured && (target.role === 'owner' || target.role === 'committee')) {
       return { ok: true, degraded: true };
     }
 
