@@ -694,6 +694,7 @@ Navigation.
 |---|---|---|
 | fn | `renderNav` | @param me the /api/me payload @param current pathname to mark as the active destination |
 | fn | `renderLogout` |  |
+| fn | `wireLogout` | The way OUT, on every resident screen. |
 
 ### `public/js/password-rules.js`
 
@@ -773,4 +774,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-409 exports. 215 have no doc comment.
+410 exports. 215 have no doc comment.

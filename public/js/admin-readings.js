@@ -109,9 +109,14 @@ function header() {
       // will not take it.
       grid.status === 'locked'
         ? el('p', { class: 'small', style: 'color:var(--awaiting);font-family:var(--font-ui)' },
+            // Named as the tab the treasurer can actually open. It said "god
+            // mode", which is internal vocabulary for a screen most admins
+            // cannot reach — and since admins can now correct a bill from the
+            // console, it was pointing at the wrong place as well as using the
+            // wrong word.
             'This month is generated and locked. Readings can no longer be '
-            + 'changed — a correction is made on the bill itself, in god mode, '
-            + 'and needs two other admins to approve it.')
+            + 'changed — correct the bill itself under Admin → Bills, and two '
+            + 'other admins will be asked to approve it.')
         : null),
     el('div', { class: 'progress' },
       el('span', { class: 'progress__track' },
@@ -503,7 +508,7 @@ async function flush() {
       markRows(flats, 'msg--error', 'not saved');
       refusal = err?.code === 'DDP-BILL-007'
         ? 'This month is generated and locked \u2014 readings can no longer be changed. '
-          + 'Corrections are made on the bill now, under god mode.'
+          + 'Correct the bill instead, under Admin \u2192 Bills.'
         : (err?.message ?? 'Those readings were refused.');
       return;
     }
@@ -583,6 +588,11 @@ function footbar() {
       onclick: () => api.admin.downloadTemplate(period, grid),
     }, 'Download template'),
     el('span', { class: 'spacer' }),
+    // A locked month is a dead end otherwise: the screen says corrections
+    // happen on the bill, and then leaves the treasurer to go and find where.
+    grid.status === 'locked'
+      ? el('a', { class: 'btn btn--ghost', href: '/admin/#bills' }, 'Correct a bill')
+      : null,
     generate);
 }
 
