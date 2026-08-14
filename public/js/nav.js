@@ -78,8 +78,9 @@ export function renderNav(me, current = location.pathname) {
   const items = itemsFor(me);
   renderAdminBack(current);
   // Every screen that draws the nav also gets its way out, whether the page
-  // wired one or not.
+  // wired one or not, and the number to ring when the way out is broken too.
   wireLogout();
+  renderSupportFooter(me?.support);
   const active = (href) =>
     href === '/admin/' ? current.startsWith('/admin') : current.startsWith(href);
 
@@ -131,6 +132,44 @@ export function renderLogout(onLogout) {
   const slot = $('#logout');
   if (!slot) return;
   slot.addEventListener('click', onLogout);
+}
+
+/**
+ * Who to tell when the portal itself is broken.
+ *
+ * Every screen BEHIND THE LOGIN, and none in front of it. The number is a
+ * personal mobile, and login and /forgot are reachable by anyone on the
+ * internet — putting it there publishes it to every scraper that visits, for
+ * the sake of the small number of people who are locked out. Those still have
+ * the treasurer's line already printed on the login page.
+ *
+ * Drawn from renderNav, which only authenticated screens call, so the boundary
+ * is the same one the session enforces rather than a list somebody has to keep
+ * in step.
+ *
+ * WhatsApp rather than a form, because a person whose portal is misbehaving
+ * should not have to use the portal to report it. The screenshot is asked for
+ * because "it isn't working" and a photograph of the error are two very
+ * different reports to receive.
+ *
+ * Appended once and guarded, so a page that redraws its main content does not
+ * end up with three of these.
+ */
+export function renderSupportFooter(support, root = document.querySelector('main') ?? document.body) {
+  // No contact, no footer. Better a missing line than one promising a number
+  // the page does not have.
+  if (!support?.wa || !root || root.querySelector('.supportfoot')) return;
+  root.append(
+    el('footer', { class: 'supportfoot' },
+      'Something not working on the portal? Message ',
+      el('b', {}, `${support.name}${support.flat ? ` (${support.flat})` : ''}`),
+      ' on ',
+      el('a', {
+        class: 'linkish', href: `https://wa.me/${support.wa}`,
+        rel: 'noopener', target: '_blank',
+      }, 'WhatsApp'),
+      ` — ${support.shown}. A screenshot helps.`)
+  );
 }
 
 /**

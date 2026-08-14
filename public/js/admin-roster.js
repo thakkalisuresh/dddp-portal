@@ -69,9 +69,13 @@ function importView() {
 
   const box = el('textarea', {
     class: 'paste', id: 'paste', spellcheck: 'false',
-    placeholder: '4A\tSabarish Nair\t9567791515\towner\n'
-               + '4B\tRavi Nair\t9800000001\towner\n'
-               + '4B\tPriya Menon\t9847011224\ttenant\n'
+    // Invented names and 90000000xx numbers on purpose. This placeholder used
+    // to show a real resident's name beside their real mobile, and this file is
+    // served to anyone who asks for /js/admin-roster.js — logged in or not — so
+    // the example was publishing the thing it was only meant to illustrate.
+    placeholder: '4A\tAnand Kumar\t9000000001\towner\n'
+               + '4B\tRavi Nair\t9000000002\towner\n'
+               + '4B\tPriya Menon\t9000000003\ttenant\n'
                + '5A',
   });
   box.value = pasted;

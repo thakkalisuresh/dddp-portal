@@ -586,10 +586,41 @@ async function me(env, session, request) {
   );
   return json({
     ...payload,
+    // Who to message when the portal itself misbehaves, sent HERE rather than
+    // written into nav.js. A number baked into a static asset is a public
+    // number: /js/nav.js is served to anybody who asks for it, logged in or
+    // not, so hardcoding it there would publish a personal mobile to every
+    // scraper that reads JavaScript — while looking, in the browser, as though
+    // it only appeared behind the login.
+    //
+    // Read from the superadmin's own row, so it follows the role rather than
+    // needing an edit here when the committee changes.
+    support: await supportContact(env),
     impersonation: session.impersonating
       ? { active: true, by: session.actor.name, canWrite: session.canWrite }
       : { active: false },
   });
+}
+
+/** The superadmin, as a contact. Null if the row has no mobile to give. */
+async function supportContact(env) {
+  const row = await env.DB.prepare(
+    `SELECT name, flat, mobile FROM owners
+      WHERE role = 'superadmin' AND active = 1 ORDER BY id LIMIT 1`
+  ).first();
+  if (!row?.mobile) return null;
+  const digits = String(row.mobile).replace(/[^0-9]/g, '');
+  // +91 95677 91515 — the way it is written on a poster in the lobby. Falls
+  // back to the stored string for any number that is not a 12-digit Indian one.
+  const shown = /^91\d{10}$/.test(digits)
+    ? `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`
+    : String(row.mobile);
+  return {
+    name: String(row.name).split(' ')[0],   // "Sabarish", not the full name
+    flat: row.flat,
+    wa: digits,
+    shown,
+  };
 }
 
 async function changePassword(request, env, session) {
