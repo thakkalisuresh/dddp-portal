@@ -78,8 +78,9 @@ export function renderNav(me, current = location.pathname) {
   const items = itemsFor(me);
   renderAdminBack(current);
   // Every screen that draws the nav also gets its way out, whether the page
-  // wired one or not.
+  // wired one or not, and the number to ring when the way out is broken too.
   wireLogout();
+  renderSupportFooter();
   const active = (href) =>
     href === '/admin/' ? current.startsWith('/admin') : current.startsWith(href);
 
@@ -131,6 +132,35 @@ export function renderLogout(onLogout) {
   const slot = $('#logout');
   if (!slot) return;
   slot.addEventListener('click', onLogout);
+}
+
+/**
+ * Who to tell when the portal itself is broken.
+ *
+ * Every screen, because a fault does not announce itself on a convenient page —
+ * and WhatsApp rather than a form, since a person whose portal is misbehaving
+ * should not have to use the portal to report it. The screenshot line is there
+ * because "it isn't working" and a photograph of the error are two very
+ * different reports to receive.
+ *
+ * Appended once and guarded, so a page that redraws its main content does not
+ * end up with three of these.
+ */
+const SUPPORT = { name: 'Sabarish', flat: '4A', wa: '919567791515', shown: '+91 95677 91515' };
+
+export function renderSupportFooter(root = document.querySelector('main') ?? document.body) {
+  if (!root || root.querySelector('.supportfoot')) return;
+  root.append(
+    el('footer', { class: 'supportfoot' },
+      'Something not working on the portal? Message ',
+      el('b', {}, `${SUPPORT.name} (${SUPPORT.flat})`),
+      ' on ',
+      el('a', {
+        class: 'linkish', href: `https://wa.me/${SUPPORT.wa}`,
+        rel: 'noopener', target: '_blank',
+      }, 'WhatsApp'),
+      ` — ${SUPPORT.shown}. A screenshot helps.`)
+  );
 }
 
 /**

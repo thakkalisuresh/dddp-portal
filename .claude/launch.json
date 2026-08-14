@@ -1,23 +1,6 @@
 {
   "version": "0.0.1",
   "configurations": [
-    {
-      "name": "static",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8788", "--directory", "public"],
-      "port": 8788
-    },
-    {
-      "name": "dev",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["wrangler", "dev", "--port", "8787"],
-      "port": 8787
-    },
-    {
-      "name": "dev-alt",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["wrangler", "dev", "--port", "8790"],
-      "port": 8790
-    }
+    { "name": "portal", "runtimeExecutable": "npx", "runtimeArgs": ["wrangler", "pages", "dev", "pages/dist", "--port", "8788"], "port": 8788 }
   ]
 }

@@ -14,6 +14,7 @@
 import { api, ApiError } from './api.js';
 import { $, el, showError, withReveal } from './ui.js';
 import { TREASURER } from './contact.js';
+import { renderSupportFooter } from './nav.js';
 import { checkPassword, describePolicy } from './password-rules.js';
 
 const ask = $('#ask');
@@ -140,3 +141,7 @@ for (const id of ['password']) {
   const field = $('#' + id);
   if (field && !field.closest('.reveal-wrap')) withReveal(field);
 }
+
+// Login and forgot never draw the nav, and they are exactly where somebody
+// locked out of the portal needs a human to message.
+renderSupportFooter();

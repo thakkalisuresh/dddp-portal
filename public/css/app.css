@@ -381,7 +381,25 @@ a { color: var(--accent); }
   /* A fixed bar hides content unless the page reserves room for it. */
   .has-bottomnav .page { padding-bottom: calc(var(--s-8) + 56px); }
   .has-bottomnav .footbar { bottom: calc(56px + env(safe-area-inset-bottom, 0)); }
+  /* The support line is the last thing on the page, so on a phone it is the
+     thing the fixed bar would sit on top of. */
+  .has-bottomnav .supportfoot { margin-bottom: 56px; }
 }
+
+/* ── support footer ───────────────────────────────────────────────────────
+   On every screen, because a fault does not choose a convenient page. Quiet by
+   design: it is the answer to a question somebody is already asking, not an
+   advertisement for the committee's phone number. */
+.supportfoot {
+  margin: var(--s-7) 0 var(--s-5);
+  padding: var(--s-4) 0 0;
+  border-top: 1px solid var(--border);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+  text-align: center;
+}
+.supportfoot b { font-family: var(--font-ui); font-weight: 600; color: var(--ink); }
 
 /* ── gallery ──────────────────────────────────────────────────────────────
    The association's own photographs of the building.
