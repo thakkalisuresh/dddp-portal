@@ -160,6 +160,19 @@ export const api = {
     rejectProof:   (id)     => request('POST', `/api/admin/proofs/${id}/reject`),
     markPaid:      (billId, note) =>
                                request('POST', `/api/admin/bills/${billId}/mark-paid`, { note }),
+
+    // These five belong to admins, NOT to god: the superadmin who raises a bill
+    // edit must not be able to approve it, so approving lives here. They were
+    // written inside the `god` object by mistake, which broke them twice over —
+    // api.admin.bills and friends were undefined, and `bills`/`editBill` became
+    // duplicate keys inside god, silently pointing god's own screens at these
+    // admin routes. Keep them in this object.
+    bills:       (params = '') => request('GET', `/api/admin/bills${params}`),
+    editBill:    (id, field, value, reason) =>
+                   request('PATCH', `/api/admin/bill/${id}`, { field, value, reason }),
+    billEdits:   ()   => request('GET',  '/api/admin/bill-edits'),
+    approveEdit: (id) => request('POST', `/api/admin/bill-edits/${id}/approve`),
+    rejectEdit:  (id) => request('POST', `/api/admin/bill-edits/${id}/reject`),
     waiveLateFee:  (billId)  => request('POST', `/api/admin/bills/${billId}/waive-late-fee`),
     lateFees:      ()        => request('GET',  '/api/admin/late-fees'),
     setExemption:  (id, until, reason) =>
@@ -247,14 +260,6 @@ export const api = {
                    request('PATCH', `/api/god/owner/${id}`, { field, value, reason }),
     editBill:    (id, field, value, reason) =>
                    request('PATCH', `/api/god/bill/${id}`, { field, value, reason }),
-    // Deliberately NOT under god: the superadmin who raised an edit must not be
-    // able to approve it, so approving lives with the admins.
-    bills:       (params = '') => request('GET', `/api/admin/bills${params}`),
-    editBill:    (id, field, value, reason) =>
-                   request('PATCH', `/api/admin/bill/${id}`, { field, value, reason }),
-    billEdits:   ()   => request('GET',  '/api/admin/bill-edits'),
-    approveEdit: (id) => request('POST', `/api/admin/bill-edits/${id}/approve`),
-    rejectEdit:  (id) => request('POST', `/api/admin/bill-edits/${id}/reject`),
     /** A replaced meter. Backdated on purpose — the swap is reported late. */
     meterChanges:  (period)  => request('GET', `/api/god/meter-changes?period=${encodeURIComponent(period)}`),
     setMeterChange: (body)   => request('POST', '/api/god/meter-change', body),
