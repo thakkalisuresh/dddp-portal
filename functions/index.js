@@ -2263,7 +2263,7 @@ const ownerJoin = (idColumn) => `LEFT JOIN owners o
                        (SELECT id FROM owners WHERE flat = b.flat ORDER BY id LIMIT 1))`;
 
 async function proofQueue(env) {
-  const [proofs, claimed] = await Promise.all([
+  const [proofs, claimed, decided] = await Promise.all([
     env.DB.prepare(
       `SELECT p.*, b.flat, b.period, b.total, o.name
          FROM payment_proofs p
@@ -2282,9 +2282,29 @@ async function proofQueue(env) {
         WHERE b.status = 'initiated'
         GROUP BY b.id ORDER BY last_intent`
     ).all(),
+    // Approving used to be the last anyone saw of a proof: the queue filters on
+    // 'pending', so a decision removed the row from every screen in the system.
+    // For a financial record that is not a display detail — a mistaken reject
+    // left no trail, and nobody could confirm afterwards what they approved.
+    // Capped rather than paged: the queue is a working screen, and the full
+    // history belongs in god mode's timeline.
+    env.DB.prepare(
+      `SELECT p.*, b.flat, b.period, b.total, o.name, r.name AS reviewer
+         FROM payment_proofs p
+         JOIN bills b ON b.id = p.bill_id
+         ${ownerJoin('p.owner_id')}
+         LEFT JOIN owners r ON r.id = p.reviewed_by
+        WHERE p.status IN ('approved', 'rejected') AND p.deleted_at IS NULL
+        ORDER BY COALESCE(p.reviewed_at, p.created_at) DESC
+        LIMIT 50`
+    ).all(),
   ]);
 
-  return json(shapeQueue({ proofs: proofs.results ?? [], claimed: claimed.results ?? [] }));
+  return json(shapeQueue({
+    proofs: proofs.results ?? [],
+    claimed: claimed.results ?? [],
+    decided: decided.results ?? [],
+  }));
 }
 
 // ── bank statement reconciliation ───────────────────────────────────────

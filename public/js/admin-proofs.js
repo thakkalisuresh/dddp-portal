@@ -9,10 +9,56 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
-import { $, el, esc, renderViewBanner, showError, setChildren } from './ui.js';
+import { $, el, esc, renderViewBanner, showError, setChildren, statusChip } from './ui.js';
 import { money, periodLabel } from './i18n.js';
 
 const main = $('#main');
+
+/**
+ * Show a screenshot over the page.
+ *
+ * The old "Open" link was target="_blank" onto the raw image, which leaves the
+ * treasurer on a bare picture in a new tab with nothing to press to get back —
+ * on a phone that reads as a dead end. Reviewing a proof means looking at the
+ * image and then acting on the row, so the image belongs over the queue rather
+ * than away from it.
+ *
+ * Closes on Escape, on the backdrop, and on the button: three ways out, because
+ * the complaint was that there were none.
+ */
+function lightbox(src, caption) {
+  const close = () => {
+    document.removeEventListener('keydown', onKey);
+    overlay.remove();
+  };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+
+  const overlay = el('div', {
+    class: 'lightbox',
+    role: 'dialog',
+    'aria-modal': 'true',
+    'aria-label': caption || 'Payment screenshot',
+    style: 'position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;'
+         + 'align-items:center;justify-content:center;gap:var(--s-3);padding:var(--s-4);'
+         + 'background:rgba(0,0,0,.82);overflow:auto',
+    // Only the backdrop itself, so a click on the image does not close it.
+    onclick: (e) => { if (e.target === overlay) close(); },
+  },
+    el('img', {
+      src,
+      alt: caption || 'Payment screenshot',
+      style: 'max-width:min(100%,900px);max-height:78vh;object-fit:contain;'
+           + 'border-radius:var(--radius);background:#fff',
+    }),
+    el('div', { style: 'display:flex;gap:var(--s-2);align-items:center;flex-wrap:wrap;justify-content:center' },
+      caption ? el('span', { style: 'color:#fff;font-size:var(--text-sm)' }, caption) : null,
+      el('button', { class: 'btn btn--sm', type: 'button', onclick: close }, 'Close'),
+      el('a', { class: 'btn btn--sm btn--quiet', href: src, target: '_blank', rel: 'noopener' }, 'Open in new tab')));
+
+  document.addEventListener('keydown', onKey);
+  document.body.append(overlay);
+  overlay.querySelector('button')?.focus();
+}
 
 trackPage('/admin/proofs');
 init();
@@ -68,16 +114,57 @@ function render(q) {
 
     ...(q.claimedNoProof.length
       ? q.claimedNoProof.map(claimedRow)
-      : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nobody outstanding.')])
+      : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nobody outstanding.')]),
+
+    el('div', { class: 'sect' },
+      el('div', { class: 'stack', style: 'gap:var(--s-1)' },
+        el('h3', {}, 'Already decided'),
+        el('p', { class: 'small muted' },
+          'The last 50 approvals and rejections, so a decision can be checked afterwards.'))),
+
+    ...((q.decided ?? []).length
+      ? q.decided.map(decidedRow)
+      : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nothing decided yet.')])
   );
+}
+
+function decidedRow(p) {
+  const src = `/api/proof/${p.proofId}/image`;
+  const caption = `Flat ${p.flat} · ${periodLabel(p.period)}`;
+  const when = p.reviewedAt ? new Date(p.reviewedAt).toLocaleDateString() : '';
+  return el('div', { class: 'qrow' },
+    el('img', {
+      class: 'qthumb', src, alt: `Screenshot from flat ${p.flat}`, loading: 'lazy',
+      style: 'cursor:zoom-in', title: 'Click to enlarge',
+      onclick: () => lightbox(src, caption),
+    }),
+    el('div', { class: 'qmeta' },
+      el('b', {}, `Flat ${p.flat} · ${p.name ?? ''}`),
+      el('div', {},
+        p.claimedAmount == null
+          ? `Billed ${money(p.billed)} · amount not readable`
+          : `Claimed ${money(p.claimedAmount)} · Billed ${money(p.billed)}`),
+      // Who decided it, not just what was decided: a rejection with no name
+      // attached is not a trail anyone can follow back.
+      el('div', { class: 'small muted' },
+        [p.status === 'approved' ? 'Approved' : 'Rejected',
+         p.reviewer ? `by ${p.reviewer}` : null,
+         when || null].filter(Boolean).join(' '))),
+    el('div', { class: 'qact' }, statusChip(p.status)));
 }
 
 function proofRow(p) {
   const mismatch = !p.matches && !p.unreadable;
+  const src = `/api/proof/${p.proofId}/image`;
+  const caption = `Flat ${p.flat} · ${periodLabel(p.period)}`;
   return el('div', { class: `qrow ${mismatch ? 'qrow--bad' : ''}` },
     el('img', {
-      class: 'qthumb', src: `/api/proof/${p.proofId}/image`, alt: `Screenshot from flat ${p.flat}`,
+      class: 'qthumb', src, alt: `Screenshot from flat ${p.flat}`,
       loading: 'lazy',
+      // The thumbnail is the obvious thing to press, so make it the control.
+      style: 'cursor:zoom-in',
+      title: 'Click to enlarge',
+      onclick: () => lightbox(src, caption),
     }),
     el('div', { class: 'qmeta' },
       el('b', {}, `Flat ${p.flat} · ${p.name ?? ''}`),
@@ -88,7 +175,10 @@ function proofRow(p) {
             (mismatch ? ` · short by ${money(Math.max(0, p.billed - p.claimedAmount))}` : '')),
       p.utr ? el('div', {}, `UTR ${p.utr}`) : null),
     el('div', { class: 'qact' },
-      el('a', { class: 'btn btn--sm btn--quiet', href: `/api/proof/${p.proofId}/image`, target: '_blank' }, 'Open'),
+      el('button', {
+        class: 'btn btn--sm btn--quiet', type: 'button',
+        onclick: () => lightbox(src, caption),
+      }, 'View'),
       el('button', {
         class: 'btn btn--sm', type: 'button',
         onclick: async () => { await api.admin.approveProof(p.proofId); await load(); },

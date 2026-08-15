@@ -73,6 +73,11 @@ const CHIP = {
   initiated: { cls: 'chip--awaiting', label: 'Checking' },
   awaiting:  { cls: 'chip--awaiting', label: 'Checking' },
   waived:    { cls: 'chip--neutral',  label: 'Paid' },
+  // Proof statuses, not bill statuses. Without these the fallback is `unpaid`,
+  // which labels an approved proof "Unpaid" — worse than no chip at all.
+  approved:  { cls: 'chip--paid',     label: 'Approved' },
+  rejected:  { cls: 'chip--overdue',  label: 'Rejected' },
+  pending:   { cls: 'chip--awaiting', label: 'Pending' },
 };
 
 /** Status always renders as dot + word, never colour alone. */

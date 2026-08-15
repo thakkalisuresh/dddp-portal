@@ -174,7 +174,7 @@ export function validateUpload({ type, size }) {
  * The treasurer's queue has TWO sections, because most residents pay and never
  * upload anything — that is the normal case, not an edge case (plan §4b).
  */
-export function shapeQueue({ proofs = [], claimed = [] }) {
+export function shapeQueue({ proofs = [], claimed = [], decided = [] }) {
   const withProof = proofs.map((p) => ({
     proofId: p.id,
     billId: p.bill_id,
@@ -199,6 +199,22 @@ export function shapeQueue({ proofs = [], claimed = [] }) {
     claimedNoProof: claimed.map((b) => ({
       billId: b.id, flat: b.flat, name: b.name, period: b.period,
       billed: b.total, since: b.last_intent,
+    })),
+    // What was already decided, so a decision can be checked afterwards rather
+    // than vanishing. `reviewer` is the admin who pressed the button — a
+    // rejection with no name attached is not an audit trail.
+    decided: decided.map((p) => ({
+      proofId: p.id,
+      billId: p.bill_id,
+      flat: p.flat,
+      name: p.name,
+      period: p.period,
+      billed: p.total,
+      claimedAmount: p.parsed_amount,
+      utr: p.utr,
+      status: p.status,
+      reviewer: p.reviewer,
+      reviewedAt: p.reviewed_at,
     })),
   };
 }

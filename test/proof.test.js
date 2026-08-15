@@ -198,6 +198,37 @@ describe('the treasurer queue', () => {
     expect(q.claimedNoProof[0].flat).toBe('5A');
   });
 
+  // A decided proof used to leave the system's view entirely: every query
+  // filtered on 'pending', so approving was the last anyone saw of it.
+  describe('what was already decided', () => {
+    const decided = [
+      { id: 5, bill_id: 15, flat: '9B', name: 'Latha', period: '2026-05', total: 300, parsed_amount: 300, utr: '421877390099', status: 'approved', reviewer: 'Demo Admin', reviewed_at: '2026-06-02T04:00:00Z' },
+      { id: 6, bill_id: 16, flat: '3D', name: 'Anju', period: '2026-05', total: 275, parsed_amount: null, utr: null, status: 'rejected', reviewer: 'Demo Admin', reviewed_at: '2026-06-02T05:00:00Z' },
+    ];
+
+    it('keeps approvals and rejections visible after the decision', () => {
+      const q = shapeQueue({ proofs, claimed, decided });
+      expect(q.decided.map((p) => p.status)).toEqual(['approved', 'rejected']);
+    });
+
+    it('names who decided, so a rejection can be traced back to a person', () => {
+      const q = shapeQueue({ proofs, claimed, decided });
+      expect(q.decided[1].reviewer).toBe('Demo Admin');
+      expect(q.decided[1].reviewedAt).toBe('2026-06-02T05:00:00Z');
+    });
+
+    it('does not mix decided proofs into the waiting queue', () => {
+      const q = shapeQueue({ proofs, claimed, decided });
+      expect(q.awaiting.map((p) => p.proofId)).not.toContain(5);
+      expect(q.exactMatches).not.toContain(5);
+    });
+
+    it('carries an unreadable decided proof without inventing an amount', () => {
+      const q = shapeQueue({ proofs, claimed, decided });
+      expect(q.decided[1].claimedAmount).toBeNull();
+    });
+  });
+
   it('copes with an empty month', () => {
     const q = shapeQueue({});
     expect(q.awaiting).toEqual([]);
