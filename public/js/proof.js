@@ -77,9 +77,7 @@ function render() {
         'A photo or screenshot from your UPI app. The treasurer checks it against the bank statement.')),
     input,
     el('label', { class: 'drop', for: 'file', style: 'cursor:pointer;display:block' },
-      el('strong', { style: 'font-family:var(--font-ui)' }, 'Choose a screenshot'),
-      el('p', { class: 'small muted', style: 'margin-top:var(--s-2)' },
-        'It is resized on your phone before uploading, so it stays quick on mobile data.')),
+      el('strong', { style: 'font-family:var(--font-ui)' }, 'Choose a screenshot')),
     status,
     previewSlot,
     submitSlot
