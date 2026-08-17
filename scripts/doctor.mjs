@@ -94,6 +94,28 @@ function mailSecrets() {
   }
 }
 
+/**
+ * Is a vision provider key bound to the deployment that reads screenshots?
+ *
+ * Pages only, deliberately: readReceipt runs on the upload request path and
+ * nowhere else, so a key on the cron Worker would be reassuring and useless.
+ *
+ * Names only. That is the entire point of asking Cloudflare rather than reading
+ * a value — the incident this exists for was a secret whose NAME was the key
+ * itself, pasted at the wrong prompt, which left the project holding a
+ * credential called `gsk_...` and no GROQ_API_KEY. A name check catches that
+ * exactly; printing any part of a value is how the key leaked in the first place.
+ */
+function visionSecrets() {
+  try {
+    const out = execFileSync('npx', ['wrangler', 'pages', 'secret', 'list'],
+      { encoding: 'utf8', cwd: join(process.cwd(), 'pages'), stdio: ['ignore', 'pipe', 'pipe'] });
+    return out.includes('GROQ_API_KEY') || out.includes('GEMINI_API_KEY');
+  } catch {
+    return false;
+  }
+}
+
 /** Has a separate, shareable committee folder been configured? */
 function committeeSecret() {
   const has = (args, cwd) => {
@@ -183,7 +205,9 @@ const main = () => {
       // (Pages) and the digest from the cron Worker. One without the other is
       // half-working in a way nothing else would surface.
       alerting: local ? { cron: true, pages: true } : alertingSecrets(),
-      // Same reasoning as alerting: ask Cloudflare, not this shell.
+      // Same reasoning as alerting: ask Cloudflare, not this shell. Locally the
+      // key lives in .dev.vars, which this must not read — see visionSecrets.
+      visionConfigured: local ? true : visionSecrets(),
       mailConfigured: local ? true : mailSecrets(),
       driveConfigured: local ? { cron: true, pages: true } : driveSecrets(),
       // Only the names are readable, never the values, so "are these two the

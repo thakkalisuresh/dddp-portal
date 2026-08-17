@@ -70,11 +70,12 @@ Ask the bot a code and it will explain it.
 |---|---|---|---|
 | `DDP-PROOF-001` | warn | live | Duplicate screenshot rejected — image hash already seen |
 | `DDP-PROOF-002` | warn | live | Duplicate UTR rejected — already used on another bill |
-| `DDP-PROOF-003` | error | live | Vision parse returned nothing usable |
+| `DDP-PROOF-003` | warn | live | Vision parse returned nothing usable |
 | `DDP-PROOF-004` | **fatal** | live | R2 upload succeeded but D1 insert failed — orphaned object |
 | `DDP-PROOF-005` | error | live | Proof image missing from R2 but row says stored |
 | `DDP-PROOF-006` | warn | live | Uploaded amount does not match the bill |
-| `DDP-PROOF-007` | warn | live | Vision provider returned an error status |
+| `DDP-PROOF-007` | error | live | Vision provider returned an error status |
+| `DDP-PROOF-008` | error | live | Vision is not configured — no provider key bound |
 
 ## RECON
 
@@ -146,7 +147,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-86 codes across 10 domains — 12 fatal, 3 awaiting their call site, 3 retired.
+87 codes across 10 domains — 12 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

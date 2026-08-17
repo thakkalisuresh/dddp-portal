@@ -781,4 +781,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-415 exports. 213 have no doc comment.
+417 exports. 213 have no doc comment.

@@ -348,31 +348,60 @@ describe('an unreadable table is not an empty one', () => {
 
 describe('alerting is configured on both deployments, or neither works properly', () => {
   it('says nothing when both have it', () => {
-    expect(checkConfig({ upiVpa: 'x', alerting: { cron: true, pages: true }, remote: true }))
+    expect(checkConfig({ upiVpa: 'x', alerting: { cron: true, pages: true }, visionConfigured: true, remote: true }))
       .toEqual([]);
   });
 
   it('reports the whole thing missing as one finding, not two', () => {
-    const f = checkConfig({ upiVpa: 'x', alerting: { cron: false, pages: false }, remote: true });
+    const f = checkConfig({ upiVpa: 'x', alerting: { cron: false, pages: false }, visionConfigured: true, remote: true });
     expect(f.map((x) => x.id)).toEqual(['CONFIG-NO-ALERTS']);
   });
 
   it('names which half is missing — the two-Workers trap', () => {
     // Secrets on one deployment do not reach the other, and the half that
     // works hides the half that does not.
-    const noCron = checkConfig({ upiVpa: 'x', alerting: { cron: false, pages: true }, remote: true });
+    const noCron = checkConfig({ upiVpa: 'x', alerting: { cron: false, pages: true }, visionConfigured: true, remote: true });
     expect(noCron[0].id).toBe('CONFIG-HALF-ALERTS');
     expect(noCron[0].detail).toMatch(/digest will not/i);
 
-    const noPages = checkConfig({ upiVpa: 'x', alerting: { cron: true, pages: false }, remote: true });
+    const noPages = checkConfig({ upiVpa: 'x', alerting: { cron: true, pages: false }, visionConfigured: true, remote: true });
     expect(noPages[0].detail).toMatch(/instant alerts.*will not/i);
   });
 
   it('still accepts the single boolean the god endpoint can supply', () => {
     // That endpoint can only see its own bindings, not the other deployment's.
-    expect(checkConfig({ upiVpa: 'x', alertingConfigured: true, remote: true })).toEqual([]);
-    expect(checkConfig({ upiVpa: 'x', alertingConfigured: false, remote: true })[0].id)
+    expect(checkConfig({ upiVpa: 'x', alertingConfigured: true, visionConfigured: true, remote: true })).toEqual([]);
+    expect(checkConfig({ upiVpa: 'x', alertingConfigured: false, visionConfigured: true, remote: true })[0].id)
       .toBe('CONFIG-NO-ALERTS');
+  });
+});
+
+describe('an unread payment screenshot is a configuration problem, not a quiet one', () => {
+  const ok = { upiVpa: 'x', alerting: { cron: true, pages: true }, remote: true };
+
+  it('names the missing vision key', () => {
+    // The check that was absent while vision was dead in production for an
+    // entire rehearsal. Nothing else in the system reported it.
+    const f = checkConfig({ ...ok, visionConfigured: false });
+    expect(f.map((x) => x.id)).toEqual(['VISION-NOT-CONFIGURED']);
+    expect(f[0].severity).toBe('warn');
+  });
+
+  it('mentions that Pages binds secrets at deploy time', () => {
+    // Setting the key and re-running doctor without redeploying reproduces the
+    // exact symptom just fixed, so the finding has to say so.
+    const f = checkConfig({ ...ok, visionConfigured: false });
+    expect(f[0].detail).toMatch(/deploy/i);
+  });
+
+  it('says nothing once a key is bound', () => {
+    expect(checkConfig({ ...ok, visionConfigured: true })).toEqual([]);
+  });
+
+  it('warns when a caller forgets to report it at all', () => {
+    // The "wired but inert" direction: a caller that omits the flag gets the
+    // warning rather than silence, which is the failure this file exists for.
+    expect(checkConfig(ok).map((x) => x.id)).toEqual(['VISION-NOT-CONFIGURED']);
   });
 });
 
