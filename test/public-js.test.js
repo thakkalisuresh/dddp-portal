@@ -90,3 +90,41 @@ describe('the shared element builder knows about SVG', () => {
     expect(ui).not.toMatch(/node\.className\s*=/);
   });
 });
+
+/**
+ * The admin tab strip, asserted as a shape rather than a screenshot.
+ *
+ * Fourteen tabs wrapped to two or three rows depending on the window, so no tab
+ * had a stable position. Four were folded into the screen that owns their
+ * subject, and the risk now is that somebody re-adds one as a peer without
+ * realising it was a deliberate move — which reads as a small convenience and
+ * quietly undoes the consolidation.
+ */
+describe('the admin console does not regrow its tabs', () => {
+  const src = readFileSync('public/js/admin-console.js', 'utf8');
+  const tabs = src.match(/const TABS = \[([\s\S]*?)\n\];/)?.[1] ?? '';
+
+  it('parsed a TABS block at all', () => {
+    // Otherwise every assertion below passes against an empty string.
+    expect(tabs.length).toBeGreaterThan(100);
+  });
+
+  it('keeps the folded-in sections off the strip', () => {
+    for (const id of ['approvals', 'latefees', 'messages', 'export']) {
+      expect(tabs, id).not.toContain(`id: '${id}'`);
+    }
+  });
+
+  it('still reaches every folded section from the screen that owns it', () => {
+    // Removing a tab and forgetting to fold its panel in would lose the screen
+    // entirely — the panel would exist and nothing would call it.
+    for (const fn of ['approvalsPanel', 'lateFeesPanel', 'messagesPanel', 'exportPanel']) {
+      expect(src, fn).toMatch(new RegExp(`(foldedSection\\([^)]*${fn}|${fn}\\(\\))`));
+    }
+  });
+
+  it('opens somewhere that changes nothing by being looked at', () => {
+    // Not the rate editor, which is what every resident's bill is computed from.
+    expect(src).toMatch(/location\.hash\.slice\(1\) \|\| 'home'/);
+  });
+});
