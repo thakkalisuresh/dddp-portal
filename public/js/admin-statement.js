@@ -82,6 +82,22 @@ async function upload(file) {
 
 /* ── report ─────────────────────────────────────────────────────────────── */
 
+/**
+ * B25. "Money arrived with no screenshot" used to be one heap, and in this
+ * building it is the biggest one — the bank pays interest into the account,
+ * refunds and reversals land in it, and no resident will ever upload a
+ * screenshot for any of that. Seventeen residents paying perfectly still
+ * produced a page headed "need attention", so the page stopped being read.
+ *
+ * It is now split by whether an unpaid bill matches the amount exactly, which
+ * `reconcile` already worked out. The server does the splitting so this file
+ * does not carry a second, weaker copy of the rule.
+ *
+ * `unmatched` is still SHOWN, and that is the whole point. It is where bank
+ * interest lands, and it is also where a flat billed ₹310 that paid ₹300 lands
+ * — the case the feature exists for. Filtering it away is the simplification
+ * B25 rejected.
+ */
 const KINDS = [
   ['proof_no_credit',    'Claimed, but no money arrived',
                          'A resident uploaded a screenshot and no credit on the statement matches it.'],
@@ -89,15 +105,27 @@ const KINDS = [
                          'The payment arrived, but not for the amount the screenshot showed.'],
   ['duplicate_reference', 'One payment claimed twice',
                          'The same reference was uploaded against more than one bill.'],
-  ['credit_no_proof',    'Money arrived with no screenshot',
-                         'Almost always someone who paid by UPI and never opened the portal.'],
+];
+
+const CREDIT_GROUPS = [
+  ['likelyResident', 'Probably a resident who did not upload',
+                     'An unpaid bill matches this amount exactly. Most of these settle with one tap.'],
+  ['unmatched',      'Nothing matches this',
+                     'Bank interest, a refund, a transfer between the association’s own accounts — '
+                     + 'or a resident who paid the wrong amount. Worth a look, rarely an error.'],
 ];
 
 function render() {
   const t = report.totals;
-  const groups = KINDS
-    .map(([kind, title, blurb]) => [kind, title, blurb, report.discrepancies.filter((d) => d.kind === kind)])
-    .filter(([, , , rows]) => rows.length);
+  const buckets = report.buckets ?? {};
+  const groups = [
+    ...KINDS.map(([kind, title, blurb]) =>
+      [kind, title, blurb, report.discrepancies.filter((d) => d.kind === kind)]),
+    // Both are credit_no_proof rows; only the heading and the ordering differ,
+    // so discrepancyRow still gets the kind it knows how to draw.
+    ...CREDIT_GROUPS.map(([bucket, title, blurb]) =>
+      ['credit_no_proof', title, blurb, buckets[bucket] ?? []]),
+  ].filter(([, , , rows]) => rows.length);
 
   setChildren(main,
     el('div', { class: 'sect' },

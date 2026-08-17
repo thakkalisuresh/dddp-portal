@@ -33,7 +33,14 @@ export function visionAvailable(env) {
  */
 export async function readReceipt(env, bytes, contentType) {
   if (!visionAvailable(env)) {
-    return { parsed: emptyResult(), provider: null, ok: false, reason: 'no-key' };
+    // THIS BRANCH USED TO RETURN IN SILENCE, and that is how vision stayed dead
+    // in production through an entire rehearsal. The production secret had been
+    // stored under the wrong name, so visionAvailable() was false and every
+    // upload short-circuited here: no error_log row, no alert, nothing to find
+    // afterwards. Re-tuning DDP-PROOF-007 would not have caught it either — the
+    // provider was never called.
+    await reportError(env, 'DDP-PROOF-008', { reason: 'no vision key bound' });
+    return { parsed: emptyResult(), provider: null, ok: false, reason: 'not-attempted' };
   }
 
   const base64 = bytesToBase64(bytes);
@@ -55,8 +62,13 @@ export async function readReceipt(env, bytes, contentType) {
     // A provider outage must not stop someone paying their bill. Report the
     // specific cause when we have one rather than flattening everything to
     // "unreadable" — a 429 and a garbled response need different responses.
-    await reportError(env, err?.code ?? 'DDP-PROOF-003', err);
-    return { parsed: emptyResult(), provider: null, ok: false, reason: 'provider-error' };
+    //
+    // `not-attempted`, NOT `unreadable`. The two are identical to the resident
+    // and opposite to whoever is on call: one is a photograph worth asking
+    // about, the other is an outage nobody has noticed. Flattening them is how
+    // a dead provider reads as ninety-nine bad screenshots.
+    await reportError(env, err?.code ?? 'DDP-PROOF-007', err);
+    return { parsed: emptyResult(), provider: null, ok: false, reason: 'not-attempted' };
   } finally {
     clearTimeout(timer);
   }

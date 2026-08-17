@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { postToTelegram, reportError, shouldAlert } from '../functions/lib/errors.js';
+import { postToTelegram, reportError, episodeDecision } from '../functions/lib/errors.js';
 
 /** Records inserts so a "did it log?" assertion is possible without D1. */
 function fakeDb() {
@@ -111,28 +111,48 @@ describe('what reaches Telegram instantly', () => {
 });
 
 describe('the rate gate', () => {
-  // The window is module-level state, so it carries whatever the alerting
-  // tests above already spent. Each case starts beyond the window so the first
-  // call forces a reset and the counts mean what they say.
-  //
-  // Monotonic, not random. A random offset made this FLAKY rather than merely
-  // wrong: if one case's base landed earlier than the previous case's, the
-  // elapsed time went negative, no reset happened, and the count carried over.
-  // The full suite passed by luck while the file alone failed.
-  let clock = Date.now() + 3_600_000;
-  const fresh = () => (clock += 600_000);
+  // A pure function of the stored episode now, so there is no module-level
+  // state to reset between cases and no clock to keep monotonic. The previous
+  // version of this block needed both, and its flakiness was the clue that the
+  // counter lived somewhere it should not have.
+  const t = Date.parse('2026-08-17T10:00:00.000Z');
+  const ago = (ms) => new Date(t - ms).toISOString();
 
-  it('stops after 8 in a minute, with exactly one notice', () => {
-    const t = fresh();
-    const results = Array.from({ length: 12 }, () => shouldAlert(t));
-    expect(results.filter((r) => r === true)).toHaveLength(8);
-    expect(results.filter((r) => r === 'suppress-notice')).toHaveLength(1);
-    expect(results.filter((r) => r === false)).toHaveLength(3);
+  it('sends the first occurrence of a code', () => {
+    expect(episodeDecision(undefined, t)).toEqual({ send: true, suppressed: 0 });
   });
 
-  it('reopens in the next minute', () => {
-    const t = fresh();
-    for (let i = 0; i < 12; i++) shouldAlert(t);
-    expect(shouldAlert(t + 61_000)).toBe(true);
+  it('holds a repeat inside the cooldown and counts it', () => {
+    const d = episodeDecision({ notified_at: ago(60_000), suppressed: 0 }, t);
+    expect(d.send).toBe(false);
+    expect(d.suppressed).toBe(1);
+  });
+
+  it('reopens once the cooldown has passed, carrying what was missed', () => {
+    const d = episodeDecision({ notified_at: ago(11 * 60_000), suppressed: 47 }, t);
+    expect(d.send).toBe(true);
+    expect(d.suppressed).toBe(47);
+  });
+
+  it('keeps codes independent — a noisy one cannot silence a serious one', () => {
+    // The failure the global bucket allowed: a blurry screenshot and a dead
+    // vision provider arrive on the same path, and one filling the budget hid
+    // the other entirely.
+    const noisy = { notified_at: ago(60_000), suppressed: 300 };
+    expect(episodeDecision(noisy, t).send).toBe(false);
+    expect(episodeDecision(undefined, t).send).toBe(true);
+  });
+
+  it('sends when the stored timestamp is unusable', () => {
+    // Every ambiguity resolves towards delivering: a duplicate alert is an
+    // annoyance, a swallowed one is what this module exists to prevent.
+    expect(episodeDecision({ notified_at: 'not a date' }, t).send).toBe(true);
+  });
+
+  it('treats a suppressed-but-never-notified row as sendable', () => {
+    // A failed delivery leaves suppressed set and notified_at null. The next
+    // occurrence must go out rather than inheriting a cooldown that no
+    // successful send ever started.
+    expect(episodeDecision({ notified_at: null, suppressed: 3 }, t).send).toBe(true);
   });
 });

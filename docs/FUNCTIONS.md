@@ -306,6 +306,7 @@ reportError is the ONLY sanctioned path for a failure to leave the system.
 | class | `AppError` |  |
 | fn | `fail` |  |
 | fn | `reportError` | Record a failure: always to error_log, and to Telegram when severity warrants. |
+| fn | `episodeDecision` | The suppression policy, as a pure function of what the table remembers. |
 | fn | `shouldAlert` |  |
 | fn | `postToTelegram` | The one place anything is sent to Telegram. |
 | fn | `assertAlerting` | Call once per request path that can alert. |
@@ -528,6 +529,7 @@ Bank statement reconciliation.
 | fn | `creditsFromText` | Read credits out of statement text extracted from a PDF. |
 | fn | `parseStatement` |  |
 | fn | `reconcile` | Match credits to proofs, then report what is left over on both sides. |
+| fn | `bucketReconciliation` | Split a reconciliation into what a treasurer actually has to DO about it. |
 
 ### `functions/lib/tenancy.js`
 
@@ -742,6 +744,7 @@ Small render helpers shared by every screen.
 | fn | `el` |  |
 | fn | `setChildren` | Like node.replaceChildren, but drops null and undefined. |
 | fn | `statusChip` |  |
+| fn | `proofVerdict` | How a proof reads in the admin queue: the verdict, not two numbers. |
 | fn | `renderViewBanner` | The viewing-as banner. |
 | fn | `billBreakdown` |  |
 | fn | `showError` |  |
@@ -778,4 +781,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-414 exports. 213 have no doc comment.
+417 exports. 213 have no doc comment.

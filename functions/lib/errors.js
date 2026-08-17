@@ -9,10 +9,15 @@
 
 import { ERROR_CODES, isKnownCode } from './error-codes.js';
 
-const ALERT_WINDOW_MS = 60_000;
-const ALERT_MAX_PER_WINDOW = 8;
-
-const alertWindow = { start: 0, count: 0, suppressed: false };
+/**
+ * How long one code stays quiet after it has alerted.
+ *
+ * Per code, not per minute across everything. The old global bucket let a
+ * resident's blurry screenshot exhaust the budget and hide a dead vision
+ * provider behind it — the two arrive on the same path, and only one is worth
+ * waking anybody for.
+ */
+const EPISODE_COOLDOWN_MS = 10 * 60_000;
 
 export class AppError extends Error {
   constructor(code, detail) {
@@ -69,20 +74,54 @@ function serialise(detail) {
   }
 }
 
-/** Token-bucket so one bad deploy cannot fire hundreds of messages. */
-export function shouldAlert(now = Date.now()) {
-  if (now - alertWindow.start > ALERT_WINDOW_MS) {
-    alertWindow.start = now;
-    alertWindow.count = 0;
-    alertWindow.suppressed = false;
+/**
+ * The suppression policy, as a pure function of what the table remembers.
+ *
+ * Separated from the read and the write so the rule can be tested without a
+ * database — the old version could only be tested by driving module-level
+ * state, which is why its per-isolate behaviour was never noticed.
+ */
+export function episodeDecision(episode, now = Date.now(), cooldownMs = EPISODE_COOLDOWN_MS) {
+  const suppressed = Number(episode?.suppressed ?? 0);
+  if (!episode?.notified_at) return { send: true, suppressed: 0 };
+
+  const since = now - Date.parse(episode.notified_at);
+  // An unparseable timestamp sends. Every ambiguity here resolves towards
+  // delivering: a duplicate alert is an annoyance, a swallowed one is the
+  // failure this whole module exists to prevent.
+  if (!Number.isFinite(since) || since >= cooldownMs) return { send: true, suppressed };
+  return { send: false, suppressed: suppressed + 1 };
+}
+
+/** Read the episode and apply the policy. Never throws. */
+export async function shouldAlert(env, code, now = Date.now()) {
+  try {
+    const row = await env.DB.prepare(
+      'SELECT code, notified_at, suppressed FROM alert_episodes WHERE code = ?'
+    ).bind(code).first();
+    return episodeDecision(row, now);
+  } catch {
+    // The table is unreachable. Send anyway, for the reason above.
+    return { send: true, suppressed: 0 };
   }
-  alertWindow.count += 1;
-  if (alertWindow.count > ALERT_MAX_PER_WINDOW) {
-    const first = !alertWindow.suppressed;
-    alertWindow.suppressed = true;
-    return first ? 'suppress-notice' : false;
-  }
-  return true;
+}
+
+async function markNotified(env, code, at) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO alert_episodes (code, notified_at, suppressed) VALUES (?, ?, 0)
+       ON CONFLICT(code) DO UPDATE SET notified_at = excluded.notified_at, suppressed = 0`
+    ).bind(code, at).run();
+  } catch { /* Losing the stamp costs a duplicate alert, which is the safe side. */ }
+}
+
+async function markSuppressed(env, code) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO alert_episodes (code, notified_at, suppressed) VALUES (?, NULL, 1)
+       ON CONFLICT(code) DO UPDATE SET suppressed = suppressed + 1`
+    ).bind(code).run();
+  } catch { /* As above. */ }
 }
 
 /**
@@ -138,18 +177,33 @@ export async function postToTelegram(env, text) {
 async function sendTelegram(env, code, severity, message, detail, at) {
   if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return;
 
-  const gate = shouldAlert();
-  if (gate === false) return;
-  const body = gate === 'suppress-notice'
-    ? `DDP-SYS-006 · alert rate limit reached, suppressing further alerts this minute`
-    : [
-        `${severity.toUpperCase()} · ${code}`,
-        message,
-        detail ? `\n${detail}` : '',
-        `\n${at}`,
-      ].join('\n');
+  const gate = await shouldAlert(env, code);
+  if (!gate.send) {
+    // Recorded, not sent. The suppression itself is part of the trail — the
+    // digest can then say "this fired 300 times" rather than the burst simply
+    // not existing.
+    await markSuppressed(env, code);
+    await logOnly(env, 'DDP-SYS-006', `${code} suppressed within its cooldown`);
+    return;
+  }
 
-  await postToTelegram(env, body);
+  const body = [
+    `${severity.toUpperCase()} · ${code}`,
+    message,
+    detail ? `\n${detail}` : '',
+    // What the burst amounted to, rather than losing it. Reads as "and 47 more
+    // since the last one", which is the number that tells you whether this is a
+    // recurring nuisance or something that just started.
+    gate.suppressed ? `\n${gate.suppressed} more since the last alert for this code.` : '',
+    `\n${at}`,
+  ].join('\n');
+
+  // ONLY AN ACKNOWLEDGED DELIVERY STARTS THE COOLDOWN. postToTelegram already
+  // treats a polite 401 from a revoked token as the failure it is; stamping
+  // notified_at regardless would then silence the next ten minutes of a problem
+  // nobody has been told about — silence built on top of silence.
+  const delivered = await postToTelegram(env, body);
+  if (delivered) await markNotified(env, code, new Date().toISOString());
 }
 
 /**

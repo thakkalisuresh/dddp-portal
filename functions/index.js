@@ -17,8 +17,8 @@ import {
   approvalPolicy, canApprove, isSatisfied, needsApproval, expiresAt, approvalMessage,
 } from './lib/approvals.js';
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
-import { validateStatement, parseStatement, reconcile, sweepAbandonedStatements } from './lib/statement.js';
-import { readReceipt } from './lib/vision.js';
+import { validateStatement, parseStatement, reconcile, bucketReconciliation, sweepAbandonedStatements } from './lib/statement.js';
+import { readReceipt, visionAvailable } from './lib/vision.js';
 import { runScheduled, runLateFees, isLateFeeCron, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden, markNoticesSeen, NOTICE_SCOPES,
          canSeeAttachment, listArchivedNotices, purgeNotice,
@@ -2344,7 +2344,11 @@ async function reportFor(env, sessionId) {
     'SELECT txn_date AS date, amount, reference, narration FROM statement_credits WHERE session_id = ? ORDER BY txn_date, id'
   ).bind(sessionId).all();
   const { proofs, openBills } = await reconciliationInputs(env);
-  return reconcile({ credits: rows.results ?? [], proofs, openBills });
+  const result = reconcile({ credits: rows.results ?? [], proofs, openBills });
+  // Bucketed HERE rather than in the browser, so the rule for "is this probably
+  // a resident" lives in exactly one place. A second copy in admin-statement.js
+  // would be a weaker restatement of a rule reconcile() already answered.
+  return { ...result, buckets: bucketReconciliation(result) };
 }
 
 async function uploadStatement(request, env, session, ctx) {
@@ -3472,6 +3476,9 @@ async function godDiagnostics(env, url) {
     lastBackupAt: backup?.value ?? null,
     config: {
       upiVpa: env.UPI_VPA, alertingConfigured: Boolean(env.TELEGRAM_BOT_TOKEN),
+      // Asked of the same function the upload path asks, so this cannot report
+      // healthy while readReceipt is short-circuiting on the very next request.
+      visionConfigured: visionAvailable(env),
       mailConfigured: mailConfigured(env),
       driveConfigured: driveConfigured(env),
       committeeShared: committeeFolderSeparate(env), remote: true,

@@ -518,6 +518,44 @@ export function reconcile({ credits = [], proofs = [], openBills = [], dayWindow
   };
 }
 
+/**
+ * Split a reconciliation into what a treasurer actually has to DO about it.
+ *
+ * B25. Seventeen residents paying perfectly still produced a page of
+ * "discrepancies", because the bank pays interest into the account and no
+ * resident will ever upload a screenshot for it. Same for refunds, reversals,
+ * the maintenance transfer and the Onam collection. Everything that was not a
+ * matched proof landed in one list, so the list stopped being read.
+ *
+ * REJECTED, AND IT SHOULD STAY REJECTED: reconciling only against the month's
+ * expected bill amounts. It deletes the case the feature exists for — a flat
+ * billed ₹310 that pays ₹300 by UPI and never opens the portal stops appearing
+ * anywhere at all, takes a late fee, and the money sits in the account unseen.
+ * That flat's credit is exactly what lands in `unmatched` below, which is why
+ * that bucket is shown rather than filtered away.
+ *
+ * Pure, and it invents nothing. `suggestions` is already computed by reconcile
+ * — whether any unpaid bill has this exact amount — and that is the only signal
+ * used here. No new guessing, just the existing answer put where it can be read.
+ */
+export function bucketReconciliation({ confirmed = [], discrepancies = [] } = {}) {
+  const credits = discrepancies.filter((d) => d.kind === 'credit_no_proof');
+
+  return {
+    // Money matched to a screenshot somebody uploaded.
+    confirmed,
+    // A real problem with a real claim: the amounts disagree, a reference was
+    // used twice, or a proof claims money the bank never received.
+    needsAttention: discrepancies.filter((d) => d.kind !== 'credit_no_proof'),
+    // Almost certainly a resident who paid and never opened the portal: an
+    // unpaid bill matches this amount to the paisa. One tap to settle.
+    likelyResident: credits.filter((c) => (c.suggestions?.length ?? 0) > 0),
+    // Nothing matches. Bank interest and refunds live here — and so does the
+    // resident who underpaid, which is why this is a bucket and not a bin.
+    unmatched: credits.filter((c) => (c.suggestions?.length ?? 0) === 0),
+  };
+}
+
 function findDuplicateReferences(proofs) {
   const seen = new Map();
   const dupes = new Set();

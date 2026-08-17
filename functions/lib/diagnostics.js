@@ -482,7 +482,7 @@ export function checkBackup({ lastBackupAt, driveConfigured, committeeShared,
 }
 
 /** Things that are only wrong in production. */
-export function checkConfig({ upiVpa, alerting, alertingConfigured, remote }) {
+export function checkConfig({ upiVpa, alerting, alertingConfigured, visionConfigured, remote }) {
   const out = [];
   if (!upiVpa) {
     out.push(finding(remote ? 'fail' : 'warn', 'CONFIG-NO-VPA', 'No UPI payee configured',
@@ -507,6 +507,23 @@ export function checkConfig({ upiVpa, alerting, alertingConfigured, remote }) {
       a.cron
         ? 'The nightly digest will send, but instant alerts from the site will not.'
         : 'Instant alerts will send, but the nightly digest will not.'));
+  }
+
+  // THE CHECK THAT WOULD HAVE SAVED A REHEARSAL. `wrangler pages secret put` was
+  // run with the key pasted at the NAME prompt, so production carried a secret
+  // called `gsk_...` and no GROQ_API_KEY at all. visionAvailable() returned
+  // false, every upload short-circuited, and nothing anywhere said so — the
+  // whole first proof round ran with no OCR and looked normal.
+  //
+  // A warning rather than a failure, and the wording matters: nobody is stopped
+  // from paying a bill by this. The treasurer just types every amount by hand
+  // and has no way to know that is why.
+  if (!visionConfigured) {
+    out.push(finding('warn', 'VISION-NOT-CONFIGURED', 'Payment screenshots are not being read',
+      'No GROQ_API_KEY or GEMINI_API_KEY is bound, so every uploaded proof queues '
+      + 'with its amount blank for the treasurer to fill in. Note that Pages binds '
+      + 'secrets at DEPLOY time — setting one without redeploying leaves this '
+      + 'warning true and correct.'));
   }
   return out;
 }
