@@ -528,6 +528,7 @@ Bank statement reconciliation.
 | fn | `creditsFromText` | Read credits out of statement text extracted from a PDF. |
 | fn | `parseStatement` |  |
 | fn | `reconcile` | Match credits to proofs, then report what is left over on both sides. |
+| fn | `bucketReconciliation` | Split a reconciliation into what a treasurer actually has to DO about it. |
 
 ### `functions/lib/tenancy.js`
 

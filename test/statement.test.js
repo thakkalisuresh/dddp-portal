@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseAmount, parseDate, parseCsv, findHeader, creditsFromCsv, creditsFromText,
-  reconcile, validateStatement, textFromContentStream,
-} from '../functions/lib/statement.js';
+  reconcile, validateStatement, textFromContentStream, bucketReconciliation } from '../functions/lib/statement.js';
 
 /* ── the shapes a bank actually exports ─────────────────────────────────── */
 
@@ -270,5 +269,65 @@ describe('matching credits to proofs', () => {
     expect(report.totals.creditTotal).toBe(1394);
     expect(report.totals.confirmedTotal).toBe(494);
     expect(report.totals.unmatchedCreditTotal).toBe(900);
+  });
+});
+
+/**
+ * B25 — the report called the whole bank account a discrepancy.
+ *
+ * Seventeen residents paying perfectly still produced a page of things
+ * "needing attention", because the bank pays interest into the account and no
+ * resident will ever upload a screenshot for it.
+ */
+describe('splitting a reconciliation into what anyone can act on', () => {
+  const credit = (suggestions) => ({ kind: 'credit_no_proof', amount: 500, suggestions });
+
+  it('separates a probable resident from money nothing matches', () => {
+    const b = bucketReconciliation({
+      discrepancies: [
+        credit([{ billId: 1, flat: '4A' }]),
+        credit([]),
+      ],
+    });
+    expect(b.likelyResident).toHaveLength(1);
+    expect(b.unmatched).toHaveLength(1);
+  });
+
+  it('keeps real problems out of both credit buckets', () => {
+    const b = bucketReconciliation({
+      discrepancies: [
+        { kind: 'amount_mismatch' },
+        { kind: 'duplicate_reference' },
+        { kind: 'proof_no_credit' },
+        credit([]),
+      ],
+    });
+    expect(b.needsAttention.map((d) => d.kind))
+      .toEqual(['amount_mismatch', 'duplicate_reference', 'proof_no_credit']);
+    expect(b.likelyResident).toEqual([]);
+    expect(b.unmatched).toHaveLength(1);
+  });
+
+  it('never drops a row — every discrepancy lands in exactly one bucket', () => {
+    // The rejected simplification was to reconcile only against the month's
+    // expected amounts, which makes a flat billed ₹310 that paid ₹300 vanish
+    // entirely. Nothing here may filter a row away.
+    const discrepancies = [
+      { kind: 'amount_mismatch' }, credit([]), credit([{ billId: 2 }]), { kind: 'proof_no_credit' },
+    ];
+    const b = bucketReconciliation({ discrepancies });
+    expect(b.needsAttention.length + b.likelyResident.length + b.unmatched.length)
+      .toBe(discrepancies.length);
+  });
+
+  it('treats a missing suggestions list as nothing matching', () => {
+    const b = bucketReconciliation({ discrepancies: [{ kind: 'credit_no_proof', amount: 12 }] });
+    expect(b.unmatched).toHaveLength(1);
+  });
+
+  it('survives an empty reconciliation', () => {
+    expect(bucketReconciliation()).toMatchObject({
+      confirmed: [], needsAttention: [], likelyResident: [], unmatched: [],
+    });
   });
 });
