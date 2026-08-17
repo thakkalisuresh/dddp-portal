@@ -52,6 +52,65 @@ async function init() {
   }
 }
 
+/**
+ * Whether the admin controls are showing. Deliberately not remembered across
+ * loads: the default state of a notice board is reading it.
+ */
+let manageOpen = false;
+
+function manageToggle() {
+  return el('p', {},
+    el('button', {
+      class: 'linkish', type: 'button',
+      'aria-expanded': String(manageOpen),
+      onclick: () => { manageOpen = !manageOpen; renderList(); },
+    }, manageOpen ? 'Done managing' : 'Manage notices'));
+}
+
+/**
+ * Withdrawn notices, kept rather than destroyed — moved here from the admin
+ * console's Archive tab.
+ *
+ * Archive was one bin holding two unrelated things: withdrawn notices and
+ * deleted proof images. Nobody wants to see archived things in general; they
+ * want THIS notice they took down. So it belongs beside the notices, and the
+ * proof half belongs beside the proofs.
+ *
+ * The cost of the split, stated because it is real: the restore/delete
+ * permission rule now lives in two files instead of one. Restoring is an
+ * admin's call because withdrawing already is, and an undo that needs a more
+ * senior person than the do is a trap; destroying stays the superadmin's alone.
+ */
+function withdrawnNotices() {
+  const wrap = el('div', { class: 'stack' }, el('p', { class: 'muted small' }, 'Loading…'));
+
+  api.admin.noticeArchive().then(({ notices }) => {
+    setChildren(wrap,
+      el('p', { class: 'label' }, 'Withdrawn'),
+      el('p', { class: 'muted small' },
+        'Off the board but kept, with their replies and files. Restoring puts one '
+        + 'back in front of residents.'),
+      ...(notices.length
+        ? notices.map((n) =>
+            el('div', { class: 'row row--between', style: 'padding:var(--s-2) 0' },
+              el('div', {},
+                el('b', {}, n.title),
+                el('div', { class: 'small muted' },
+                  `${stampLabel(n.postedAt)} · ${n.commentCount} replies`
+                  + (n.attachmentCount ? ` · ${n.attachmentCount} files` : ''))),
+              el('button', {
+                class: 'btn btn--sm btn--quiet', type: 'button',
+                onclick: async () => {
+                  await api.admin.updateNotice(n.id, { active: true });
+                  await renderList();
+                },
+              }, 'Restore')))
+        : [el('p', { class: 'muted small' }, 'Nothing withdrawn.')]));
+  }).catch((err) => showError(wrap, err));
+
+  return wrap;
+}
+
 async function renderList() {
   const { notices } = await api.notices();
   // setChildren, NOT the native replaceChildren: the admin link below is a
@@ -62,18 +121,24 @@ async function renderList() {
   // shipping once before, on the public homepage.
   setChildren(main,
     el('h1', {}, 'Notices'),
-    // The publish form lives in the admin console, which an admin standing on
-    // the notice board has no way of guessing. This is the only route to it
-    // from the page they are actually on when they decide to post something.
-    isAdmin
-      ? el('p', {},
-          el('a', { class: 'linkish', href: '/admin/#notices' }, '+ Post a notice'))
-      : null,
-    // A committee member has no admin console to be sent to — this board is
-    // the whole of their job, so the form is on it rather than behind a link
-    // to a page that would refuse them. Collapsed until asked for: the great
-    // majority of visits to this page are to READ it, including theirs.
-    isCommittee && !isAdmin ? noticeComposer() : null,
+    // MANAGING A NOTICE HAPPENS ON THE NOTICE BOARD NOW, not in the admin
+    // console. An admin used to read notices here and manage them somewhere
+    // else — two places for one set of objects — and the "+ Post a notice"
+    // link that used to sit here was an apology for the split rather than a
+    // fix for it.
+    //
+    // Behind a deliberate toggle, though, and closed by default. Reading and
+    // withdrawing are different acts, and this repo keeps them apart on purpose
+    // (the superadmin gate on contact requests; 5302314 moving five methods out
+    // of the god object). Merging the destination must not merge the gesture:
+    // nobody should withdraw a notice while scrolling past it.
+    isAdmin ? manageToggle() : null,
+    // A committee member has no admin console to be sent to — this board is the
+    // whole of their job, so their form is unconditional. An admin's is behind
+    // the toggle, because they have the rest of the console and do not need a
+    // composer in front of them every time they come to read.
+    (isCommittee && !isAdmin) || (isAdmin && manageOpen) ? noticeComposer() : null,
+    isAdmin && manageOpen ? withdrawnNotices() : null,
     ...(notices.length
       ? notices.map((n) =>
           el('div', { class: `notice ${n.kind === 'event' ? 'notice--event' : ''}` },
@@ -119,7 +184,10 @@ async function renderOne(id) {
       // `canManage` comes from the server, which computed it with the same
       // function the PATCH route enforces. Asking the client to work it out
       // from a role would put a second, weaker copy of the rule here.
-      n.canManage && !isAdmin ? manageBar(n) : null),
+      // An admin reaches the same editor as a committee member now, rather
+      // than being sent to a console to do it. Gated on the toggle so opening
+      // a notice to read it does not put Withdraw under the reader's thumb.
+      (n.canManage && !isAdmin) || (isAdmin && manageOpen) ? manageBar(n) : null),
     el('hr', { class: 'rule' }),
     el('p', { class: 'label' }, n.comments.length ? `${n.comments.length} replies` : 'No replies yet'),
     list,

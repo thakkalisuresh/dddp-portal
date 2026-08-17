@@ -12,11 +12,10 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
-import { $, el, esc, renderViewBanner, showError } from './ui.js';
+import { $, el, esc, renderViewBanner, showError, foldedSection } from './ui.js';
 import { mobileField } from './mobile-field.js';
 import { ADMINISTRATOR } from './contact.js';
-import { money, kg, periodLabel, dayLabel, stampLabel } from './i18n.js';
-import { prepareUpload, makeThumbnail } from './compress.js';
+import { money, kg, periodLabel, dayLabel } from './i18n.js';
 
 const main = $('#main');
 let me = null;
@@ -55,8 +54,8 @@ let mailConfigured = true;
  * bills — followed by money arriving, then people. Home is where the rare
  * things live rather than each having a tab of its own.
  *
- * Still to move (batch 5): Notices belongs on the main Notices tab, and Archive
- * dissolves into a filter on the two screens that own the archived things.
+ * Notices and Archive left too: a notice is managed on the notice board, and
+ * archived things belong to the screen that owns them, not to a bin of their own.
  */
 const TABS = [
   { id: 'home',      label: 'Home',      render: homePanel },
@@ -67,46 +66,9 @@ const TABS = [
   { id: 'statement', label: 'Reconcile', href: '/admin/statement.html' },
   { id: 'residents', label: 'Residents', render: residentsPanel },
   { id: 'roster',    label: 'Roster',    href: '/admin/roster.html' },
-  { id: 'notices',   label: 'Notices',   render: noticesPanel },
-  { id: 'archive',   label: 'Archive',   render: archivePanel },
   { id: 'errors',    label: 'Errors',    render: errorsPanel, superadmin: true },
 ];
 
-/**
- * A folded-in section: closed, and not loaded until it is opened.
- *
- * Lazy on purpose. Bills now carries two more panels than it did, and eager
- * loading would make the screen everybody uses pay for the two they rarely
- * open — which is the trade that would have made this consolidation a
- * regression rather than a tidy-up.
- *
- * <details> rather than a modal or a nested tab strip, because every other
- * disclosure in this app is a <details> and one screen with its own idiom is a
- * second idiom to maintain (see flatCard, which says the same thing).
- */
-function foldedSection(label, badge, render) {
-  const body = el('div');
-  const summary = el('summary', { class: 'fold__summary' },
-    el('span', {}, label),
-    badge ? el('span', { class: 'chip chip--awaiting' }, badge) : null);
-  const details = el('details', { class: 'fold' }, summary, body);
-
-  let loaded = false;
-  details.addEventListener('toggle', async () => {
-    if (!details.open || loaded) return;
-    loaded = true;
-    body.replaceChildren(el('p', { class: 'muted' }, 'Loading…'));
-    try {
-      body.replaceChildren(await render());
-    } catch (err) {
-      // Reset, so a failed open can be retried by closing and opening again
-      // rather than leaving the section permanently empty.
-      loaded = false;
-      showError(body, err);
-    }
-  });
-  return details;
-}
 
 trackPage('/admin');
 init();
@@ -1052,105 +1014,6 @@ function otpPanel(result, p, status) {
 /* ── notices ───────────────────────────────────────────────────────────── */
 
 
-async function noticesPanel() {
-  const { notices } = await api.notices();
-  const status = el('div');
-
-  const title = el('input', { class: 'input', id: 'n-title' });
-  const body = el('textarea', { class: 'input', id: 'n-body', style: 'min-height:100px' });
-  const isEvent = el('input', { type: 'checkbox', id: 'n-event' });
-  const allowComments = el('input', { type: 'checkbox', id: 'n-comments' });
-  // A checkbox rather than a dropdown, and unticked by default: 'all' is the
-  // right answer for nearly every notice, and the narrower option should be a
-  // thing somebody chooses on purpose.
-  const ownersOnly = el('input', { type: 'checkbox', id: 'n-owners' });
-  const files = el('input', {
-    type: 'file', class: 'input', id: 'n-files', multiple: true,
-    accept: 'image/jpeg,image/png,image/webp,application/pdf',
-  });
-
-  return el('div', { class: 'panel stack' },
-    el('h2', {}, 'Notices'),
-    status,
-    el('div', { class: 'field' }, el('label', { for: 'n-title' }, 'Title'), title),
-    el('div', { class: 'field' }, el('label', { for: 'n-body' }, 'Body'), body),
-    // Stated rather than hidden behind a toolbar: what is on offer is short
-    // enough to write down, and a committee member typing on a phone should
-    // not have to discover it by accident.
-    el('p', { class: 'small muted' },
-      'Blank lines start a new paragraph. **bold**, *italic*, '
-      + '[link text](https://…), and lines beginning with - become a list.'),
-    el('label', { class: 'row', style: 'gap:var(--s-2)' }, isEvent, 'This is an event'),
-    el('label', { class: 'row', style: 'gap:var(--s-2)' }, allowComments, 'Allow replies'),
-    el('p', { class: 'small muted' },
-      'Replies carry each resident’s name and flat. Leave them off for announcements.'),
-    el('label', { class: 'row', style: 'gap:var(--s-2)' }, ownersOnly, 'Owners only'),
-    el('p', { class: 'small muted' },
-      'For AGM papers and anything with a vote attached. Owners living elsewhere '
-      + 'still see it; tenants do not, and cannot reply to it.'),
-    el('div', { class: 'field' },
-      el('label', { for: 'n-files' }, 'Attach files'),
-      files,
-      el('p', { class: 'small muted' },
-        'Up to 5 photos or PDFs — the agenda, quotes, the accounts. '
-        + 'Photos keep their full quality. 25MB each; anything over 20MB alerts Telegram.')),
-    el('button', {
-      class: 'btn', type: 'button',
-      onclick: async (event) => {
-        const publish = event.currentTarget;
-        publish.disabled = true;
-        try {
-          // The notice is created first and the files are attached to it. If an
-          // upload fails the committee is looking at a published notice missing
-          // one document, which they can fix from here — better than a silent
-          // half-write, and better than holding the notice back over a file.
-          const { id } = await api.admin.addNotice({
-            title: title.value, body: body.value,
-            kind: isEvent.checked ? 'event' : 'notice',
-            allowComments: allowComments.checked,
-            scope: ownersOnly.checked ? 'owners' : 'all',
-          });
-
-          const chosen = [...files.files].slice(0, 5);
-          for (const [i, file] of chosen.entries()) {
-            status.replaceChildren(el('p', { class: 'small muted' },
-              `Uploading ${i + 1} of ${chosen.length}…`));
-            const ready = await prepareUpload(file);
-            await api.attach('notice', id, ready, await makeThumbnail(ready));
-          }
-          await show('notices');
-        } catch (err) {
-          showError(status, err);
-          publish.disabled = false;
-        }
-      },
-    }, 'Publish'),
-
-    el('hr', { class: 'rule' }),
-    ...notices.map((n) =>
-      el('div', { class: 'rowitem' },
-        el('div', { class: 'rowitem__main' },
-          el('b', {}, n.title),
-          // Shown on the row, because a narrowed audience is invisible
-          // otherwise and "why did nobody see this" is the question it causes.
-          el('div', {}, `${stampLabel(n.postedAt)} · ${n.commentCount} replies`
-            + (n.scope === 'owners' ? ' · owners only' : ''))),
-        el('button', {
-          class: 'btn btn--sm btn--quiet', type: 'button',
-          onclick: async () => {
-            await api.admin.updateNotice(n.id, { allowComments: !n.allowComments });
-            await show('notices');
-          },
-        }, n.allowComments ? 'Replies on' : 'Replies off'),
-        el('button', {
-          class: 'btn btn--sm btn--quiet', type: 'button',
-          onclick: async () => {
-            await api.admin.updateNotice(n.id, { active: false });
-            await show('notices');
-          },
-        }, 'Withdraw')))
-  );
-}
 
 /* ── messages ──────────────────────────────────────────────────────────── */
 
@@ -1244,101 +1107,9 @@ async function messagesPanel() {
   );
 }
 
-/* ── archive ───────────────────────────────────────────────────────────── */
 
-async function archivePanel() {
-  const [{ proofs, stored }, { notices }] = await Promise.all([
-    api.admin.proofArchive(),
-    api.admin.noticeArchive(),
-  ]);
 
-  return el('div', { class: 'stack' },
-    withdrawnNotices(notices),
-    proofArchive(proofs, stored));
-}
 
-/**
- * Withdrawn notices, kept rather than destroyed.
- *
- * Withdrawing used to hide a notice from everyone including the superadmin,
- * while its replies and uploaded files stayed in the database and in R2 —
- * retained, paid for, and readable by nobody. This is the other half of that
- * decision: the committee can still open what it took down.
- *
- * Restoring is an admin's call, because withdrawing already is and an action
- * whose undo needs a more senior person is a trap. Destroying is the
- * superadmin's alone.
- */
-function withdrawnNotices(notices) {
-  return el('div', { class: 'panel stack' },
-    el('h2', {}, 'Withdrawn notices'),
-    el('p', { class: 'muted small' },
-      'Taken off the board but kept, with their replies and files. Restoring '
-      + 'puts one back in front of residents.'
-      + (me.role === 'superadmin'
-        ? ' Deleting destroys it and its files for good.'
-        : ` Only ${ADMINISTRATOR.name} can delete one permanently.`)),
-
-    ...(notices.length
-      ? notices.map((n) =>
-          el('div', { class: 'rowitem' },
-            el('div', { class: 'rowitem__main' },
-              el('b', {}, n.title),
-              el('div', {}, `${stampLabel(n.postedAt)} · ${n.commentCount} replies`
-                + (n.attachmentCount ? ` · ${n.attachmentCount} files` : '')
-                + (n.scope === 'owners' ? ' · owners only' : ''))),
-            el('button', {
-              class: 'btn btn--sm btn--quiet', type: 'button',
-              onclick: async () => {
-                await api.admin.updateNotice(n.id, { active: true });
-                await show('archive');
-              },
-            }, 'Restore'),
-            me.role === 'superadmin'
-              ? el('button', {
-                  class: 'btn btn--sm btn--danger', type: 'button',
-                  onclick: async () => {
-                    // Names what goes, and says it twice over: this is the one
-                    // action on the notice board with nothing behind it.
-                    const what = [`“${n.title}”`, `${n.commentCount} replies`]
-                      .concat(n.attachmentCount ? [`${n.attachmentCount} files`] : []).join(', ');
-                    if (!confirm(`Permanently delete ${what}?\n\nThis cannot be undone.`)) return;
-                    await api.god.purgeNotice(n.id);
-                    await show('archive');
-                  },
-                }, 'Delete for good')
-              : null))
-      : [el('p', { class: 'muted' }, 'Nothing withdrawn.')]));
-}
-
-function proofArchive(proofs, stored) {
-  return el('div', { class: 'panel stack' },
-    el('h2', {}, 'Payment proofs'),
-    el('p', { class: 'muted small' },
-      `${stored} stored. Images are deleted after 24 months; the reference and image `
-      + 'fingerprint are kept, because deleting those would destroy the duplicate check.'),
-    el('div', { class: 'thumbs' },
-      ...proofs.map((p) =>
-        el('div', { class: 'pcard' },
-          p.deleted_at
-            ? el('div', { class: 'gone' }, 'Image deleted')
-            : el('img', { src: `/api/proof/${p.id}/image`, alt: `Proof from ${p.flat}`, loading: 'lazy' }),
-          el('div', { class: 'b' },
-            `${p.flat} · ${periodLabel(p.period)}`,
-            el('div', { class: 'muted' },
-              `${p.parsed_amount != null ? money(p.parsed_amount) : 'unread'} · ${p.status}`),
-            p.deleted_at
-              ? el('div', { class: 'muted' }, 'reference kept')
-              : el('button', {
-                  class: 'linkish', type: 'button', style: 'margin-top:var(--s-1)',
-                  onclick: async () => {
-                    if (!confirm(`Delete the image for ${p.flat}? The reference is kept.`)) return;
-                    await api.admin.deleteProof(p.id);
-                    await show('archive');
-                  },
-                }, 'Delete image')))))
-  );
-}
 
 /* ── errors ────────────────────────────────────────────────────────────── */
 
