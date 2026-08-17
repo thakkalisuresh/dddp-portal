@@ -246,6 +246,9 @@ a { color: var(--accent); }
   border-radius: var(--radius); padding: var(--s-3) var(--s-4);
   font-size: var(--text-sm); border: 1px solid;
 }
+/* Neutral. For the notes that must not encode a verdict in their colour — see
+   proof.js, where a resident is told their upload arrived and nothing more. */
+.note--plain { background: var(--surface); border-color: var(--border); color: var(--ink); }
 .note--good { background: var(--accent-wash);   border-color: var(--accent-line);   color: #0A4F38; }
 .note--warn { background: var(--awaiting-wash); border-color: var(--awaiting-line); color: #6B4708; }
 .note--bad  { background: var(--overdue-wash);  border-color: var(--overdue-line);  color: #7F1D1D; }

@@ -87,6 +87,38 @@ export function statusChip(status) {
 }
 
 /**
+ * How a proof reads in the admin queue: the verdict, not two numbers.
+ *
+ * The pair this replaces — "Claimed ₹244 · Billed ₹199" — asked the treasurer
+ * to do the arithmetic ninety-nine times a month on a phone, and said
+ * "claimed" about a figure no resident ever typed: it is what the vision model
+ * read off the image. The matching rows, which are most of them, now carry one
+ * number and need no reading at all.
+ *
+ * THE DIRECTION IS IN THE SENTENCE because it used to be assumed. The old line
+ * hardcoded "short by" and clamped the difference at zero, so an overpayment
+ * rendered as "short by ₹0" — wrong word, meaningless figure, and wrong
+ * precisely on the rows that most need a second look.
+ */
+export function proofVerdict({ claimedAmount, billed }) {
+  if (claimedAmount == null) {
+    // Deliberately does NOT name a cause. The amount is absent either because
+    // the image was poor or because the provider never answered, and this line
+    // cannot tell which — asserting the first is how a dead provider reads as
+    // ninety-nine bad photographs. What the treasurer can act on is the same
+    // either way: look at it.
+    return { text: `Bill ${money(billed)} · check by hand`, tone: 'muted' };
+  }
+  const difference = Math.round((claimedAmount - billed) * 100) / 100;
+  if (difference === 0) return { text: `${money(billed)} · matches`, tone: 'ok' };
+  return {
+    tone: 'bad',
+    text: `${money(claimedAmount)} · bill ${money(billed)}, `
+      + `${difference > 0 ? 'over' : 'short'} by ${money(Math.abs(difference))}`,
+  };
+}
+
+/**
  * The viewing-as banner. Rendered from /api/me on every page — if it is ever
  * possible to be impersonating without seeing this, that is a bug, not a
  * styling preference (plan §5.5).
