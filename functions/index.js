@@ -18,7 +18,7 @@ import {
 } from './lib/approvals.js';
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { validateStatement, parseStatement, reconcile, sweepAbandonedStatements } from './lib/statement.js';
-import { readReceipt } from './lib/vision.js';
+import { readReceipt, visionAvailable } from './lib/vision.js';
 import { runScheduled, runLateFees, isLateFeeCron, applyLateFees, staleIntents } from './lib/cron.js';
 import { listNotices, getNotice, addComment, setCommentHidden, markNoticesSeen, NOTICE_SCOPES,
          canSeeAttachment, listArchivedNotices, purgeNotice,
@@ -3472,6 +3472,9 @@ async function godDiagnostics(env, url) {
     lastBackupAt: backup?.value ?? null,
     config: {
       upiVpa: env.UPI_VPA, alertingConfigured: Boolean(env.TELEGRAM_BOT_TOKEN),
+      // Asked of the same function the upload path asks, so this cannot report
+      // healthy while readReceipt is short-circuiting on the very next request.
+      visionConfigured: visionAvailable(env),
       mailConfigured: mailConfigured(env),
       driveConfigured: driveConfigured(env),
       committeeShared: committeeFolderSeparate(env), remote: true,

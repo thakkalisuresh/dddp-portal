@@ -81,11 +81,18 @@ export const ERROR_CODES = {
   // ── PROOF ──────────────────────────────────────────────────────────────
   'DDP-PROOF-001': { severity: 'warn',  message: 'Duplicate screenshot rejected — image hash already seen' },
   'DDP-PROOF-002': { severity: 'warn',  message: 'Duplicate UTR rejected — already used on another bill' },
-  'DDP-PROOF-003': { severity: 'error', message: 'Vision parse returned nothing usable' },
+  // `warn`, not `error`. This fires whenever a resident photographs a receipt
+  // badly, which is a normal Tuesday and not something to wake anyone for. It
+  // was `error`, so blurry photographs paged the committee while the outage
+  // below said nothing at all — backwards in both directions.
+  'DDP-PROOF-003': { severity: 'warn',  message: 'Vision parse returned nothing usable' },
   'DDP-PROOF-004': { severity: 'fatal', message: 'R2 upload succeeded but D1 insert failed — orphaned object' },
   'DDP-PROOF-005': { severity: 'error', message: 'Proof image missing from R2 but row says stored' },
   'DDP-PROOF-006': { severity: 'warn',  message: 'Uploaded amount does not match the bill' },
-  'DDP-PROOF-007': { severity: 'warn',  message: 'Vision provider returned an error status' },
+  // `error`, not `warn`: reportError only pushes to Telegram on error or fatal,
+  // so the one event actually worth hearing about was the one kept silent.
+  'DDP-PROOF-007': { severity: 'error', message: 'Vision provider returned an error status' },
+  'DDP-PROOF-008': { severity: 'error', message: 'Vision is not configured — no provider key bound' },
 
   // ── RECON ──────────────────────────────────────────────────────────────
   'DDP-RECON-001': { severity: 'error', message: 'Bank statement could not be parsed — no usable table' },
