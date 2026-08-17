@@ -86,3 +86,69 @@ describe('the iteration count itself', () => {
     expect(iterations).toBeLessThanOrEqual(100_000);
   });
 });
+
+describe('staging points at staging, and nowhere near production', () => {
+  // The [env.staging] block is a THIRD copy of the shared vars, because
+  // wrangler does not inherit bindings into an env. The whole hazard the file
+  // above documents applies to it too, so it is checked the same way.
+  //
+  // Everything here reads one TOML section rather than the file, since the
+  // top-level values appear earlier and a file-wide regex would match those
+  // and pass while staging said something else entirely.
+  const section = (toml, header) => {
+    const start = toml.indexOf(`[${header}]`);
+    if (start === -1) return null;
+    const rest = toml.slice(start + header.length + 2);
+    const next = rest.search(/^\s*\[/m);
+    return next === -1 ? rest : rest.slice(0, next);
+  };
+
+  const PROD_DB = '56951152-d3c7-4476-a779-9ef9afe0b4d8';
+  const STAGING_DB = 'adf039cd-4cec-4e66-9395-fd4a548cd01c';
+
+  it('binds the staging database, not the production one', () => {
+    // The assertion that actually matters. A copy-paste of the prod id into
+    // this block turns `deploy --env staging` into an unannounced production
+    // deploy of the cron Worker -- against real bills, with a real late-fee
+    // job. Nothing else in the suite would notice.
+    const staging = section(worker, 'env.staging.d1_databases');
+    expect(staging, '[[env.staging.d1_databases]] missing from wrangler.toml').toBeTruthy();
+    expect(staging).toContain(STAGING_DB);
+    expect(staging, 'staging is bound to the PRODUCTION database').not.toContain(PROD_DB);
+  });
+
+  it('writes proofs to the staging bucket, not the real one', () => {
+    // Same shape of mistake, quieter consequence: test payment screenshots
+    // filed among residents' real ones, and swept to Drive at 3am with them.
+    const staging = section(worker, 'env.staging.r2_buckets');
+    expect(staging).toContain('dddp-proofs-staging');
+  });
+
+  it('keeps the shared vars in step with the other two copies', () => {
+    const vars = section(worker, 'env.staging.vars');
+    expect(vars, '[env.staging.vars] missing from wrangler.toml').toBeTruthy();
+    for (const key of ['PBKDF2_ITERATIONS', 'UPI_VPA', 'UPI_PAYEE']) {
+      const staged = vars.match(new RegExp(`^${key}\\s*=\\s*"([^"]*)"`, 'm'))?.[1];
+      expect(staged, `${key} missing from [env.staging.vars]`).toBeDefined();
+      expect(staged, `${key} drifted in [env.staging.vars]`).toBe(varOf(worker, key));
+    }
+  });
+
+  it('declares no crons, so a staging deploy cannot fire the money job', () => {
+    // Triggers are inheritable, so an [env.staging.triggers] block is the only
+    // way this env gets a schedule -- and it must not have one. A staging
+    // deploy carrying the late-fee cron would charge fees on its own timer
+    // using the association's real Telegram and Google secrets.
+    expect(worker).not.toContain('[env.staging.triggers]');
+  });
+});
+
+describe('the site keeps previews off production', () => {
+  it('binds preview traffic to the staging database and bucket', () => {
+    // preview_database_id is what makes a preview deploy safe BY DEFAULT,
+    // rather than safe when somebody remembers. If it ever goes missing,
+    // previews silently fall back to writing to residents' records.
+    expect(pages).toMatch(/^preview_database_id\s*=\s*"adf039cd-/m);
+    expect(pages).toMatch(/^preview_bucket_name\s*=\s*"dddp-proofs-staging"/m);
+  });
+});

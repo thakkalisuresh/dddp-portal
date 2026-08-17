@@ -15,10 +15,23 @@ pages_build_output_dir = "dist"
 binding = "DB"
 database_name = "dddp"
 database_id = "56951152-d3c7-4476-a779-9ef9afe0b4d8"
+# Preview deploys and `wrangler pages dev` bind to staging instead, so trying a
+# feature out cannot write to residents' records. This is the safety that does
+# not depend on remembering to be careful: the default target for anything that
+# is not a production deploy is the disposable database.
+#
+# Staging is rebuilt from a prod export by `npm run staging:refresh`. Data only
+# ever moves prod -> staging; nothing here is ever promoted back up.
+preview_database_id = "adf039cd-4cec-4e66-9395-fd4a548cd01c"  # dddp-migtest
 
 [[r2_buckets]]
 binding = "PROOFS"
 bucket_name = "dddp-proofs"
+# Same reasoning as the D1 preview binding above. Without this, a test payment
+# proof uploaded while trying a feature out lands in the real bucket, mixed in
+# with residents' actual payment screenshots and backed up to Drive at 3am
+# alongside them. Staging uploads go somewhere disposable instead.
+preview_bucket_name = "dddp-proofs-staging"
 
 [vars]
 UPI_VPA = "qr.ddwelfare@sib"

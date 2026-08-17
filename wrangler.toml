@@ -77,6 +77,43 @@ PBKDF2_ITERATIONS = "100000"
 # Production, not Testing: a refresh token issued in Testing expires after seven
 # days and the backup then stops silently.
 
+# ---------------------------------------------------------------------------
+# Staging. `wrangler deploy --env staging` puts this Worker on dddp-migtest so
+# the cron jobs can be rehearsed against a realistic copy of production without
+# touching residents' records. Refresh that copy with `npm run staging:refresh`.
+#
+# This exists mostly for the late-fee job. It is the only cron that moves money,
+# it runs unattended at midnight IST, and a bug there is a wrong charge on a
+# real bill rather than a broken page somebody reports. Rehearsing it wants real
+# bill shapes and real due dates, which is exactly what a prod export gives.
+#
+# Wrangler does NOT inherit d1_databases, r2_buckets or vars into an env, so
+# every binding is repeated below. That is a third copy of PBKDF2_ITERATIONS,
+# which is precisely the drift the note above warns about — so
+# test/deploy-config.test.js now asserts this block agrees with the other two.
+#
+# No [triggers] here on purpose: a staging deploy with crons would fire the
+# late-fee and Drive-backup jobs on its own schedule, against staging data, with
+# the association's real Telegram and Google secrets. Leave it trigger-less and
+# invoke the handler deliberately with `wrangler dev --test-scheduled`.
+[env.staging]
+workers_dev = false
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "dddp-migtest"
+database_id = "adf039cd-4cec-4e66-9395-fd4a548cd01c"
+migrations_dir = "migrations"
+
+[[env.staging.r2_buckets]]
+binding = "PROOFS"
+bucket_name = "dddp-proofs-staging"
+
+[env.staging.vars]
+UPI_VPA = "qr.ddwelfare@sib"
+UPI_PAYEE = "DD Diamond Park RWA"
+PBKDF2_ITERATIONS = "100000"
+
 [triggers]
 # UTC, always — Cloudflare crons have no timezone, and none of the expressions
 # below shifts with daylight saving anywhere.
