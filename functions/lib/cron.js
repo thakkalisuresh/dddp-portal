@@ -222,6 +222,36 @@ export async function runLateFees(env, ctx) {
   }
 }
 
+/**
+ * The dead man's switch.
+ *
+ * EVERY OTHER SIGNAL IN THIS SYSTEM DEPENDS ON THE SYSTEM WORKING. Telegram
+ * needs the Worker to run and the token to be valid; the digest needs the cron
+ * to fire; error_log needs D1. When the thing that reports is the thing that
+ * broke, all of them report nothing, and nothing is indistinguishable from a
+ * quiet week — which is precisely how vision stayed dead through an entire
+ * rehearsal.
+ *
+ * This inverts it. An external monitor expects a ping on a schedule and shouts
+ * when one does not arrive, so the alert is raised by the absence of the
+ * portal rather than by the portal. It is the only check here that survives
+ * the portal being entirely down.
+ *
+ * Unconfigured is not an error: HEALTHCHECK_URL simply may not be set up yet,
+ * and npm run doctor is where that belongs. Failure to ping is swallowed for
+ * the same reason the sweeps are — a monitoring call must never cost the
+ * building its late-fee run.
+ */
+async function pingHealthcheck(env) {
+  if (!env.HEALTHCHECK_URL) return { pinged: false, reason: 'not-configured' };
+  try {
+    const res = await fetch(env.HEALTHCHECK_URL, { method: 'POST' });
+    return { pinged: res.ok };
+  } catch {
+    return { pinged: false, reason: 'unreachable' };
+  }
+}
+
 export async function runScheduled(env, ctx) {
   try {
     const fees = await applyLateFees(env);
@@ -241,7 +271,13 @@ export async function runScheduled(env, ctx) {
     // and the ordering means the digest can also report what just happened.
     const digest = await sendDigest(env);
 
-    return { fees, stale: stale.length, digest };
+    // After the work, so a ping only goes out on a run that actually did it.
+    // Pinging first would tell the monitor the portal is healthy and then throw,
+    // which is the reassurance-without-the-substance failure the backup
+    // watermark is also written to avoid.
+    const healthcheck = await pingHealthcheck(env);
+
+    return { fees, stale: stale.length, digest, healthcheck };
   } catch (err) {
     await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);
     return null;

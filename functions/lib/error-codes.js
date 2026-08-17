@@ -128,7 +128,7 @@ export const ERROR_CODES = {
   'DDP-SYS-005': { severity: 'fatal', message: 'Telegram binding missing at startup — alerts are inert' },
   'DDP-SYS-008': { severity: 'fatal', message: 'Google refresh token rejected — the nightly backup is dead' },
   'DDP-SYS-007': { severity: 'warn',  message: 'Nightly run summary — late fees applied or payments left unconfirmed' },
-  'DDP-SYS-006': { severity: 'warn',  message: 'Alert rate limit reached; further alerts suppressed this window' },
+  'DDP-SYS-006': { severity: 'warn',  message: 'Repeat of a code already alerted; held inside its cooldown' },
 
   // ── NOTICE ─────────────────────────────────────────────────────────────
   'DDP-NOTICE-001': { severity: 'warn',  message: 'Comment or notice not found' },

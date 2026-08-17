@@ -306,6 +306,7 @@ reportError is the ONLY sanctioned path for a failure to leave the system.
 | class | `AppError` |  |
 | fn | `fail` |  |
 | fn | `reportError` | Record a failure: always to error_log, and to Telegram when severity warrants. |
+| fn | `episodeDecision` | The suppression policy, as a pure function of what the table remembers. |
 | fn | `shouldAlert` |  |
 | fn | `postToTelegram` | The one place anything is sent to Telegram. |
 | fn | `assertAlerting` | Call once per request path that can alert. |
