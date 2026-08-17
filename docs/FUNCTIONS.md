@@ -528,6 +528,7 @@ Bank statement reconciliation.
 | fn | `creditsFromText` | Read credits out of statement text extracted from a PDF. |
 | fn | `parseStatement` |  |
 | fn | `reconcile` | Match credits to proofs, then report what is left over on both sides. |
+| fn | `bucketReconciliation` | Split a reconciliation into what a treasurer actually has to DO about it. |
 
 ### `functions/lib/tenancy.js`
 
@@ -778,4 +779,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-414 exports. 213 have no doc comment.
+415 exports. 213 have no doc comment.
