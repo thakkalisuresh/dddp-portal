@@ -4,6 +4,7 @@ import {
   referenceKind, isBankComparable,
 } from '../functions/lib/proof.js';
 import { safeJson, bytesToBase64 } from '../functions/lib/vision.js';
+import { proofVerdict } from '../public/js/ui.js';
 
 const bill = { total: 329.04 };
 
@@ -140,6 +141,49 @@ describe('assessing a claim against the bill', () => {
 
   it('compares in paise, so float noise cannot cause a false mismatch', () => {
     expect(assessProof({ amount: 0.1 + 0.2 }, { total: 0.3 }).matches).toBe(true);
+  });
+
+  it('does not blame the photograph for an amount it could not read', () => {
+    // A provider outage and a blurry screenshot arrive here identically, so
+    // the message must not assert either one.
+    const r = assessProof({ amount: null }, bill);
+    expect(r.message).not.toMatch(/read|blur|photo|image|screenshot/i);
+  });
+});
+
+describe('how a proof reads in the review queue', () => {
+  it('states the direction of an overpayment', () => {
+    // The regression this exists for: the line hardcoded "short by" and
+    // clamped at zero, so overpaying ₹45 rendered as "short by ₹0".
+    const v = proofVerdict({ claimedAmount: 244, billed: 199 });
+    expect(v.text).toContain('over by');
+    expect(v.text).toContain('45');
+    expect(v.text).not.toContain('short');
+    expect(v.tone).toBe('bad');
+  });
+
+  it('states the direction of an underpayment', () => {
+    const v = proofVerdict({ claimedAmount: 213, billed: 263 });
+    expect(v.text).toContain('short by');
+    expect(v.text).toContain('50');
+    expect(v.tone).toBe('bad');
+  });
+
+  it('says nothing but "matches" when the two agree', () => {
+    const v = proofVerdict({ claimedAmount: 500, billed: 500 });
+    expect(v.text).toContain('matches');
+    expect(v.tone).toBe('ok');
+  });
+
+  it('asks for a human when there is no amount, without naming a cause', () => {
+    const v = proofVerdict({ claimedAmount: null, billed: 500 });
+    expect(v.text).toContain('check by hand');
+    expect(v.text).not.toMatch(/readable|blur|photo/i);
+    expect(v.tone).toBe('muted');
+  });
+
+  it('compares in paise, so float noise is not a mismatch', () => {
+    expect(proofVerdict({ claimedAmount: 0.1 + 0.2, billed: 0.3 }).tone).toBe('ok');
   });
 });
 

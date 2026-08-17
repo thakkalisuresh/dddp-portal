@@ -143,7 +143,7 @@ Ask the bot a code and it will explain it.
 | `DDP-SYS-005` | **fatal** | live | Telegram binding missing at startup — alerts are inert |
 | `DDP-SYS-008` | **fatal** | live | Google refresh token rejected — the nightly backup is dead |
 | `DDP-SYS-007` | warn | live | Nightly run summary — late fees applied or payments left unconfirmed |
-| `DDP-SYS-006` | warn | live | Alert rate limit reached; further alerts suppressed this window |
+| `DDP-SYS-006` | warn | live | Repeat of a code already alerted; held inside its cooldown |
 
 ---
 

@@ -11,7 +11,7 @@ import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
 import { $, el, esc, renderViewBanner, showError } from './ui.js';
 import { money, periodLabel } from './i18n.js';
-import { compressImage, humanSize } from './compress.js';
+import { compressImage } from './compress.js';
 
 const main = $('#main');
 let bill = null;
@@ -61,7 +61,7 @@ function render() {
         const result = await compressImage(file);
         chosen = result.blob;
         previewSlot.replaceChildren(preview(file, result));
-        submitSlot.replaceChildren(submitButton(status, submitSlot));
+        submitSlot.replaceChildren(submitButton(status, submitSlot, previewSlot));
         status.replaceChildren();
       } catch {
         showError(status, { message: "That image couldn't be read. Try taking the screenshot again." });
@@ -90,14 +90,14 @@ function preview(file, result) {
     el('img', { src: url, alt: 'Your screenshot', onload: () => URL.revokeObjectURL(url) }),
     el('div', { class: 'stack', style: 'gap:var(--s-1)' },
       el('strong', { style: 'font-family:var(--font-ui);font-size:var(--text-sm)' }, file.name),
-      el('p', { class: 'small muted' },
-        result.compressed
-          ? `${humanSize(result.originalSize)} → ${humanSize(result.blob.size)}`
-          : humanSize(result.blob.size)),
+      // No byte count. It described the client-side compression rather than
+      // anything the resident can act on, and it is the surviving half of the
+      // "resized to 1000px" line removed for the same reason — the picture is
+      // right there, which is the only confirmation the file needs.
       el('label', { class: 'linkish', for: 'file', style: 'cursor:pointer' }, 'Choose another')));
 }
 
-function submitButton(status, slot) {
+function submitButton(status, slot, previewSlot) {
   const button = el('button', { class: 'btn btn--block btn--lg', type: 'button' }, 'Submit for approval');
 
   button.addEventListener('click', async () => {
@@ -106,6 +106,10 @@ function submitButton(status, slot) {
     try {
       const result = await api.uploadProof(bill.id, chosen);
       slot.replaceChildren();
+      // The preview goes too. It carries a live "Choose another" label, and
+      // leaving it under a submitted upload offers a control that no longer
+      // does anything — the file input is still wired, but the proof is gone.
+      previewSlot.replaceChildren();
       status.replaceChildren(outcome(result));
     } catch (err) {
       button.disabled = false;
@@ -129,18 +133,30 @@ function outcome(result) {
     parsed.utr ? el('div', { class: 'kv' }, el('span', {}, 'Reference'), el('strong', {}, parsed.utr)) : null,
     parsed.date ? el('div', { class: 'kv' }, el('span', {}, 'Date'), el('strong', {}, parsed.date)) : null);
 
-  if (assessment.verdict === 'match') {
+  // A MATCH AND AN UNREADABLE AMOUNT LOOK IDENTICAL HERE, and that is the
+  // point. The resident is told what became of their upload and nothing about
+  // what the OCR made of it: a separate note for an unreadable amount
+  // announces a degraded provider to ninety-nine people who cannot act on it,
+  // and during the outage of 14 August it would have said so on every upload.
+  //
+  // The old wording — "You do not need to do anything else" — asserted a
+  // settlement nobody had checked. All that is known at this point is that a
+  // model read a number equal to the bill; whether the money arrived is a
+  // question only the bank statement answers.
+  if (assessment.matches || assessment.verdict === 'unreadable') {
     return el('div', { class: 'stack' },
-      el('div', { class: 'note note--good' },
-        el('strong', {}, 'Received. '),
-        'The treasurer will confirm it shortly. You do not need to do anything else.',
+      el('div', { class: 'note note--plain' },
+        el('strong', {}, 'Uploaded, pending review. '),
+        'The treasurer checks this against the bank statement before your bill is marked paid.',
         readback),
       el('a', { class: 'btn btn--ghost btn--block', href: '/dashboard' }, 'Back to your bill'));
   }
 
-  // A mismatch is surfaced now rather than discovered by the treasurer days later.
+  // A mismatch is surfaced now rather than discovered by the treasurer days
+  // later. This is the one case worth interrupting a resident for: it is also
+  // the only one they can still do something about.
   return el('div', { class: 'stack' },
-    el('div', { class: assessment.verdict === 'unreadable' ? 'note note--warn' : 'note note--bad' },
+    el('div', { class: 'note note--bad' },
       el('strong', {}, assessment.message),
       assessment.verdict === 'short'
         ? el('p', { style: 'margin-top:var(--s-2)' },
