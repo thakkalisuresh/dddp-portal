@@ -35,22 +35,78 @@ let mailConfigured = true;
 // against it — saveReadings fails outright on a period that does not exist.
 // The strip used to read Roster, Readings, Proofs, …, Rates, which put the
 // first step of every month near the end.
+/**
+ * Fourteen tabs was too many to find anything in.
+ *
+ * The strip wrapped to two or three rows depending on the window, so no tab had
+ * a stable position and none could be found by muscle memory. Worse, the
+ * allocation was by topic rather than by how often anyone went there: Export and
+ * Messages were roughly thirty lines each, sitting as peers of Readings and
+ * Proofs.
+ *
+ * Four are now folded into the screen that owns their subject. An edit request
+ * and a late fee are both things that happen to A BILL; a resident's message is
+ * something from A RESIDENT. They were separate tabs because they were built
+ * separately, not because anybody thinks of them apart. The two-admin rule on
+ * edit approvals is enforced server-side, so merging the screen does not weaken
+ * it.
+ *
+ * The order is the month as it actually happens — rates, then readings, then
+ * bills — followed by money arriving, then people. Home is where the rare
+ * things live rather than each having a tab of its own.
+ *
+ * Still to move (batch 5): Notices belongs on the main Notices tab, and Archive
+ * dissolves into a filter on the two screens that own the archived things.
+ */
 const TABS = [
-  { id: 'roster',    label: 'Roster',    href: '/admin/roster.html' },
+  { id: 'home',      label: 'Home',      render: homePanel },
   { id: 'periods',   label: 'Rates',     render: periodsPanel },
   { id: 'readings',  label: 'Readings',  href: '/admin/readings.html' },
+  { id: 'bills',     label: 'Bills',     render: billsPanel },
   { id: 'proofs',    label: 'Proofs',    href: '/admin/proofs.html' },
   { id: 'statement', label: 'Reconcile', href: '/admin/statement.html' },
-  { id: 'latefees',  label: 'Late fees', render: lateFeesPanel },
-  { id: 'bills',     label: 'Bills',     render: billsPanel },
-  { id: 'approvals', label: 'Approvals', render: approvalsPanel },
   { id: 'residents', label: 'Residents', render: residentsPanel },
+  { id: 'roster',    label: 'Roster',    href: '/admin/roster.html' },
   { id: 'notices',   label: 'Notices',   render: noticesPanel },
-  { id: 'messages',  label: 'Messages',  render: messagesPanel },
   { id: 'archive',   label: 'Archive',   render: archivePanel },
-  { id: 'export',    label: 'Export',    render: exportPanel },
   { id: 'errors',    label: 'Errors',    render: errorsPanel, superadmin: true },
 ];
+
+/**
+ * A folded-in section: closed, and not loaded until it is opened.
+ *
+ * Lazy on purpose. Bills now carries two more panels than it did, and eager
+ * loading would make the screen everybody uses pay for the two they rarely
+ * open — which is the trade that would have made this consolidation a
+ * regression rather than a tidy-up.
+ *
+ * <details> rather than a modal or a nested tab strip, because every other
+ * disclosure in this app is a <details> and one screen with its own idiom is a
+ * second idiom to maintain (see flatCard, which says the same thing).
+ */
+function foldedSection(label, badge, render) {
+  const body = el('div');
+  const summary = el('summary', { class: 'fold__summary' },
+    el('span', {}, label),
+    badge ? el('span', { class: 'chip chip--awaiting' }, badge) : null);
+  const details = el('details', { class: 'fold' }, summary, body);
+
+  let loaded = false;
+  details.addEventListener('toggle', async () => {
+    if (!details.open || loaded) return;
+    loaded = true;
+    body.replaceChildren(el('p', { class: 'muted' }, 'Loading…'));
+    try {
+      body.replaceChildren(await render());
+    } catch (err) {
+      // Reset, so a failed open can be retried by closing and opening again
+      // rather than leaving the section permanently empty.
+      loaded = false;
+      showError(body, err);
+    }
+  });
+  return details;
+}
 
 trackPage('/admin');
 init();
@@ -62,7 +118,10 @@ async function init() {
     renderViewBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
     renderNav(me, '/admin/');
     renderTabs();
-    await show(location.hash.slice(1) || 'periods');
+    // Home rather than Rates. Landing on the rate editor put the one screen
+    // that changes what every resident owes in front of anyone who opened the
+    // console for any reason at all.
+    await show(location.hash.slice(1) || 'home');
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) { location.href = '/login'; return; }
     showError(main, err);
@@ -404,7 +463,7 @@ function impactNotice(p, plan, rate, reason, panel) {
  * Rendered as <details> rather than a modal: every other disclosure in this app
  * is a <details>, and one dialog for one screen is a second idiom to maintain.
  */
-async function residentsPanel() {
+async function residentsDirectory() {
   const status = el('div');
   const list = el('div');
   let showPast = false;
@@ -1322,7 +1381,54 @@ async function errorsPanel() {
  * making one, the requester can never approve their own, and an admin's own
  * flat needs every other admin.
  */
+/**
+ * Bills, with the two things that happen TO a bill folded in beneath it.
+ *
+ * Edit requests carry a count in the summary, which is the part that makes the
+ * merge an improvement rather than a compromise: Approvals used to be a tab you
+ * had to remember to visit, and a pending correction was invisible until you
+ * did. A number on a section you are already looking at cannot be forgotten.
+ */
 async function billsPanel() {
+  const list = await billsList();
+
+  // One small request for the badge. It replaces an entire tab visit, and the
+  // section's own load stays lazy — so the common case (open Bills, look at
+  // bills) costs one extra call and nothing else.
+  let waiting = 0;
+  try {
+    const { requests } = await api.admin.billEdits();
+    waiting = requests?.length ?? 0;
+  } catch { /* The badge is a convenience; Bills must render without it. */ }
+
+  return el('div', { class: 'stack' },
+    list,
+    foldedSection('Edit requests', waiting ? `${waiting} waiting` : null, approvalsPanel),
+    foldedSection('Late fees', null, lateFeesPanel));
+}
+
+/** The directory, with residents' own messages folded in beneath it. */
+async function residentsPanel() {
+  return el('div', { class: 'stack' },
+    await residentsDirectory(),
+    foldedSection('Messages', null, messagesPanel));
+}
+
+/**
+ * Where the rare things live.
+ *
+ * Export and the backup health line were a top-level tab and a fragment of one,
+ * visited a few times a year between them. They are not less important for
+ * that — the committee owning a readable copy of its own records is the whole
+ * reason this project exists — but importance is not the same as frequency, and
+ * a tab strip can only encode frequency.
+ */
+function homePanel() {
+  return el('div', { class: 'stack' },
+    exportPanel());
+}
+
+async function billsList() {
   const search = el('input', { class: 'input', placeholder: '10C', id: 'b-flat' });
   const list = el('div', { class: 'stack' });
   const status = el('div');
