@@ -742,6 +742,7 @@ Small render helpers shared by every screen.
 | fn | `el` |  |
 | fn | `setChildren` | Like node.replaceChildren, but drops null and undefined. |
 | fn | `statusChip` |  |
+| fn | `proofVerdict` | How a proof reads in the admin queue: the verdict, not two numbers. |
 | fn | `renderViewBanner` | The viewing-as banner. |
 | fn | `billBreakdown` |  |
 | fn | `showError` |  |
@@ -778,4 +779,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-414 exports. 213 have no doc comment.
+415 exports. 213 have no doc comment.

@@ -9,7 +9,7 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
-import { $, el, esc, renderViewBanner, showError, setChildren, statusChip } from './ui.js';
+import { $, el, esc, renderViewBanner, showError, setChildren, statusChip, proofVerdict } from './ui.js';
 import { money, periodLabel } from './i18n.js';
 
 const main = $('#main');
@@ -140,10 +140,7 @@ function decidedRow(p) {
     }),
     el('div', { class: 'qmeta' },
       el('b', {}, `Flat ${p.flat} · ${p.name ?? ''}`),
-      el('div', {},
-        p.claimedAmount == null
-          ? `Billed ${money(p.billed)} · amount not readable`
-          : `Claimed ${money(p.claimedAmount)} · Billed ${money(p.billed)}`),
+      el('div', {}, proofVerdict(p).text),
       // Who decided it, not just what was decided: a rejection with no name
       // attached is not a trail anyone can follow back.
       el('div', { class: 'small muted' },
@@ -154,7 +151,8 @@ function decidedRow(p) {
 }
 
 function proofRow(p) {
-  const mismatch = !p.matches && !p.unreadable;
+  const verdict = proofVerdict(p);
+  const mismatch = verdict.tone === 'bad';
   const src = `/api/proof/${p.proofId}/image`;
   const caption = `Flat ${p.flat} · ${periodLabel(p.period)}`;
   return el('div', { class: `qrow ${mismatch ? 'qrow--bad' : ''}` },
@@ -168,11 +166,7 @@ function proofRow(p) {
     }),
     el('div', { class: 'qmeta' },
       el('b', {}, `Flat ${p.flat} · ${p.name ?? ''}`),
-      el('div', { class: mismatch ? 'bad' : '' },
-        p.unreadable
-          ? `Billed ${money(p.billed)} · amount not readable`
-          : `Claimed ${money(p.claimedAmount)} · Billed ${money(p.billed)}` +
-            (mismatch ? ` · short by ${money(Math.max(0, p.billed - p.claimedAmount))}` : '')),
+      el('div', { class: mismatch ? 'bad' : '' }, verdict.text),
       p.utr ? el('div', {}, `UTR ${p.utr}`) : null),
     el('div', { class: 'qact' },
       el('button', {

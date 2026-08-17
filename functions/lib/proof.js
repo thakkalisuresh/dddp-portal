@@ -134,7 +134,12 @@ export function assessProof(parsed, bill) {
     return {
       verdict: 'unreadable',
       matches: false,
-      message: "We couldn't read the amount. The treasurer will check it by hand.",
+      // Names no cause. The amount is absent either because the image was poor
+      // or because the vision provider never answered, and this function cannot
+      // tell the two apart — the old wording ("We couldn't read the amount")
+      // blamed the photograph either way, which during a provider outage means
+      // telling ninety-nine residents their screenshots were bad.
+      message: 'The treasurer will check this by hand.',
     };
   }
   if (claimed === expected) {
