@@ -24,6 +24,18 @@
   .qact { display: flex; gap: var(--s-2); flex: none; }
   .sect { padding: var(--s-4); border-bottom: 1px solid var(--border); background: var(--surface);
           display: flex; align-items: center; gap: var(--s-4); flex-wrap: wrap; }
+  .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: var(--s-3); }
+  .pcard { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+  .pcard img { width: 100%; height: 96px; object-fit: cover; display: block; }
+  .pcard .gone { height: 96px; display: flex; align-items: center; justify-content: center;
+                 font-family: var(--font-ui); font-size: var(--text-xs); color: var(--ink-muted);
+                 background: repeating-linear-gradient(45deg,#F2F1EC,#F2F1EC 5px,#E9E8E2 5px,#E9E8E2 10px); }
+  .pcard .b { padding: var(--s-2); font-family: var(--font-ui); font-size: var(--text-xs); }
+  .fold { border-top: 1px solid var(--border); }
+  .fold__summary { cursor: pointer; padding: var(--s-3) var(--s-4);
+                   font-family: var(--font-ui); font-size: var(--text-sm);
+                   color: var(--accent); display: flex; align-items: center;
+                   gap: var(--s-3); min-height: var(--touch); }
 </style>
 </head>
 <body>

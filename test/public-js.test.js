@@ -128,3 +128,44 @@ describe('the admin console does not regrow its tabs', () => {
     expect(src).toMatch(/location\.hash\.slice\(1\) \|\| 'home'/);
   });
 });
+
+/**
+ * Notices and the proof archive live with the things they describe.
+ *
+ * The Archive tab was one bin for two unrelated subjects, and notices were
+ * managed in a console by people who were standing on the notice board when
+ * they decided to. Both moves are easy to undo by accident — re-adding a tab
+ * looks like a small convenience.
+ */
+describe('managing a thing happens where the thing is', () => {
+  const console_ = readFileSync('public/js/admin-console.js', 'utf8');
+  const notices = readFileSync('public/js/notices.js', 'utf8');
+  const proofs = readFileSync('public/js/admin-proofs.js', 'utf8');
+  const tabs = console_.match(/const TABS = \[([\s\S]*?)\n\];/)?.[1] ?? '';
+
+  it('has no Notices or Archive tab in the console', () => {
+    expect(tabs).not.toContain("id: 'notices'");
+    expect(tabs).not.toContain("id: 'archive'");
+  });
+
+  it('does not send an admin away from the board to post a notice', () => {
+    // The link that used to stand in for this being on the wrong page.
+    expect(notices).not.toContain("href: '/admin/#notices'");
+  });
+
+  it('keeps the committee composer, which is their whole job', () => {
+    // Folding the admin form in behind a toggle must not take the committee
+    // member's unconditional one with it — they have no console to fall back to.
+    expect(notices).toMatch(/isCommittee && !isAdmin\)? \|\| \(isAdmin && manageOpen/);
+  });
+
+  it('keeps withdrawing behind a deliberate toggle, not beside the reading', () => {
+    expect(notices).toMatch(/manageOpen/);
+    expect(notices).toMatch(/manageToggle/);
+  });
+
+  it('shows stored proof images on the proofs screen', () => {
+    expect(proofs).toContain('proofArchive');
+    expect(console_).not.toContain('proofArchive');
+  });
+});

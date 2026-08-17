@@ -216,3 +216,39 @@ export function withReveal(input) {
   if (parent) parent.insertBefore(wrap, next);
   return wrap;
 }
+
+/**
+ * A folded-in section: closed, and not loaded until it is opened.
+ *
+ * Lazy on purpose. Bills now carries two more panels than it did, and eager
+ * loading would make the screen everybody uses pay for the two they rarely
+ * open — which is the trade that would have made this consolidation a
+ * regression rather than a tidy-up.
+ *
+ * <details> rather than a modal or a nested tab strip, because every other
+ * disclosure in this app is a <details> and one screen with its own idiom is a
+ * second idiom to maintain (see flatCard, which says the same thing).
+ */
+function foldedSection(label, badge, render) {
+  const body = el('div');
+  const summary = el('summary', { class: 'fold__summary' },
+    el('span', {}, label),
+    badge ? el('span', { class: 'chip chip--awaiting' }, badge) : null);
+  const details = el('details', { class: 'fold' }, summary, body);
+
+  let loaded = false;
+  details.addEventListener('toggle', async () => {
+    if (!details.open || loaded) return;
+    loaded = true;
+    body.replaceChildren(el('p', { class: 'muted' }, 'Loading…'));
+    try {
+      body.replaceChildren(await render());
+    } catch (err) {
+      // Reset, so a failed open can be retried by closing and opening again
+      // rather than leaving the section permanently empty.
+      loaded = false;
+      showError(body, err);
+    }
+  });
+  return details;
+}

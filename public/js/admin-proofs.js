@@ -9,7 +9,7 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
-import { $, el, esc, renderViewBanner, showError, setChildren, statusChip, proofVerdict } from './ui.js';
+import { $, el, esc, renderViewBanner, showError, setChildren, statusChip, proofVerdict, foldedSection } from './ui.js';
 import { money, periodLabel } from './i18n.js';
 
 const main = $('#main');
@@ -124,8 +124,51 @@ function render(q) {
 
     ...((q.decided ?? []).length
       ? q.decided.map(decidedRow)
-      : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nothing decided yet.')])
+      : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nothing decided yet.')]),
+
+    // Moved off the admin console's Archive tab, which was one bin holding two
+    // unrelated things — withdrawn notices and stored proof images. Nobody goes
+    // looking for archived things in general; they go looking for THIS flat's
+    // screenshot, and this is the screen they are already on when they do.
+    foldedSection('Stored images', null, proofArchive)
   );
+}
+
+/**
+ * Every proof image still in the bucket, and the ones whose image is gone.
+ *
+ * The distinction is the point: an image is deleted after 24 months but the
+ * reference and the fingerprint are kept, because deleting THOSE would destroy
+ * the duplicate check — the same screenshot could then be used again on a
+ * different bill, which is the one thing the guard exists to stop.
+ */
+async function proofArchive() {
+  const { proofs, stored } = await api.admin.proofArchive();
+
+  return el('div', { class: 'stack', style: 'padding:var(--s-4)' },
+    el('p', { class: 'small muted' },
+      `${stored} stored. Images are deleted after 24 months; the reference and image `
+      + 'fingerprint are kept, because deleting those would destroy the duplicate check.'),
+    el('div', { class: 'thumbs' },
+      ...proofs.map((p) =>
+        el('div', { class: 'pcard' },
+          p.deleted_at
+            ? el('div', { class: 'gone' }, 'Image deleted')
+            : el('img', { src: `/api/proof/${p.id}/image`, alt: `Proof from ${p.flat}`, loading: 'lazy' }),
+          el('div', { class: 'b' },
+            `${p.flat} · ${periodLabel(p.period)}`,
+            el('div', { class: 'muted' },
+              `${p.parsed_amount != null ? money(p.parsed_amount) : 'unread'} · ${p.status}`),
+            p.deleted_at
+              ? el('div', { class: 'muted' }, 'reference kept')
+              : el('button', {
+                  class: 'linkish', type: 'button', style: 'margin-top:var(--s-1)',
+                  onclick: async () => {
+                    if (!confirm(`Delete the image for ${p.flat}? The reference is kept.`)) return;
+                    await api.admin.deleteProof(p.id);
+                    await load();
+                  },
+                }, 'Delete image'))))));
 }
 
 function decidedRow(p) {
