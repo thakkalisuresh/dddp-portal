@@ -355,7 +355,7 @@ export default {
             { isAdmin: true, viewer: session.subject, includeWithdrawn: true });
           return notice ? json(notice) : problem(404, 'DDP-NOTICE-001', 'That notice could not be found.');
         }
-        if (route === 'POST /api/admin/notices')  return postNotice(request, env, session);
+        if (route === 'POST /api/admin/notices')  return postNotice(request, env, session, ctx);
         if (request.method === 'POST' && /^\/api\/admin\/notices\/\d+\/attachments$/.test(path)) {
           return postNoticeAttachment(request, env, session, path, ctx);
         }
@@ -990,7 +990,7 @@ async function patchProfile(request, env, session) {
   return json({ name, email });
 }
 
-async function postNotice(request, env, session) {
+async function postNotice(request, env, session, ctx) {
   const b = await readJson(request);
   const title = String(b?.title ?? '').trim();
   const body = String(b?.body ?? '').trim();
@@ -1012,7 +1012,45 @@ async function postNotice(request, env, session) {
          new Date().toISOString(), session.actor.id).first();
 
   await audit(env, session, 'notice.create', { id: row.id, title, scope });
+
+  // Fire-and-forget, ALWAYS. A notice that reached 99 residents' boards has
+  // succeeded whatever Telegram thinks; awaiting this would let a down bot or
+  // a rotated token turn a working publish into a 500 the committee reads as
+  // "it didn't post", and the retry would then post it twice.
+  announceNotice(env, session, { id: row.id, title, scope, kind: b?.kind === 'event' ? 'event' : 'notice' }, ctx);
+
   return json({ id: row.id }, { status: 201 });
+}
+
+/**
+ * Tell the committee, as it happens, that a notice just went out.
+ *
+ * postToTelegram and NOT reportError, on the same reasoning as
+ * announceLargeUpload above: publishing is the feature working, not failing.
+ * Through the error path it would land in error_log with a severity on it, and
+ * an alert channel carrying normal events stops being read.
+ *
+ * The id leads because it is the durable handle. audit() has just written the
+ * same number against notice.create, and the manage bar prints it as
+ * `Notice #N`, so a committee member reporting a problem, the log row and this
+ * message all name one thing.
+ *
+ * SCOPE IS SPELLED OUT rather than passed through raw. It is the field most
+ * likely to be wrong and the one whose mistake is invisible from the inside —
+ * 'owners' reads as a successful post to everyone who can see it, and the
+ * people who cannot are the ones who would have told you.
+ */
+function announceNotice(env, session, { id, title, scope, kind }, ctx) {
+  const send = () => postToTelegram(env, [
+    `NOTICE #${id} POSTED${kind === 'event' ? ' · EVENT' : ''}`,
+    title,
+    scope === 'owners' ? 'Owners only — hidden from tenants' : 'Everyone in the building',
+    `by ${session.actor.name ?? 'someone'} · flat ${session.actor.flat ?? '?'}`,
+    `\n${new Date().toISOString()}`,
+  ].join('\n')).catch(() => {});
+
+  if (ctx?.waitUntil) ctx.waitUntil(send());
+  else send();
 }
 
 async function patchNotice(request, env, session, path) {
