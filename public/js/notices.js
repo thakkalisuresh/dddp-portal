@@ -114,8 +114,11 @@ function withdrawnNotices() {
               el('div', {},
                 el('b', {}, n.title),
                 el('div', { class: 'small muted' },
-                  `${stampLabel(n.postedAt)} · ${n.commentCount} replies`
-                  + (n.attachmentCount ? ` · ${n.attachmentCount} files` : ''))),
+                  // `=== 1`, not `> 1` like the two counts below: nothing
+                  // guards zero here, and a withdrawn notice with no replies
+                  // is the common case — `> 1` would print "0 reply".
+                  `${stampLabel(n.postedAt)} · ${n.commentCount} repl${n.commentCount === 1 ? 'y' : 'ies'}`
+                  + (n.attachmentCount ? ` · ${n.attachmentCount} file${n.attachmentCount > 1 ? 's' : ''}` : ''))),
               el('button', {
                 class: 'btn btn--sm btn--quiet', type: 'button',
                 onclick: async () => {
