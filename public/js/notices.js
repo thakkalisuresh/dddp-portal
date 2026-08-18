@@ -475,6 +475,16 @@ function manageBar(n) {
 
   return el('div', { class: 'stack', style: 'margin-top:var(--s-3)' },
     el('div', { class: 'row', style: 'gap:var(--s-3)' }, edit, withdraw),
+    // The number to quote when something is wrong with this notice — the same
+    // id the audit log records at notice.create and the Telegram line carries
+    // on publish, so a report, a log row and a message all name one thing.
+    //
+    // IN HERE, not on the notice, because this block is the role-gated one:
+    // the server computes canManage with the function the PATCH route
+    // enforces, so a resident's copy of the page never renders it. Not a
+    // secret either way — the id is in the URL of every notice anyone opens —
+    // simply not something the board should show the people reading it.
+    el('p', { class: 'small muted' }, `Notice #${n.id}`),
     form);
 }
 

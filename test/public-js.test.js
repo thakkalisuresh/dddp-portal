@@ -182,6 +182,15 @@ describe('managing a thing happens where the thing is', () => {
     expect(renderOne).toContain('manageToggle(');
   });
 
+  it('puts the notice id in the manage bar, not on the notice', () => {
+    // Debuggable for the committee without printing a database key above the
+    // words residents came to read. The bar is the role-gated block: canManage
+    // is the server's answer, computed with the function the PATCH route
+    // enforces.
+    const manageBar = notices.match(/function manageBar\([\s\S]*?\n}/)?.[0] ?? '';
+    expect(manageBar).toContain('Notice #');
+  });
+
   it('shows stored proof images on the proofs screen', () => {
     expect(proofs).toContain('proofArchive');
     expect(console_).not.toContain('proofArchive');
