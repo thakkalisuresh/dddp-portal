@@ -201,7 +201,10 @@ export function askFirst(slot, message, confirmLabel = 'Yes', cancelLabel = 'Kee
     slot.replaceChildren(
       el('div', { class: 'note note--warn stack', style: 'gap:var(--s-3)', role: 'alertdialog' },
         el('p', { class: 'small' }, message),
-        el('div', { class: 'row', style: 'gap:var(--s-3)' }, yes,
+        // Wraps, because this is dropped into whatever container the caller
+        // has — including a proof thumbnail about 150px wide, where the two
+        // buttons side by side pushed "Keep it" outside the card.
+        el('div', { class: 'row', style: 'gap:var(--s-3); flex-wrap:wrap' }, yes,
           el('button', {
             class: 'linkish small', type: 'button', onclick: () => answer(false),
           }, cancelLabel))));
