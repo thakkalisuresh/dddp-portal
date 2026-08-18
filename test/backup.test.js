@@ -4,9 +4,42 @@ import {
   driveConfigured, backupCredentials, sharedCredentials, TABLES, RETENTION_DAYS,
   monthFolderName, ensureMonthFolder, uploadToDrive, BACKUP_CRON, isBackupCron,
   backupProofs, proofBackupName, PROOF_BATCH, backupAttachments,
-  committeeFolder, committeeFolderSeparate, noticeFolderName,
+  committeeFolder, committeeFolderSeparate, noticeFolderName, NEVER_BACKUP,
 } from '../functions/lib/backup.js';
 import { mailConfigured } from '../functions/lib/mailer.js';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * The tables production actually has, replayed from migrations/ in order.
+ *
+ * Replayed rather than regex-collected, because 0030 rebuilds `owners` the
+ * SQLite way — create `owners_new`, drop `owners`, rename — and a plain grep
+ * for CREATE TABLE reports a table called owners_new that has never existed
+ * and an owners table that no longer does. Applying the three statements in
+ * file order is the only reading that gets both right.
+ */
+function schemaTables() {
+  const tables = new Set();
+  for (const file of readdirSync(join(root, 'migrations')).filter((f) => f.endsWith('.sql')).sort()) {
+    const sql = readFileSync(join(root, 'migrations', file), 'utf8')
+      .replace(/--[^\n]*/g, '');
+    for (const m of sql.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?([a-z_]+)/gi)) {
+      tables.add(m[1]);
+    }
+    for (const m of sql.matchAll(/DROP TABLE (?:IF EXISTS )?([a-z_]+)/gi)) {
+      tables.delete(m[1]);
+    }
+    for (const m of sql.matchAll(/ALTER TABLE ([a-z_]+) RENAME TO ([a-z_]+)/gi)) {
+      tables.delete(m[1]);
+      tables.add(m[2]);
+    }
+  }
+  return tables;
+}
 
 describe('CSV that survives real resident data', () => {
   it('quotes a value containing a comma', () => {
@@ -88,6 +121,64 @@ describe('the bundle a committee member opens', () => {
     // They are pruned, not preserved — see RETENTION_DAYS.
     expect(TABLES).not.toContain('click_log');
     expect(TABLES).not.toContain('activity');
+  });
+
+  /**
+   * The list above is the old guard, and it is why this one exists: six names
+   * checked by hand cannot notice a SEVENTH table arriving. Nine did arrive,
+   * over nine migrations, and the nightly backup reported success without them
+   * — the reconciliations, the bill-edit approvals, the attachment metadata.
+   *
+   * So the schema is read from migrations/ rather than restated here. A new
+   * CREATE TABLE now fails this test until somebody says out loud whether it
+   * is backed up or deliberately not, which is the decision that went missing.
+   */
+  it('accounts for every table in the schema, one list or the other', () => {
+    expect([...schemaTables()].filter((t) => !TABLES.includes(t) && !NEVER_BACKUP.has(t)))
+      .toEqual([]);
+  });
+
+  it('names no table that the schema does not have', () => {
+    const real = schemaTables();
+    // NEVER_BACKUP holds d1_migrations, which wrangler creates and no migration
+    // does; everything else in both lists must be a table that exists.
+    const named = [...TABLES, ...NEVER_BACKUP].filter((t) => t !== 'd1_migrations');
+    expect(named.filter((t) => !real.has(t))).toEqual([]);
+  });
+
+  it('never exports the session tokens', () => {
+    // sessions.token IS the credential — it is the primary key, not a hash of
+    // one — and stripSecrets only knows about pw_hash and pw_salt. A backup
+    // carrying this table writes every live login into a CSV in somebody's
+    // personal Drive.
+    expect(TABLES).not.toContain('sessions');
+    expect(TABLES).not.toContain('password_resets');
+    expect(NEVER_BACKUP.has('sessions')).toBe(true);
+    expect(NEVER_BACKUP.has('password_resets')).toBe(true);
+  });
+
+  it('backs up the records a dispute turns on', () => {
+    for (const t of ['reconciliations', 'bill_edit_requests', 'bill_edit_approvals',
+      'attachments', 'meter_changes', 'settings']) {
+      expect(TABLES, t).toContain(t);
+    }
+  });
+
+  it('restores parents before children', () => {
+    // dumpAll writes in TABLES order and a restore reads it back the same way,
+    // so a child table listed above its parent fails on the foreign key.
+    const parents = {
+      owners: 'flats', readings: 'periods', bills: 'periods',
+      payment_proofs: 'bills', comments: 'notices', attachments: 'notices',
+      statement_credits: 'statement_sessions',
+      reconciliations: 'statement_sessions',
+      bill_edit_approvals: 'bill_edit_requests',
+      bill_edit_requests: 'bills',
+    };
+    for (const [child, parent] of Object.entries(parents)) {
+      expect(TABLES.indexOf(parent), `${parent} before ${child}`)
+        .toBeLessThan(TABLES.indexOf(child));
+    }
   });
 });
 

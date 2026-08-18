@@ -10,12 +10,53 @@
 import { reportError, fail } from './errors.js';
 import { noticeHtml, noticeSignature } from './notice-doc.js';
 
-/** Every table worth carrying off-site, in dependency order. */
+/**
+ * Every table carried off-site, in dependency order — restore reads top to
+ * bottom, so a child never arrives before its parent.
+ *
+ * THIS LIST AND `NEVER_BACKUP` MUST BETWEEN THEM COVER THE WHOLE SCHEMA, and
+ * test/backup.test.js reads migrations/ to insist on it. That test exists
+ * because this list was hand-maintained for nine migrations and silently fell
+ * nine tables behind: the reconciliation records, the bill-edit approvals and
+ * the attachment metadata were all absent from a backup that reported success
+ * every night. A new table must now be named in one list or the other, and
+ * saying so in the wrong one is at least a decision somebody made.
+ */
 export const TABLES = [
-  'flats', 'owners', 'periods', 'readings', 'bills',
-  'payment_intents', 'payment_proofs', 'notices', 'comments',
-  'committee', 'messages', 'audit_log',
+  'flats', 'owners', 'periods', 'readings', 'meter_changes', 'bills',
+  'payment_intents', 'payment_proofs', 'notices', 'comments', 'attachments',
+  'committee', 'messages', 'contact_requests',
+  'statement_sessions', 'statement_credits', 'reconciliations',
+  'bill_edit_requests', 'bill_edit_approvals',
+  'settings', 'alert_episodes', 'audit_log',
 ];
+
+/**
+ * Tables deliberately left out, and why — because "not in TABLES" is not a
+ * reason, and the last time it was, nine tables went missing behind it.
+ *
+ * `sessions` and `password_resets` are the ones that matter. `sessions.token`
+ * IS the credential — it is the primary key, not a hash of one — so exporting
+ * that table writes every live login into a CSV that lives in a committee
+ * member's personal Drive. `stripSecrets` would not save it either; that only
+ * knows about `pw_hash` and `pw_salt`. These two are not "not backed up yet".
+ * They must never be backed up, and adding them to TABLES is a mistake this
+ * comment exists to prevent.
+ *
+ * The five volatile tables are pruned by RETENTION_DAYS, and pruning them is a
+ * privacy promise, not housekeeping. A nightly copy of activity and click_log
+ * would keep off-site, for ever, exactly the rows the retention policy exists
+ * to delete — which quietly repeals the policy.
+ *
+ * `d1_migrations` is wrangler's own bookkeeping, rebuilt from migrations/ in
+ * git. It is not created by a migration, so the coverage test never sees it;
+ * it is named here anyway so the reader does not wonder.
+ */
+export const NEVER_BACKUP = new Set([
+  'sessions', 'password_resets',
+  'activity', 'click_log', 'error_log', 'login_attempts', 'message_attempts',
+  'd1_migrations',
+]);
 
 /** Columns never written to a backup, however convenient. */
 const NEVER_EXPORT = new Set(['pw_hash', 'pw_salt']);

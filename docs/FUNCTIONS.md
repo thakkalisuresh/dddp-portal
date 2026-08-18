@@ -94,7 +94,8 @@ Nightly backup, and retention.
 
 | | Export | What it does |
 |---|---|---|
-| const | `TABLES` |  |
+| const | `TABLES` | Every table carried off-site, in dependency order — restore reads top to bottom, so a child never arrives before its parent. |
+| const | `NEVER_BACKUP` | Tables deliberately left out, and why — because "not in TABLES" is not a reason, and the last time it was, nine tables went missing behind it. |
 | fn | `toCsvValue` | RFC 4180. |
 | fn | `toCsv` |  |
 | fn | `stripSecrets` |  |
@@ -783,4 +784,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-419 exports. 213 have no doc comment.
+420 exports. 212 have no doc comment.
