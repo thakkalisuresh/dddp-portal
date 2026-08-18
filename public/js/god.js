@@ -19,7 +19,7 @@ import { api, ApiError } from './api.js';
 import { renderDashboard } from './god-dash.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
-import { $, el, esc, renderViewBanner, showError, setChildren } from './ui.js';
+import { $, el, esc, renderViewBanner, showError, setChildren, askFirst } from './ui.js';
 
 const main = $('#main');
 let filters = { flat: '', kind: '', q: '', since: '' };
@@ -175,8 +175,9 @@ function spoofControl(status) {
         onclick: async () => {
           const opt = chosen();
           if (!opt?.value) return;
-          if (!confirm(`Open the portal AS ${opt.textContent}? You will see exactly what they see. `
-                     + 'The amber banner stays up until you exit.')) return;
+          if (!await askFirst(status,
+            `Open the portal AS ${opt.textContent}? You will see exactly what they see. `
+            + 'The amber banner stays up until you exit.', 'Yes, view as them')) return;
           try {
             await api.god.impersonate(Number(opt.value), false);
             location.href = '/dashboard';
@@ -191,7 +192,11 @@ function handoverControl(status) {
     el('button', {
       class: 'btn btn--sm btn--quiet', type: 'button',
       onclick: async () => {
-        if (!confirm('Hand superadmin to this resident? You become an admin and lose this page.')) return;
+        // The one on this page that cannot be undone from this page: after it
+        // succeeds the button is gone with the rest of the screen.
+        if (!await askFirst(status,
+          'Hand superadmin to this resident? You become an admin and lose this page.',
+          'Yes, hand it over')) return;
         try {
           const r = await api.god.handover(Number(id.value));
           status.replaceChildren(el('div', { class: 'note note--warn' },

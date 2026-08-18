@@ -9,7 +9,7 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
-import { $, el, esc, renderViewBanner, showError, setChildren } from './ui.js';
+import { $, el, esc, renderViewBanner, showError, setChildren, askFirst } from './ui.js';
 import { stampLabel } from './i18n.js';
 import { renderMarkdown } from './markdown.js';
 import { prepareUpload, makeThumbnail } from './compress.js';
@@ -272,8 +272,12 @@ function attachmentList(attachments = [], canRemove = isAdmin) {
   if (!attachments.length) return null;
 
   return el('div', { class: 'attachments' },
-    ...attachments.map((a) =>
-      el('div', { class: 'attachment' },
+    ...attachments.map((a) => {
+      // Per attachment, because the ask names the file. A sibling of the row
+      // rather than a child of anything foldable, so it is on screen whatever
+      // else is shut — the mistake that made a failed withdraw invisible.
+      const ask = el('div');
+      return el('div', { class: 'attachment' },
         // The board shows the thumbnail; the link opens the full-quality file.
         // Without this a thread with three photographs pulled up to 75MB down a
         // mobile connection just to render, and the resident who wanted to look
@@ -295,12 +299,22 @@ function attachmentList(attachments = [], canRemove = isAdmin) {
                 onclick: async () => {
                   // Irreversible, and on somebody else's contribution — so it
                   // asks, unlike hiding a comment, which can be undone.
-                  if (!confirm(`Remove ${a.filename}? This cannot be undone.`)) return;
-                  await api.admin.deleteAttachment(a.id);
-                  location.reload();
+                  if (!await askFirst(ask, `Remove ${a.filename}? This cannot be undone.`,
+                                      'Yes, remove')) return;
+                  try {
+                    await api.admin.deleteAttachment(a.id);
+                    location.reload();
+                  } catch (err) {
+                    // Previously unhandled: the call was awaited with nothing
+                    // catching it, so a refusal reached the console and the
+                    // page simply sat there.
+                    showError(ask, err);
+                  }
                 },
               }, 'Remove')
-            : null))));
+            : null),
+        ask);
+    }));
 }
 
 /** The scope select, shared by the composer and the edit form. */
@@ -471,34 +485,21 @@ function manageBar(n) {
 
   /**
    * Still asks — it takes the notice off everybody's board at once — but asks
-   * IN THE PAGE, because window.confirm cannot be relied on to appear.
+   * IN THE PAGE, through askFirst, because window.confirm is not guaranteed to
+   * draw anything. See that helper for the failure this replaces.
    *
-   * A browser that has suppressed dialogs returns false without drawing
-   * anything (Chrome offers exactly that after a few of them, and the choice
-   * sticks for the page), and `if (!confirm(...)) return` turns that into a
-   * click that does nothing and says nothing. Reported from production on
-   * 2026-08-17: pressed several times, no dialog, no withdrawal, no error.
-   *
-   * The wording is the old dialog's, unchanged — reversible, an archive rather
-   * than a deletion this button cannot perform. Only the thing drawing it
-   * moved somewhere the browser cannot switch off.
+   * The wording is the old dialog's, unchanged: reversible, an archive rather
+   * than a deletion this button cannot perform.
    */
   const withdraw = el('button', {
     class: 'linkish small', type: 'button',
-    onclick: () => {
+    onclick: async () => {
       withdraw.disabled = true;
-      barStatus.replaceChildren(
-        el('div', { class: 'note note--warn stack', style: 'gap:var(--s-3)' },
-          el('p', { class: 'small' },
-            'Withdraw this notice? It leaves the board for everyone and moves '
-            + 'to the committee archive.'),
-          el('div', { class: 'row', style: 'gap:var(--s-3)' },
-            el('button', { class: 'btn btn--sm', type: 'button', onclick: doWithdraw },
-              'Yes, withdraw'),
-            el('button', {
-              class: 'linkish small', type: 'button',
-              onclick: () => { barStatus.replaceChildren(); withdraw.disabled = false; },
-            }, 'Keep it'))));
+      const said = await askFirst(barStatus,
+        'Withdraw this notice? It leaves the board for everyone and moves to '
+        + 'the committee archive.', 'Yes, withdraw');
+      withdraw.disabled = false;
+      if (said) await doWithdraw();
     },
   }, 'Withdraw');
 

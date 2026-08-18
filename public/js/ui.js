@@ -168,6 +168,49 @@ export function billBreakdown(bill) {
   return el('table', { class: 'table' }, el('tbody', {}, ...rows));
 }
 
+/**
+ * Ask before something destructive, in the page rather than in a dialog.
+ *
+ * REPLACES window.confirm, which is not guaranteed to draw anything: a browser
+ * that has suppressed dialogs returns false immediately, so the universal
+ * `if (!confirm(msg)) return;` becomes a click that does nothing, sends
+ * nothing and says nothing. That reached production on the notice board — the
+ * Withdraw button was pressed repeatedly with no dialog and no withdrawal —
+ * and the same line guarded five other destructive actions, including handing
+ * over superadmin.
+ *
+ * Promise of a boolean, so a call site keeps the shape it already had and the
+ * change is one `await`:
+ *
+ *   if (!await askFirst(slot, 'Delete X?', 'Yes, delete')) return;
+ *
+ * `slot` is an element that is ON SCREEN — not inside anything collapsed, the
+ * mistake that made a failed withdraw invisible. It is emptied either way, so
+ * the same element can hold the error afterwards.
+ *
+ * The destructive choice is a real button and the way out is the quiet one,
+ * matching how the rest of this interface weights an action against its
+ * escape. Nothing here is a substitute for the server's own permission check.
+ */
+export function askFirst(slot, message, confirmLabel = 'Yes', cancelLabel = 'Keep it') {
+  return new Promise((resolve) => {
+    const answer = (said) => { slot.replaceChildren(); resolve(said); };
+    const yes = el('button', {
+      class: 'btn btn--sm', type: 'button', onclick: () => answer(true),
+    }, confirmLabel);
+    slot.replaceChildren(
+      el('div', { class: 'note note--warn stack', style: 'gap:var(--s-3)', role: 'alertdialog' },
+        el('p', { class: 'small' }, message),
+        el('div', { class: 'row', style: 'gap:var(--s-3)' }, yes,
+          el('button', {
+            class: 'linkish small', type: 'button', onclick: () => answer(false),
+          }, cancelLabel))));
+    // Focus lands on the confirming button so the keyboard path is one Tab to
+    // the way out, rather than a hunt through whatever preceded the slot.
+    yes.focus();
+  });
+}
+
 /** Errors say what went wrong and what to do about it. */
 export function showError(container, error) {
   const node = el('div', { class: 'note note--bad', role: 'alert' },

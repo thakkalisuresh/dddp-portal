@@ -182,6 +182,25 @@ describe('managing a thing happens where the thing is', () => {
     expect(renderOne).toContain('manageToggle(');
   });
 
+  it('asks in the page, never through window.confirm', () => {
+    // window.confirm is not guaranteed to draw anything. A browser that has
+    // suppressed dialogs returns false at once, so the universal
+    // `if (!confirm(msg)) return;` becomes a click that shows nothing, sends
+    // nothing and reports nothing. That is what Withdraw was on production on
+    // 2026-08-17 — pressed repeatedly, no dialog, no withdrawal — and the same
+    // line guarded five other destructive actions, superadmin handover among
+    // them. askFirst in ui.js draws the ask in the page instead.
+    const offenders = [];
+    for (const file of modules()) {
+      const code = readFileSync(file, 'utf8')
+        .split('\n')
+        .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+        .join('\n');
+      if (/(?<![\w.$])confirm\s*\(/.test(code)) offenders.push(file);
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it('puts the notice id in the manage bar, not on the notice', () => {
     // Debuggable for the committee without printing a database key above the
     // words residents came to read. The bar is the role-gated block: canManage

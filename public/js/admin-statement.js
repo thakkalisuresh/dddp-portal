@@ -13,7 +13,7 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
-import { $, el, esc, renderViewBanner, showError, setChildren } from './ui.js';
+import { $, el, esc, renderViewBanner, showError, setChildren, askFirst } from './ui.js';
 import { money, periodLabel } from './i18n.js';
 
 const main = $('#main');
@@ -127,6 +127,11 @@ function render() {
       ['credit_no_proof', title, blurb, buckets[bucket] ?? []]),
   ].filter(([, , , rows]) => rows.length);
 
+  // Below the header row rather than inside it: that row is a flex line with a
+  // spacer holding two buttons apart, and an ask dropped into it would be
+  // squeezed between them.
+  const ask = el('div', { style: 'margin:0 var(--s-4)' });
+
   setChildren(main,
     el('div', { class: 'sect' },
       el('div', { class: 'stack', style: 'gap:var(--s-1)' },
@@ -137,7 +142,9 @@ function render() {
       el('button', {
         class: 'btn btn--sm btn--quiet', type: 'button',
         onclick: async () => {
-          if (!confirm('Discard this review? The statement is deleted and nothing is saved.')) return;
+          if (!await askFirst(ask,
+            'Discard this review? The statement is deleted and nothing is saved.',
+            'Yes, discard')) return;
           await api.admin.discardStatement(report.sessionId).catch(() => {});
           report = null;
           renderUpload();
@@ -147,6 +154,8 @@ function render() {
         class: 'btn btn--sm', type: 'button',
         onclick: (e) => finish(e.target),
       }, 'Save verdicts and delete the statement')),
+
+    ask,
 
     ...(report.warnings ?? []).map((w) => el('p', { class: 'note', style: 'margin:var(--s-4)' }, w)),
 

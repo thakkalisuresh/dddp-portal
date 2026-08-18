@@ -747,6 +747,7 @@ Small render helpers shared by every screen.
 | fn | `proofVerdict` | How a proof reads in the admin queue: the verdict, not two numbers. |
 | fn | `renderViewBanner` | The viewing-as banner. |
 | fn | `billBreakdown` |  |
+| fn | `askFirst` | Ask before something destructive, in the page rather than in a dialog. |
 | fn | `showError` |  |
 | fn | `withReveal` | A show/hide control for a password field. |
 
@@ -781,4 +782,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-417 exports. 213 have no doc comment.
+418 exports. 213 have no doc comment.

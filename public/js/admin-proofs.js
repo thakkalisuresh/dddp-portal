@@ -9,7 +9,7 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage } from './track.js';
-import { $, el, esc, renderViewBanner, showError, setChildren, statusChip, proofVerdict, foldedSection } from './ui.js';
+import { $, el, esc, renderViewBanner, showError, setChildren, statusChip, proofVerdict, foldedSection, askFirst } from './ui.js';
 import { money, periodLabel } from './i18n.js';
 
 const main = $('#main');
@@ -150,8 +150,11 @@ async function proofArchive() {
       `${stored} stored. Images are deleted after 24 months; the reference and image `
       + 'fingerprint are kept, because deleting those would destroy the duplicate check.'),
     el('div', { class: 'thumbs' },
-      ...proofs.map((p) =>
-        el('div', { class: 'pcard' },
+      ...proofs.map((p) => {
+        // Per card, because the ask names the flat and the answer belongs
+        // beside the image it is about rather than at the top of a grid.
+        const ask = el('div');
+        return el('div', { class: 'pcard' },
           p.deleted_at
             ? el('div', { class: 'gone' }, 'Image deleted')
             : el('img', { src: `/api/proof/${p.id}/image`, alt: `Proof from ${p.flat}`, loading: 'lazy' }),
@@ -164,11 +167,19 @@ async function proofArchive() {
               : el('button', {
                   class: 'linkish', type: 'button', style: 'margin-top:var(--s-1)',
                   onclick: async () => {
-                    if (!confirm(`Delete the image for ${p.flat}? The reference is kept.`)) return;
-                    await api.admin.deleteProof(p.id);
-                    await load();
+                    if (!await askFirst(ask,
+                      `Delete the image for ${p.flat}? The reference is kept.`,
+                      'Yes, delete')) return;
+                    try {
+                      await api.admin.deleteProof(p.id);
+                      await load();
+                    } catch (err) {
+                      showError(ask, err);
+                    }
                   },
-                }, 'Delete image'))))));
+                }, 'Delete image'),
+            ask));
+      })));
 }
 
 function decidedRow(p) {
