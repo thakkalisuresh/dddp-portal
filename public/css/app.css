@@ -142,7 +142,24 @@ a { color: var(--accent); }
 }
 .viewbar__text { font-family: var(--font-ui); font-size: var(--text-sm); font-weight: 600; }
 .viewbar__actions { margin-left: auto; display: flex; gap: var(--s-2); }
-.viewbar[hidden] { display: none; }
+/* Any class that sets `display` defeats the `hidden` attribute, because an
+   author rule beats the browser's own `[hidden] { display: none }` no matter
+   how it is written. The element keeps the attribute, reports display:flex,
+   and stays on screen — and `.viewbar[hidden]` below was this same bug being
+   fixed once, for one component, without the others being looked at.
+
+   `.stack` and `.btn` are the rest of them. Live consequence: manageBar's edit
+   form is a hidden `.stack`, so on production the notice editor sat
+   permanently open and its Edit/Cancel button changed nothing; the same was
+   true of the hidden `.btn` on the readings screen.
+
+   Listed by class rather than a blanket `[hidden]` with !important, because
+   this file's header says two rules fighting means the structure is wrong,
+   not the specificity. `.stack[hidden]` is 0,2,0 and simply outranks
+   `.stack`. Add to this list when a new class sets display. */
+.viewbar[hidden],
+.stack[hidden],
+.btn[hidden] { display: none; }
 
 /* ── type helpers ──────────────────────────────────────────────────────── */
 
