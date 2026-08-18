@@ -183,10 +183,8 @@ async function renderOne(id) {
       attachmentList(n.attachments, isAdmin || Boolean(n.canManage)),
       // `canManage` comes from the server, which computed it with the same
       // function the PATCH route enforces. Asking the client to work it out
-      // from a role would put a second, weaker copy of the rule here.
-      // An admin reaches the same editor as a committee member now, rather
-      // than being sent to a console to do it. Gated on the toggle so opening
-      // a notice to read it does not put Withdraw under the reader's thumb.
+      // from a role would put a second, weaker copy of the rule here. Who
+      // sees the bar and when is manageBar's own business, documented there.
       (n.canManage && !isAdmin) || (isAdmin && manageOpen) ? manageBar(n) : null),
     el('hr', { class: 'rule' }),
     el('p', { class: 'label' }, n.comments.length ? `${n.comments.length} replies` : 'No replies yet'),
