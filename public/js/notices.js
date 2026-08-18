@@ -176,7 +176,9 @@ async function renderList() {
               n.allowComments
                 ? el('span', {}, ' · ',
                     el('a', { class: 'linkish', href: `/notices.html?id=${n.id}` },
-                      n.commentCount ? `${n.commentCount} replies` : 'Reply'))
+                      n.commentCount
+                        ? `${n.commentCount} repl${n.commentCount > 1 ? 'ies' : 'y'}`
+                        : 'Reply'))
                 : null)))
       : [el('p', { class: 'muted' }, 'Nothing posted yet.')])
   );
@@ -214,7 +216,9 @@ async function renderOne(id) {
       // sees the bar and when is manageBar's own business, documented there.
       (n.canManage && !isAdmin) || (isAdmin && manageOpen) ? manageBar(n) : null),
     el('hr', { class: 'rule' }),
-    el('p', { class: 'label' }, n.comments.length ? `${n.comments.length} replies` : 'No replies yet'),
+    el('p', { class: 'label' }, n.comments.length
+      ? `${n.comments.length} repl${n.comments.length > 1 ? 'ies' : 'y'}`
+      : 'No replies yet'),
     list,
     n.allowComments ? composer(id) : el('p', { class: 'small muted' }, 'Replies are closed for this notice.')
   );
