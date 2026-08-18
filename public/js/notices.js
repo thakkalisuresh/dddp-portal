@@ -374,9 +374,12 @@ function noticeComposer() {
 /**
  * Edit or withdraw a notice you posted.
  *
- * Only ever rendered for a committee member — an admin manages the whole board
- * from the console, and giving them a second, smaller set of the same controls
- * here would mean two places to fix the day one of them is wrong.
+ * The ONE editor for a notice, for both roles. A committee member gets it
+ * unconditionally on a notice they posted — this board is the whole of their
+ * job. An admin gets it behind the `Manage notices` toggle, so opening a
+ * notice to read it does not put Withdraw under the reader's thumb. Keeping
+ * the admin's copy here rather than in the console is deliberate: two sets of
+ * the same controls would mean two places to fix the day one of them is wrong.
  *
  * WITHDRAW, NOT DELETE. `active = 0` is the same soft withdrawal the console
  * performs: the notice, its replies and its files go to the archive, where the
