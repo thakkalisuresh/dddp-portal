@@ -424,6 +424,12 @@ function manageBar(n) {
   const scope = scopeSelect(n.scope);
   const replies = el('input', { type: 'checkbox' });
   const status = el('div');
+  // Withdraw's own, and the reason it cannot share `status`: that one lives
+  // inside `form`, which is hidden until Edit is pressed. Withdraw is reachable
+  // with the form shut, so its failures were being written into a collapsed
+  // container — the button appeared to do nothing at all, which is how a 403 or
+  // a dropped connection looked to whoever pressed it.
+  const barStatus = el('div');
   title.value = n.title;
   body.value = n.body;
   replies.checked = Boolean(n.allowComments);
@@ -456,11 +462,17 @@ function manageBar(n) {
       // than implying a deletion this button cannot perform.
       if (!confirm('Withdraw this notice? It leaves the board for everyone and '
                  + 'moves to the committee archive.')) return;
+      barStatus.replaceChildren();
+      withdraw.disabled = true;
       try {
         await api.admin.updateNotice(n.id, { active: false });
         location.href = '/notices.html';
       } catch (err) {
-        showError(status, err);
+        // Into barStatus, which is outside the collapsed form and therefore
+        // actually on screen. Re-enabled too: a button that stays dead after a
+        // failure reads as a button that worked.
+        showError(barStatus, err);
+        withdraw.disabled = false;
       }
     },
   }, 'Withdraw');
@@ -482,6 +494,7 @@ function manageBar(n) {
 
   return el('div', { class: 'stack', style: 'margin-top:var(--s-3)' },
     el('div', { class: 'row', style: 'gap:var(--s-3)' }, edit, withdraw),
+    barStatus,
     // The number to quote when something is wrong with this notice — the same
     // id the audit log records at notice.create and the Telegram line carries
     // on publish, so a report, a log row and a message all name one thing.
