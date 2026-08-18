@@ -13,8 +13,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, existsSync } from 'node:fs';
+import { join, resolve, dirname } from 'node:path';
+
+/** `$` and `$$` are real export names and both are regex metacharacters. */
+function escapeName(name) {
+  return name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 import { transformSync } from 'esbuild';
 import { readFileSync } from 'node:fs';
 
@@ -180,6 +185,38 @@ describe('managing a thing happens where the thing is', () => {
     const renderOne = notices.match(/async function renderOne\([\s\S]*?\n}/)?.[0] ?? '';
     expect(renderOne).toContain('manageBar(');
     expect(renderOne).toContain('manageToggle(');
+  });
+
+  it('imports only names the target module actually exports', () => {
+    // PARSING IS NOT ENOUGH. Every file in here was syntactically perfect while
+    // /admin/ and /admin/proofs were both dead in production: ui.js declared
+    // `function foldedSection` without `export`, two modules imported it, and
+    // the browser refused the whole module with "does not provide an export
+    // named 'foldedSection'". Nothing rendered — the screens sat on "Loading…"
+    // — and the suite stayed green, because a missing export is a link-time
+    // failure and these tests only ever compiled each file alone.
+    const broken = [];
+    for (const file of modules()) {
+      const src = readFileSync(file, 'utf8');
+      for (const m of src.matchAll(/import\s*\{([^}]+)\}\s*from\s*'(\.[^']+)'/g)) {
+        const target = resolve(dirname(file), m[2]);
+        if (!existsSync(target)) { broken.push(`${file} -> ${m[2]} (no such file)`); continue; }
+        const dep = readFileSync(target, 'utf8');
+        for (const raw of m[1].split(',')) {
+          const name = raw.trim().split(/\s+as\s+/)[0].trim();
+          if (!name) continue;
+          // `(?![\w$])` rather than `\b`: the export names here include `$` and
+          // `$$`, and `\b` after a non-word character never matches — which
+          // made a first draft of this test report all nineteen imports of `$`
+          // as broken while the real one hid among them.
+          const edge = `(?![\\w$])`;
+          const decl = new RegExp(`export\\s+(async\\s+)?(function|const|let|var|class)\\s+${escapeName(name)}${edge}`);
+          const list = new RegExp(`export\\s*\\{[^}]*${escapeName(name)}${edge}[^}]*\\}`);
+          if (!decl.test(dep) && !list.test(dep)) broken.push(`${name} <- ${file} from ${m[2]}`);
+        }
+      }
+    }
+    expect(broken).toEqual([]);
   });
 
   it('asks in the page, never through window.confirm', () => {

@@ -750,6 +750,7 @@ Small render helpers shared by every screen.
 | fn | `askFirst` | Ask before something destructive, in the page rather than in a dialog. |
 | fn | `showError` |  |
 | fn | `withReveal` | A show/hide control for a password field. |
+| fn | `foldedSection` | A folded-in section: closed, and not loaded until it is opened. |
 
 ## Scripts
 
@@ -782,4 +783,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-418 exports. 213 have no doc comment.
+419 exports. 213 have no doc comment.

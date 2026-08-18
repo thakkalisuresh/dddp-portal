@@ -272,7 +272,7 @@ export function withReveal(input) {
  * disclosure in this app is a <details> and one screen with its own idiom is a
  * second idiom to maintain (see flatCard, which says the same thing).
  */
-function foldedSection(label, badge, render) {
+export function foldedSection(label, badge, render) {
   const body = el('div');
   const summary = el('summary', { class: 'fold__summary' },
     el('span', {}, label),
