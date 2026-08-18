@@ -164,6 +164,24 @@ describe('managing a thing happens where the thing is', () => {
     expect(notices).toMatch(/manageToggle/);
   });
 
+  it('renders the toggle on the notice page too, or the bar is unreachable', () => {
+    // THE BUG THIS EXISTS FOR, live on production until 2026-08-17: manageBar
+    // is gated on `isAdmin && manageOpen`; opening a notice is a full page load
+    // (`/notices.html?id=N`), so manageOpen is false every time a notice page
+    // starts; and the toggle was drawn only by renderList. An admin had a flag
+    // that was always false and no control anywhere to flip it, on the only
+    // screen that can edit or withdraw — the console's notice section having
+    // been emptied when this moved here. Committee members were fine, which is
+    // how it passed review.
+    //
+    // The assertions above could not catch it: both are satisfied by a file
+    // that renders the toggle nowhere near the bar. This one is about the two
+    // being reachable from the same screen.
+    const renderOne = notices.match(/async function renderOne\([\s\S]*?\n}/)?.[0] ?? '';
+    expect(renderOne).toContain('manageBar(');
+    expect(renderOne).toContain('manageToggle(');
+  });
+
   it('shows stored proof images on the proofs screen', () => {
     expect(proofs).toContain('proofArchive');
     expect(console_).not.toContain('proofArchive');

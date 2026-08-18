@@ -58,12 +58,30 @@ async function init() {
  */
 let manageOpen = false;
 
-function manageToggle() {
+/**
+ * The toggle, rendered on BOTH views — and that is the whole fix for a bug
+ * that made the admin's editor unreachable.
+ *
+ * Opening a notice is a full page load (the list links to
+ * `/notices.html?id=N`), so `manageOpen` is false every time a notice page
+ * starts, by the design stated above. The toggle used to be rendered only by
+ * renderList, which meant an admin on a notice page had a flag that was always
+ * false and no control anywhere to flip it — and the bar is gated on
+ * `isAdmin && manageOpen`. An admin could therefore never edit or withdraw a
+ * notice, on a board that is now the ONLY place either is possible: the
+ * console's notice section was deliberately emptied when this moved here.
+ * Committee members were unaffected, which is why it survived review.
+ *
+ * `rerender` is what makes it work on both. The toggle mutates module state,
+ * so whoever draws it has to say how to draw itself again; hardcoding
+ * renderList() would have thrown a reader back to the board on every click.
+ */
+function manageToggle(rerender) {
   return el('p', {},
     el('button', {
       class: 'linkish', type: 'button',
       'aria-expanded': String(manageOpen),
-      onclick: () => { manageOpen = !manageOpen; renderList(); },
+      onclick: () => { manageOpen = !manageOpen; rerender(); },
     }, manageOpen ? 'Done managing' : 'Manage notices'));
 }
 
@@ -132,7 +150,7 @@ async function renderList() {
     // (the superadmin gate on contact requests; 5302314 moving five methods out
     // of the god object). Merging the destination must not merge the gesture:
     // nobody should withdraw a notice while scrolling past it.
-    isAdmin ? manageToggle() : null,
+    isAdmin ? manageToggle(renderList) : null,
     // A committee member has no admin console to be sent to — this board is the
     // whole of their job, so their form is unconditional. An admin's is behind
     // the toggle, because they have the rest of the console and do not need a
@@ -171,8 +189,17 @@ async function renderOne(id) {
   const draw = () => list.replaceChildren(...n.comments.map(commentRow));
   draw();
 
-  main.replaceChildren(
+  // setChildren, NOT the native replaceChildren, now that a `cond ? node :
+  // null` is passed at this level: the native method stringifies null and
+  // prints the word to the one person who never sees the control. That exact
+  // bug reached the live board on 2026-08-12 and renderList carries the note.
+  setChildren(main,
     el('p', {}, el('a', { class: 'linkish', href: '/notices.html' }, '← All notices')),
+    // The same toggle the board has, for the same reason it is a toggle there:
+    // reading a notice and withdrawing it are different acts. Without it an
+    // admin has no way to reach the bar below, because a notice page always
+    // starts with manageOpen false.
+    isAdmin ? manageToggle(() => renderOne(id)) : null,
     el('div', { class: 'stack', style: 'gap:var(--s-2)' },
       el('p', { class: 'label' }, stampLabel(n.postedAt)),
       el('h1', {}, n.title),
