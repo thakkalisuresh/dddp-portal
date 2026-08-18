@@ -454,26 +454,51 @@ function manageBar(n) {
     },
   }, 'Save changes');
 
+  const doWithdraw = async () => {
+    barStatus.replaceChildren();
+    withdraw.disabled = true;
+    try {
+      await api.admin.updateNotice(n.id, { active: false });
+      location.href = '/notices.html';
+    } catch (err) {
+      // Into barStatus, which is outside the collapsed form and therefore
+      // actually on screen. Re-enabled too: a button that stays dead after a
+      // failure reads as a button that worked.
+      showError(barStatus, err);
+      withdraw.disabled = false;
+    }
+  };
+
+  /**
+   * Still asks — it takes the notice off everybody's board at once — but asks
+   * IN THE PAGE, because window.confirm cannot be relied on to appear.
+   *
+   * A browser that has suppressed dialogs returns false without drawing
+   * anything (Chrome offers exactly that after a few of them, and the choice
+   * sticks for the page), and `if (!confirm(...)) return` turns that into a
+   * click that does nothing and says nothing. Reported from production on
+   * 2026-08-17: pressed several times, no dialog, no withdrawal, no error.
+   *
+   * The wording is the old dialog's, unchanged — reversible, an archive rather
+   * than a deletion this button cannot perform. Only the thing drawing it
+   * moved somewhere the browser cannot switch off.
+   */
   const withdraw = el('button', {
     class: 'linkish small', type: 'button',
-    onclick: async () => {
-      // Asks, because it takes the notice off everybody's board at once. It is
-      // reversible by an admin from the archive, and the wording says so rather
-      // than implying a deletion this button cannot perform.
-      if (!confirm('Withdraw this notice? It leaves the board for everyone and '
-                 + 'moves to the committee archive.')) return;
-      barStatus.replaceChildren();
+    onclick: () => {
       withdraw.disabled = true;
-      try {
-        await api.admin.updateNotice(n.id, { active: false });
-        location.href = '/notices.html';
-      } catch (err) {
-        // Into barStatus, which is outside the collapsed form and therefore
-        // actually on screen. Re-enabled too: a button that stays dead after a
-        // failure reads as a button that worked.
-        showError(barStatus, err);
-        withdraw.disabled = false;
-      }
+      barStatus.replaceChildren(
+        el('div', { class: 'note note--warn stack', style: 'gap:var(--s-3)' },
+          el('p', { class: 'small' },
+            'Withdraw this notice? It leaves the board for everyone and moves '
+            + 'to the committee archive.'),
+          el('div', { class: 'row', style: 'gap:var(--s-3)' },
+            el('button', { class: 'btn btn--sm', type: 'button', onclick: doWithdraw },
+              'Yes, withdraw'),
+            el('button', {
+              class: 'linkish small', type: 'button',
+              onclick: () => { barStatus.replaceChildren(); withdraw.disabled = false; },
+            }, 'Keep it'))));
     },
   }, 'Withdraw');
 
