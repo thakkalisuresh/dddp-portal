@@ -15,6 +15,8 @@ import {
 import { previewGeneration, computeBill, isExempt } from './lib/billing.js';
 import { latestEndedPeriod, boardStage, daysOverdue, tallyByStatus } from './lib/summary.js';
 import { istToday } from './lib/time.js';
+import { reminderDecision, batchDecision, reminderEmail, periodLabel, MAX_REMINDERS }
+  from './lib/reminders.js';
 import {
   approvalPolicy, canApprove, isSatisfied, needsApproval, expiresAt, approvalMessage,
 } from './lib/approvals.js';
@@ -314,6 +316,15 @@ export default {
         }
         if (request.method === 'POST' && /^\/api\/admin\/residents\/\d+\/late-fee-exemption$/.test(path)) {
           return setLateFeeExemption(request, env, session, path);
+        }
+        // Chasing. The cap lives in the handler and in the schema, never only
+        // in the console — an admin with two tabs open must not be able to
+        // send a fourth.
+        if (request.method === 'POST' && /^\/api\/admin\/bills\/\d+\/remind$/.test(path)) {
+          return remindOne(env, session, Number(path.split('/')[4]));
+        }
+        if (route === 'POST /api/admin/reminders/bulk') {
+          return remindAll(request, env, session);
         }
         if (request.method === 'POST' && /^\/api\/admin\/bills\/\d+\/waive-late-fee$/.test(path)) {
           return waiveLateFee(env, session, path);
@@ -2334,6 +2345,7 @@ const ownerJoin = (idColumn) => `LEFT JOIN owners o
  */
 async function adminSummary(env, session) {
   const today = istToday();
+  const nowIso = new Date().toISOString();
   const latestEnded = latestEndedPeriod(today);
 
   const period = await env.DB.prepare(
@@ -2346,7 +2358,7 @@ async function adminSummary(env, session) {
   // state the building is in.
   const reporting = period?.period ?? latestEnded;
 
-  const [saved, expected, billRows, overdue, proofs, edits, messages, contacts] =
+  const [saved, expected, billRows, overdue, proofs, edits, messages, contacts, batches] =
     await Promise.all([
       env.DB.prepare('SELECT COUNT(*) AS n FROM readings WHERE period = ?')
         .bind(reporting).first(),
@@ -2357,7 +2369,9 @@ async function adminSummary(env, session) {
       // Across every period, not just this one: a bill from three months ago
       // that nobody chased is the whole reason this row exists.
       env.DB.prepare(
-        `SELECT b.id, b.flat, b.period, b.total, p.due_date, o.name
+        `SELECT b.id, b.flat, b.period, b.total, p.due_date, o.name, o.email,
+                (SELECT COUNT(*) FROM bill_reminders r WHERE r.bill_id = b.id) AS reminders,
+                (SELECT MAX(sent_at) FROM bill_reminders r WHERE r.bill_id = b.id) AS last_reminded
            FROM bills b
            JOIN periods p ON p.period = b.period
            ${ownerJoin('b.owner_id')}
@@ -2379,6 +2393,8 @@ async function adminSummary(env, session) {
       hasRole(session, 'superadmin')
         ? env.DB.prepare("SELECT COUNT(*) AS n FROM contact_requests WHERE state = 'pending'").first()
         : Promise.resolve(null),
+      env.DB.prepare('SELECT sent_at FROM reminder_batches WHERE period = ? ORDER BY sent_at')
+        .bind(reporting).all(),
     ]);
 
   const bills = tallyByStatus(billRows.results ?? []);
@@ -2393,15 +2409,32 @@ async function adminSummary(env, session) {
     stage: boardStage({ period, latestEnded, readings, bills }),
     readings,
     bills,
-    overdue: (overdue.results ?? []).map((b) => ({
-      id: b.id,
-      flat: b.flat,
-      period: b.period,
-      total: b.total,
-      name: b.name ?? null,
-      dueDate: b.due_date,
-      daysOver: daysOverdue(b.due_date, today),
-    })),
+    overdue: (overdue.results ?? []).map((b) => {
+      // The console greys its button with the same arithmetic the send uses, so
+      // the two cannot disagree about whether a flat may be chased.
+      const decision = reminderDecision(reminderStamps(b), nowIso);
+      return {
+        id: b.id,
+        flat: b.flat,
+        period: b.period,
+        total: b.total,
+        name: b.name ?? null,
+        dueDate: b.due_date,
+        daysOver: daysOverdue(b.due_date, today),
+        reminders: b.reminders ?? 0,
+        lastReminded: b.last_reminded ?? null,
+        // Blocked for a reason of its own — settled, or no address — outranks
+        // the cap, because the cap is not why the button is off.
+        canRemind: !reminderBlock(b, today) && decision.ok,
+        blockedBecause: reminderBlock(b, today)
+          ?? (decision.ok ? null : refusalText(decision)),
+      };
+    }),
+    reminders: {
+      max: MAX_REMINDERS,
+      mailConfigured: mailConfigured(env),
+      bulk: batchDecision((batches.results ?? []).map((r) => r.sent_at), nowIso),
+    },
     waiting: {
       proofs: proofs?.n ?? 0,
       edits: edits?.n ?? 0,
@@ -2410,6 +2443,223 @@ async function adminSummary(env, session) {
       // than showing them a queue that is never theirs.
       contacts: contacts ? contacts.n : null,
     },
+  });
+}
+
+/**
+ * The stamps reminderDecision needs, from a summary row that only carries the
+ * count and the latest date.
+ *
+ * Only the last one matters to the spacing rule and only the count matters to
+ * the cap, so the earlier entries can be anything — they are placeholders, and
+ * the send path reads the real rows before it writes.
+ */
+function reminderStamps(row) {
+  const n = Number(row.reminders ?? 0);
+  if (!n) return [];
+  return [...Array(n - 1).fill(row.last_reminded), row.last_reminded];
+}
+
+/* ── payment reminders ────────────────────────────────────────────────────
+   The first mail this portal has ever sent a resident about money. Everything
+   else it sends is a credential, or an alert to an admin.
+
+   Three per bill, spaced 24/48/72 hours, and Remind-all spends the same three
+   — one budget, so no household can receive a fourth however the clicks are
+   spread between the row button and the bulk one. lib/reminders.js decides;
+   these functions only fetch the rows, send, and write what happened.       */
+
+/** A bill with everything a reminder needs to be written and refused. */
+async function reminderContext(env, billId) {
+  const bill = await env.DB.prepare(
+    `SELECT b.*, p.due_date, o.name, o.email, o.id AS owner_row
+       FROM bills b
+       JOIN periods p ON p.period = b.period
+       ${ownerJoin('b.owner_id')}
+      WHERE b.id = ?`
+  ).bind(billId).first();
+  if (!bill) return null;
+
+  const rows = await env.DB.prepare(
+    'SELECT ordinal, sent_at FROM bill_reminders WHERE bill_id = ? ORDER BY ordinal'
+  ).bind(billId).all();
+
+  return { bill, sent: (rows.results ?? []).map((r) => r.sent_at) };
+}
+
+/**
+ * Why this bill cannot be chased, or null if it can.
+ *
+ * Paid and not-yet-due are refusals in their own right, ahead of the cap: the
+ * worst reminder this portal could send is one to somebody who already paid,
+ * and a proof waiting in the queue means they have.
+ */
+function reminderBlock(bill, today) {
+  if (['paid', 'waived'].includes(bill.status)) return 'This bill is settled.';
+  if (bill.status === 'awaiting') return 'A payment proof for this bill is waiting to be checked.';
+  if (!(bill.due_date < today)) return 'This bill is not overdue yet.';
+  if (!bill.email) return 'No email address on file for this flat.';
+  return null;
+}
+
+/**
+ * Send one reminder.
+ *
+ * THE ROW IS WRITTEN BEFORE THE SEND, and removed if the send fails. Written
+ * first because UNIQUE (bill_id, ordinal) is the only thing that makes two
+ * simultaneous clicks safe — two tabs both reading "none sent yet" would
+ * otherwise both pass the decision and both send. Removed on failure so a
+ * Gmail outage does not silently eat one of a resident's three.
+ */
+async function remindOne(env, session, billId, batchId = null) {
+  const context = await reminderContext(env, billId);
+  if (!context) return problem(404, 'DDP-SYS-003', 'No such bill.');
+
+  const { bill, sent } = context;
+  const today = istToday();
+  const blocked = reminderBlock(bill, today);
+  if (blocked) return problem(409, 'DDP-ADMIN-019', blocked);
+
+  const now = new Date().toISOString();
+  const decision = reminderDecision(sent, now);
+  if (!decision.ok) {
+    await reportError(env, 'DDP-ADMIN-019',
+                      { billId, reason: decision.reason, actor: session.actor.id });
+    return problem(409, 'DDP-ADMIN-019', refusalText(decision));
+  }
+
+  if (!mailConfigured(env)) {
+    return problem(503, 'DDP-ADMIN-020',
+      'Email is not set up yet, so nothing can be sent. Nothing has been recorded.');
+  }
+
+  try {
+    await env.DB.prepare(
+      `INSERT INTO bill_reminders (bill_id, ordinal, sent_at, sent_by, sent_to, batch_id)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(billId, decision.ordinal, now, session.actor.id, bill.email, batchId).run();
+  } catch {
+    // The UNIQUE constraint, which means somebody else got there first.
+    return problem(409, 'DDP-ADMIN-019', 'That reminder has just been sent by somebody else.');
+  }
+
+  const { subject, text } = reminderEmail({
+    ordinal: decision.ordinal,
+    name: bill.name,
+    flat: bill.flat,
+    period: bill.period,
+    periodLabel: periodLabel(bill.period),
+    total: bill.total,
+    dueDate: bill.due_date,
+    daysOver: daysOverdue(bill.due_date, today),
+    previous: sent,
+  });
+
+  const result = await sendEmail(env, { to: bill.email, subject, text });
+  if (!result.sent) {
+    await env.DB.prepare(
+      'DELETE FROM bill_reminders WHERE bill_id = ? AND ordinal = ?'
+    ).bind(billId, decision.ordinal).run();
+    await reportError(env, 'DDP-ADMIN-020',
+                      { billId, flat: bill.flat, reason: result.reason });
+    return problem(502, 'DDP-ADMIN-020',
+      'The reminder could not be sent. Nothing has been recorded, so it can be tried again.');
+  }
+
+  await audit(env, session, 'bill.remind',
+              { billId, flat: bill.flat, period: bill.period, ordinal: decision.ordinal });
+
+  return json({
+    billId,
+    flat: bill.flat,
+    ordinal: decision.ordinal,
+    remaining: MAX_REMINDERS - decision.ordinal,
+    sentAt: now,
+  });
+}
+
+/** 'Waiting 13 more hours', or 'All three have been sent'. */
+function refusalText(decision) {
+  if (decision.reason === 'spent') {
+    return `All ${MAX_REMINDERS} reminders for this bill have been sent. There is no fourth.`;
+  }
+  if (decision.reason === 'cooling') {
+    return `The last reminder was too recent. ${decision.hoursLeft} hours to wait.`;
+  }
+  return 'When the last reminder was sent cannot be read, so nothing will be sent.';
+}
+
+/**
+ * Remind every overdue flat that still has one, in one press.
+ *
+ * Twice a month, a day apart. The run is recorded even when it sends nothing,
+ * because a press that skipped everybody has still used one of the two — and
+ * because "I pressed it and nothing happened" needs an answer.
+ *
+ * What it skips is RETURNED, not swallowed. A bulk send that quietly reached
+ * three of eleven is worse than one that reached none, because nobody would
+ * know to chase the rest.
+ */
+async function remindAll(request, env, session) {
+  const body = await readJson(request);
+  const period = String(body?.period ?? '').trim();
+  if (!/^\d{4}-\d{2}$/.test(period)) {
+    return problem(400, 'DDP-SYS-003', 'Which month?');
+  }
+
+  const runs = await env.DB.prepare(
+    'SELECT sent_at FROM reminder_batches WHERE period = ? ORDER BY sent_at'
+  ).bind(period).all();
+
+  const now = new Date().toISOString();
+  const decision = batchDecision((runs.results ?? []).map((r) => r.sent_at), now);
+  if (!decision.ok) {
+    await reportError(env, 'DDP-ADMIN-019',
+                      { period, reason: decision.reason, actor: session.actor.id, bulk: true });
+    return problem(409, 'DDP-ADMIN-019', decision.reason === 'spent'
+      ? 'Remind-all has been used twice for this month. There is no third.'
+      : `The last run was too recent. ${decision.hoursLeft} hours to wait.`);
+  }
+
+  if (!mailConfigured(env)) {
+    return problem(503, 'DDP-ADMIN-020',
+      'Email is not set up yet, so nothing can be sent. Nothing has been recorded.');
+  }
+
+  const today = istToday();
+  const overdue = await env.DB.prepare(
+    `SELECT b.id FROM bills b
+       JOIN periods p ON p.period = b.period
+      WHERE b.period = ? AND b.status IN ('unpaid', 'initiated')
+        AND p.due_date < ?
+      ORDER BY b.flat`
+  ).bind(period, today).all();
+
+  // The row goes in first, so a second press landing mid-run meets the cap
+  // rather than a queue that has not finished counting itself.
+  const batch = await env.DB.prepare(
+    'INSERT INTO reminder_batches (period, sent_at, sent_by) VALUES (?, ?, ?) RETURNING id'
+  ).bind(period, now, session.actor.id).first();
+
+  const sent = [];
+  const skipped = [];
+  for (const row of overdue.results ?? []) {
+    const res = await remindOne(env, session, row.id, batch.id);
+    if (res.status === 200) sent.push(row.id);
+    else skipped.push(row.id);
+  }
+
+  await env.DB.prepare('UPDATE reminder_batches SET sent = ?, skipped = ? WHERE id = ?')
+    .bind(sent.length, skipped.length, batch.id).run();
+
+  await audit(env, session, 'bill.remind.bulk',
+              { period, sent: sent.length, skipped: skipped.length, run: decision.run });
+
+  return json({
+    period,
+    sent: sent.length,
+    skipped: skipped.length,
+    runsLeft: 2 - decision.run,
   });
 }
 

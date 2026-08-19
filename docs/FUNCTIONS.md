@@ -449,6 +449,23 @@ QR matrix generation, shared by the browser and the tests.
 | fn | `drawQrToCanvas` |  |
 | fn | `qrToRgba` |  |
 
+### `functions/lib/reminders.js`
+
+Chasing an unpaid bill.
+
+| | Export | What it does |
+|---|---|---|
+| const | `SPACING_HOURS` |  |
+| const | `MAX_REMINDERS` |  |
+| const | `MAX_BATCHES` |  |
+| const | `BATCH_SPACING_HOURS` |  |
+| fn | `reminderDecision` | Whether this bill can be reminded about now, and which of the three it is. |
+| fn | `batchDecision` | Whether Remind-all may run for this month. |
+| fn | `periodLabel` |  |
+| fn | `dayAndMonth` |  |
+| fn | `listDates` |  |
+| fn | `reminderEmail` | The three letters. |
+
 ### `functions/lib/reset.js`
 
 Self-service password reset by emailed code.
@@ -795,4 +812,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-424 exports. 212 have no doc comment.
+434 exports. 219 have no doc comment.
