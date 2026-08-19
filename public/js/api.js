@@ -119,6 +119,9 @@ export const api = {
   admin: {
     /** The Home board's whole payload — see adminSummary in the Worker. */
     summary:       ()       => request('GET',  '/api/admin/summary'),
+    /** Chase one overdue bill. The cap is enforced server-side, not here. */
+    remind:        (billId)  => request('POST', `/api/admin/bills/${billId}/remind`),
+    remindAll:     (period)  => request('POST', '/api/admin/reminders/bulk', { period }),
     // `past: true` includes moved-out residents and is superadmin-only —
     // the server refuses it for an admin rather than quietly dropping it.
     residents: (opts)       => request('GET',

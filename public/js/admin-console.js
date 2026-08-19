@@ -1328,7 +1328,14 @@ function waitingRow(label, count, to) {
  *
  * Chasing an unpaid bill is real work with nowhere to happen: Bills lists every
  * bill, not the late ones, and nothing in the console has ever answered "who
- * still owes for which month". Sending is a separate change; this lists them.
+ * still owes for which month".
+ *
+ * Three reminders per bill and no more, and Remind-all spends the same three.
+ * The server decides — every button here is drawn from `canRemind` and
+ * `blockedBecause`, which the summary computed with the identical arithmetic
+ * the send path uses. A greyed button states its reason rather than hiding,
+ * because "you cannot send this yet" and "this screen is broken" must not look
+ * the same.
  */
 function overdueRow(s) {
   const overdue = s.overdue ?? [];
@@ -1338,22 +1345,115 @@ function overdueRow(s) {
       el('span', { class: 'board__n' }, 'none'));
   }
 
+  const status = el('p', { class: 'small muted' });
+  const list = el('div', { class: 'board__sub' });
+
+  const draw = () => {
+    list.replaceChildren(
+      ...overdue.map((b) => reminderLine(b, status)),
+      bulkLine(s, status),
+      status);
+  };
+  draw();
+
   return el('details', { class: 'board__fold' },
     el('summary', { class: 'board__row' },
       el('span', { class: 'board__t' }, 'Bills unpaid past the due date'),
       el('span', { class: 'board__n' }, String(overdue.length))),
-    el('div', { class: 'board__sub' },
-      ...overdue.map((b) =>
-        el('div', { class: 'board__subrow' },
-          el('b', {}, b.flat),
-          el('span', { class: 'board__when' },
-            `${money(b.total)} · ${periodLabel(b.period)} · ${b.daysOver} days over`),
-          // Disabled, not hidden: the button is where it will be, and an admin
-          // who can see it cannot mistake the queue for one that has already
-          // been chased. Sending is its own change — it would be the first mail
-          // this portal has ever sent a resident about money.
-          el('button', { class: 'btn btn--sm', type: 'button', disabled: true }, 'Remind'))),
-      el('p', { class: 'small muted' }, 'Sending reminders is not switched on yet.')));
+    list);
+}
+
+/** One flat, what it owes, and what has already been said to it. */
+function reminderLine(b, status) {
+  const said = el('span', { class: 'board__when' },
+    `${money(b.total)} · ${periodLabel(b.period)} · ${b.daysOver} days over`
+    + (b.reminders ? ` · ${remindedLabel(b)}` : ''));
+
+  const button = el('button', {
+    class: 'btn btn--sm btn--quiet', type: 'button',
+    disabled: !b.canRemind,
+    // The reason travels with the control rather than living only in a line
+    // somebody has to go and read.
+    title: b.blockedBecause ?? '',
+    onclick: async (event) => {
+      const node = event.currentTarget;
+      node.disabled = true;
+      status.replaceChildren('Sending…');
+      try {
+        const res = await api.admin.remind(b.id);
+        trackAction('admin.bill.remind');
+        b.reminders = res.ordinal;
+        b.lastReminded = res.sentAt;
+        b.canRemind = false;
+        b.blockedBecause = res.remaining
+          ? 'Sent just now. The next one can go tomorrow at the earliest.'
+          : 'All three reminders for this bill have been sent.';
+        said.replaceChildren(
+          `${money(b.total)} · ${periodLabel(b.period)} · ${b.daysOver} days over · `
+          + remindedLabel(b));
+        node.title = b.blockedBecause;
+        status.replaceChildren(el('span', { style: 'color:var(--accent)' },
+          `Reminder ${res.ordinal} of 3 sent to ${b.flat}.`));
+      } catch (err) {
+        node.disabled = false;
+        showError(status, err);
+      }
+    },
+  }, b.reminders >= 3 ? 'Sent ×3' : 'Remind');
+
+  return el('div', { class: 'board__subrow' }, el('b', {}, b.flat), said, button);
+}
+
+/** '2 reminders, last on 22 September' */
+function remindedLabel(b) {
+  const n = b.reminders ?? 0;
+  if (!n) return 'never reminded';
+  const when = b.lastReminded ? dayLabel(b.lastReminded.slice(0, 10)) : 'unknown';
+  return `${n} of 3 sent, last ${when}`;
+}
+
+/**
+ * Remind-all: twice a month, a day apart, spending the same three per flat.
+ *
+ * It reports what it SKIPPED as well as what it sent. A run that quietly
+ * reached three of eleven is worse than one that reached none, because nobody
+ * would know to chase the rest.
+ */
+function bulkLine(s, status) {
+  const bulk = s.reminders?.bulk ?? { ok: false, reason: 'spent' };
+  const period = s.period?.period;
+  const left = s.overdue.filter((b) => b.canRemind).length;
+
+  const why = !s.reminders?.mailConfigured
+    ? 'Email is not set up yet.'
+    : bulk.reason === 'spent' ? 'Remind-all has been used twice this month.'
+      : bulk.reason === 'cooling' ? `The last run was too recent. ${bulk.hoursLeft} hours to wait.`
+        : !left ? 'Every flat here is either spent or still cooling.' : '';
+
+  return el('div', { class: 'board__subrow' },
+    el('span', { class: 'board__when' },
+      left ? `${left} of ${s.overdue.length} can be reminded now` : 'None can be reminded now'),
+    el('button', {
+      class: 'btn btn--sm btn--quiet', type: 'button',
+      disabled: !bulk.ok || !left || !period,
+      title: why,
+      onclick: async (event) => {
+        const node = event.currentTarget;
+        node.disabled = true;
+        status.replaceChildren('Sending…');
+        try {
+          const res = await api.admin.remindAll(period);
+          trackAction('admin.bill.remind.bulk');
+          status.replaceChildren(el('span', { style: 'color:var(--accent)' },
+            `Sent ${res.sent}${res.skipped ? `, skipped ${res.skipped}` : ''}. `
+            + `${res.runsLeft ? 'One run left this month.' : 'No runs left this month.'} `
+            + 'Reopen Home to see where each flat stands.'));
+        } catch (err) {
+          node.disabled = false;
+          showError(status, err);
+        }
+      },
+    }, `Remind all ${left || ''}`.trim()));
 }
 
 async function billsList() {

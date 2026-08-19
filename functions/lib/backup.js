@@ -28,6 +28,9 @@ export const TABLES = [
   'committee', 'messages', 'contact_requests',
   'statement_sessions', 'statement_credits', 'reconciliations',
   'bill_edit_requests', 'bill_edit_approvals',
+  // Batches before the reminders that point at them, since a restore reads
+  // the bundle top to bottom.
+  'reminder_batches', 'bill_reminders',
   'settings', 'alert_episodes', 'audit_log',
 ];
 

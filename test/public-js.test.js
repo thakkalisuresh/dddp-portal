@@ -161,11 +161,22 @@ describe('the admin home board', () => {
     expect(src).toMatch(/'none'/);
   });
 
-  it('leaves Remind disabled until sending exists', () => {
-    // The button is drawn so the queue does not look already chased, but this
-    // portal has never emailed a resident about money and must not start by
-    // accident.
-    expect(src).toMatch(/disabled: true \}, 'Remind'\)/);
+  it('draws Remind from the verdict the server sent, never its own', () => {
+    // THE ONE THAT MATTERS. A second implementation of the cap in the browser
+    // is a second thing to get wrong, and the one an admin sees would be the
+    // one that disagrees. `canRemind` and `blockedBecause` come from the same
+    // reminderDecision the send path runs.
+    expect(src).toMatch(/disabled: !b\.canRemind/);
+    expect(src).toMatch(/b\.blockedBecause/);
+    expect(src).not.toMatch(/24 \* 60 \* 60|SPACING_HOURS/);
+  });
+
+  it('says why a reminder cannot be sent rather than hiding the button', () => {
+    expect(src).toMatch(/title: b\.blockedBecause/);
+  });
+
+  it('reports what a bulk run skipped, not only what it sent', () => {
+    expect(src).toMatch(/skipped \$\{res\.skipped\}/);
   });
 });
 
