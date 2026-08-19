@@ -65,7 +65,10 @@ const TABS = [
   { id: 'proofs',    label: 'Proofs',    href: '/admin/proofs.html' },
   { id: 'statement', label: 'Reconcile', href: '/admin/statement.html' },
   { id: 'residents', label: 'Residents', render: residentsPanel },
-  { id: 'roster',    label: 'Roster',    href: '/admin/roster.html' },
+  // Superadmin-only from 2026-08-19: an import rewrites the whole directory
+  // in one paste. The router refuses an admin the roster routes outright, so
+  // hiding the tab keeps the strip honest rather than being the guard.
+  { id: 'roster',    label: 'Roster',    href: '/admin/roster.html', superadmin: true },
   { id: 'errors',    label: 'Errors',    render: errorsPanel, superadmin: true },
 ];
 
@@ -1026,58 +1029,17 @@ function exportPanel() {
   const tables = ['bills', 'readings', 'owners', 'periods', 'payment_proofs', 'audit_log', 'messages'];
   return el('div', { class: 'panel stack' },
     el('h2', {}, 'Download the data'),
-    // The old copy promised a nightly Drive copy flatly. That has never once
-    // been true — the secrets have never been set, so runBackup returns early
-    // every night. Whether it happens is now answered below, by the watermark,
-    // rather than asserted here.
+    // Says nothing about nightly off-site copies. The old copy promised them
+    // flatly and that has never once been true — the secrets have never been
+    // set, so runBackup returns early every night. /api/admin/backup-health
+    // still answers the question for anything that asks it.
     el('p', { class: 'muted small' },
       'CSV, openable in Excel. Passwords are never included.'),
     el('a', { class: 'btn', href: '/api/admin/export', download: '' }, 'Download everything'),
     el('p', { class: 'label', style: 'margin-top:var(--s-4)' }, 'Single table'),
     el('div', { class: 'row', style: 'flex-wrap:wrap' },
       ...tables.map((t) =>
-        el('a', { class: 'btn btn--sm btn--quiet', href: `/api/admin/export?table=${t}`, download: '' }, t))),
-    el('hr', { class: 'rule' }),
-    el('p', { class: 'label' }, 'Nightly backup'),
-    backupHealthLine());
-}
-
-/**
- * Two different questions, and the second is the one that matters.
- *
- * "Is the token valid" is a live check and answers whether tonight's run could
- * work. "When did a file last land" is the watermark, and it is the only thing
- * that can tell a working backup from one that stopped weeks ago — which is
- * what actually happened here: written in phase 8, deployed, never run once,
- * and nothing said so.
- */
-function backupHealthLine() {
-  const line = el('p', { class: 'small muted' }, 'Checking…');
-  api.admin.backupHealth().then((h) => {
-    line.replaceChildren(
-      h.ok
-        ? 'Google Drive is reachable and the token is valid.'
-        : h.reason === 'not-configured'
-          ? 'Not set up yet. Add the Google secrets to enable nightly off-site copies.'
-          : `Backup is BROKEN (${h.reason}). A refresh token issued in OAuth "Testing" mode expires after 7 days. Publish the consent screen.`,
-      el('br'),
-      lastBackupText(h));
-    if (!h.ok && h.reason !== 'not-configured') line.className = 'small';
-  }).catch(() => line.replaceChildren('Could not check.'));
-  return line;
-}
-
-function lastBackupText(h) {
-  if (!h.lastBackupAt) {
-    return h.reason === 'not-configured'
-      ? 'No copy has ever been written.'
-      : 'No copy has been written yet — the first runs at 3am.';
-  }
-  const days = Math.floor((Date.now() - new Date(h.lastBackupAt)) / 86_400_000);
-  const when = days === 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
-  // Stated in days rather than a timestamp, because the only question anyone
-  // asks of this line is "recently enough?".
-  return `Last copy written ${when}.`;
+        el('a', { class: 'btn btn--sm btn--quiet', href: `/api/admin/export?table=${t}`, download: '' }, t))));
 }
 
 async function messagesPanel() {
@@ -1186,17 +1148,212 @@ async function residentsPanel() {
 }
 
 /**
- * Where the rare things live.
+ * Home — what needs somebody today.
  *
- * Export and the backup health line were a top-level tab and a fragment of one,
- * visited a few times a year between them. They are not less important for
- * that — the committee owning a readable copy of its own records is the whole
- * reason this project exists — but importance is not the same as frequency, and
- * a tab strip can only encode frequency.
+ * This screen used to be the export panel: the one job on the console done
+ * twice a year, in front of everybody who opened /admin for any reason at all.
+ * Meanwhile a bill correction could wait a fortnight while three admins each
+ * looked at a console that never mentioned it, because every queue was
+ * invisible until you remembered to open the section holding it.
+ *
+ * So Home states the month and the queues, and nothing else. It deliberately
+ * does NOT repeat the tab strip as a grid of tiles — that costs a click before
+ * every task and says nothing the strip above it does not already say. Export
+ * moves down into a fold, keeping its place on the console without keeping the
+ * top of it.
  */
-function homePanel() {
+async function homePanel() {
+  let summary;
+  try {
+    summary = await api.admin.summary();
+  } catch {
+    // The whole board hangs on one request, so it has to degrade rather than
+    // disappear. showError alone would leave an admin looking at a red line
+    // where the month should be, with no hint that the console still works —
+    // and an empty Home reads as "nothing is happening this month", which is
+    // the one wrong conclusion this screen exists to prevent.
+    return el('div', { class: 'stack' }, unavailablePanel(),
+      foldedSection('Keeping a copy', null, exportPanel));
+  }
   return el('div', { class: 'stack' },
-    exportPanel());
+    standingPanel(summary),
+    waitingPanel(summary),
+    foldedSection('Keeping a copy', null, exportPanel));
+}
+
+/** Home with its figures missing: still a way in to every section. */
+function unavailablePanel() {
+  const links = [
+    ['Payment proofs', { href: '/admin/proofs.html' }],
+    ['Bills', { tab: 'bills' }],
+    ['Readings', { href: '/admin/readings.html' }],
+    ['Residents', { tab: 'residents' }],
+  ];
+  return el('div', { class: 'panel stack' },
+    el('div', { class: 'note note--warn' },
+      'Could not load this month’s figures. The sections below still work — '
+      + 'open one to see where things stand.'),
+    el('p', { class: 'label' }, 'Go to'),
+    ...links.map(([label, to]) => {
+      const body = [el('span', { class: 'board__t' }, label),
+                    el('span', { class: 'board__go', 'aria-hidden': 'true' }, '›')];
+      return to.href
+        ? el('a', { class: 'board__row', href: to.href }, ...body)
+        : el('button', { class: 'board__row', type: 'button', onclick: () => show(to.tab) }, ...body);
+    }));
+}
+
+/** Where the month stands: one line an admin can act on without reading further. */
+function standingPanel(s) {
+  const chips = [];
+  const rate = s.period ? `Rate ₹${s.period.rate_per_kg}` : null;
+
+  let heading;
+  let note = null;
+  let action = null;
+
+  if (s.stage === 'no-period') {
+    const month = periodLabel(s.awaiting);
+    heading = `${month} · not open yet`;
+    note = `${month} has ended. Nothing can be read or billed until the month has a rate.`;
+    action = {
+      // The month alone on the button — "Set August 2026's rate" reads like a
+      // form field, and the year is already in the heading above it.
+      label: `Set ${month.split(' ')[0]}'s rate`,
+      go: () => show('periods'),
+      // The number they are about to reuse. Carried rather than defaulted: the
+      // rate editor still asks, this only saves looking it up.
+      aside: s.period ? `${periodLabel(s.period.period)} was ₹${s.period.rate_per_kg} per kg` : null,
+    };
+  } else if (s.stage === 'readings') {
+    heading = `${periodLabel(s.period.period)} · readings in progress`;
+    chips.push(['paid', rate],
+               ['awaiting', `${s.readings.saved} of ${s.readings.expected} read`],
+               ['neutral', `Due ${dayLabel(s.period.due_date)}`]);
+    action = {
+      label: 'Continue readings',
+      href: `/admin/readings.html?period=${encodeURIComponent(s.period.period)}`,
+      aside: `${s.readings.expected - s.readings.saved} flats left`,
+    };
+  } else if (s.stage === 'ready') {
+    heading = `${periodLabel(s.period.period)} · ready to bill`;
+    chips.push(['paid', rate], ['paid', `${s.readings.saved} of ${s.readings.expected} read`]);
+    note = 'Every meter is in. Bills are generated from the readings screen, where they can be checked first.';
+    action = {
+      label: 'Review and generate',
+      href: `/admin/readings.html?period=${encodeURIComponent(s.period.period)}`,
+    };
+  } else if (s.stage === 'settled') {
+    heading = `${periodLabel(s.period.period)} · settled`;
+    chips.push(['paid', `${s.bills.paid + s.bills.waived} of ${billCount(s.bills)} paid`]);
+    // Says what it is waiting for, not just that it is quiet. "Do I need to be
+    // here" is the question this screen exists to answer, and in the most
+    // common state the answer is no.
+    note = `${periodLabel(nextMonth(s.period.period))} readings are due once the month ends. `
+         + 'Nothing needs you until then.';
+  } else {
+    const outstanding = s.bills.unpaid + s.bills.initiated;
+    heading = `${periodLabel(s.period.period)} · bills generated`;
+    chips.push(['paid', `${s.bills.paid + s.bills.waived} of ${billCount(s.bills)} paid`]);
+    if (s.bills.awaiting) chips.push(['awaiting', `${s.bills.awaiting} awaiting proof`]);
+    if (outstanding) chips.push(['overdue', `${outstanding} unpaid`]);
+    note = `Due ${dayLabel(s.period.due_date)}.`;
+  }
+
+  return el('div', { class: 'panel stack' },
+    el('p', { class: 'label' }, 'Where the month stands'),
+    el('p', { class: 'board__h' }, heading),
+    chips.length
+      ? el('div', { class: 'row', style: 'flex-wrap:wrap' },
+          ...chips.filter(([, text]) => text)
+            .map(([kind, text]) => el('span', { class: `chip chip--${kind}` }, text)))
+      : null,
+    note ? el('p', { class: 'small muted', style: 'max-width:54ch' }, note) : null,
+    action
+      ? el('div', { class: 'row', style: 'flex-wrap:wrap' },
+          action.href
+            ? el('a', { class: 'btn', href: action.href }, action.label)
+            : el('button', { class: 'btn', type: 'button', onclick: action.go }, action.label),
+          action.aside ? el('span', { class: 'small muted' }, action.aside) : null)
+      : null);
+}
+
+/** Every bill in the month, whatever became of it. */
+function billCount(bills) {
+  return bills.unpaid + bills.initiated + bills.awaiting + bills.paid + bills.waived;
+}
+
+/**
+ * The queues, counted.
+ *
+ * A row with nothing in it STAYS, greyed, reading "none". A board that empties
+ * itself into whitespace cannot be told apart from one whose request failed,
+ * and that is worst in the state where it is hardest to notice — the quiet
+ * month, where "nothing is waiting" and "the summary died" look identical.
+ */
+function waitingPanel(s) {
+  const rows = [
+    waitingRow('Payment proofs to check', s.waiting.proofs, { href: '/admin/proofs.html' }),
+    overdueRow(s),
+    waitingRow('Bill corrections needing a second admin', s.waiting.edits, { tab: 'bills' }),
+    waitingRow('Messages from residents', s.waiting.messages, { tab: 'residents' }),
+    s.waiting.contacts === null
+      ? null
+      : waitingRow('Contact changes awaiting approval', s.waiting.contacts, { tab: 'residents' }),
+  ];
+
+  return el('div', { class: 'panel' },
+    el('p', { class: 'label' }, 'Waiting on you'),
+    ...rows.filter(Boolean));
+}
+
+function waitingRow(label, count, to) {
+  if (!(Number(count) > 0)) {
+    return el('div', { class: 'board__row board__row--quiet' },
+      el('span', { class: 'board__t' }, label),
+      el('span', { class: 'board__n' }, 'none'));
+  }
+  const body = [
+    el('span', { class: 'board__t' }, label),
+    el('span', { class: 'board__n' }, String(count)),
+    el('span', { class: 'board__go', 'aria-hidden': 'true' }, '›'),
+  ];
+  return to.href
+    ? el('a', { class: 'board__row', href: to.href }, ...body)
+    : el('button', { class: 'board__row', type: 'button', onclick: () => show(to.tab) }, ...body);
+}
+
+/**
+ * The one row that opens rather than navigating.
+ *
+ * Chasing an unpaid bill is real work with nowhere to happen: Bills lists every
+ * bill, not the late ones, and nothing in the console has ever answered "who
+ * still owes for which month". Sending is a separate change; this lists them.
+ */
+function overdueRow(s) {
+  const overdue = s.overdue ?? [];
+  if (!overdue.length) {
+    return el('div', { class: 'board__row board__row--quiet' },
+      el('span', { class: 'board__t' }, 'Bills unpaid past the due date'),
+      el('span', { class: 'board__n' }, 'none'));
+  }
+
+  return el('details', { class: 'board__fold' },
+    el('summary', { class: 'board__row' },
+      el('span', { class: 'board__t' }, 'Bills unpaid past the due date'),
+      el('span', { class: 'board__n' }, String(overdue.length))),
+    el('div', { class: 'board__sub' },
+      ...overdue.map((b) =>
+        el('div', { class: 'board__subrow' },
+          el('b', {}, b.flat),
+          el('span', { class: 'board__when' },
+            `${money(b.total)} · ${periodLabel(b.period)} · ${b.daysOver} days over`),
+          // Disabled, not hidden: the button is where it will be, and an admin
+          // who can see it cannot mistake the queue for one that has already
+          // been chased. Sending is its own change — it would be the first mail
+          // this portal has ever sent a resident about money.
+          el('button', { class: 'btn btn--sm', type: 'button', disabled: true }, 'Remind'))),
+      el('p', { class: 'small muted' }, 'Sending reminders is not switched on yet.')));
 }
 
 async function billsList() {

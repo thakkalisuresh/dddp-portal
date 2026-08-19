@@ -532,6 +532,17 @@ Bank statement reconciliation.
 | fn | `reconcile` | Match credits to proofs, then report what is left over on both sides. |
 | fn | `bucketReconciliation` | Split a reconciliation into what a treasurer actually has to DO about it. |
 
+### `functions/lib/summary.js`
+
+What the admin console's Home screen says about the month.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `latestEndedPeriod` | The most recent usage month that has finished. |
+| fn | `boardStage` | Where the month stands, as one of five words. |
+| fn | `daysOverdue` | How many days late a bill is, counted in whole days. |
+| fn | `tallyByStatus` | Turn the rows of `SELECT status, COUNT(*) GROUP BY status` into an object with every status present. |
+
 ### `functions/lib/tenancy.js`
 
 Ownership changes: a flat is sold, or the builder hands one to a new buyer.
@@ -784,4 +795,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-420 exports. 212 have no doc comment.
+424 exports. 212 have no doc comment.
