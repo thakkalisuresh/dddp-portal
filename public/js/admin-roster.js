@@ -16,6 +16,7 @@ import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { $, el, esc, renderViewBanner, showError, setChildren } from './ui.js';
 import { trackPage, trackAction } from './track.js';
+import { ADMINISTRATOR } from './contact.js';
 
 const main = $('#main');
 let view = 'import';
@@ -30,8 +31,12 @@ init();
 async function init() {
   try {
     const me = await api.me();
-    if (me.role !== 'admin' && me.role !== 'superadmin') {
-      main.replaceChildren(el('div', { class: 'note note--bad' }, 'Admins only.'));
+    // Superadmin only, from 2026-08-19. The router refuses an admin every
+    // /api/admin/roster/* route outright, so an admin who reaches this page
+    // would otherwise meet a 403 from the status call rather than a sentence.
+    if (me.role !== 'superadmin') {
+      main.replaceChildren(el('div', { class: 'note note--bad' },
+        `Only ${ADMINISTRATOR.name} can change the roster.`));
       return;
     }
     $('#who').innerHTML = `Roster <span>· ${esc(me.name)}</span>`;

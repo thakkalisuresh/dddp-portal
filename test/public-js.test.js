@@ -135,6 +135,41 @@ describe('the admin console does not regrow its tabs', () => {
 });
 
 /**
+ * Home answers "what needs me today", and keeps answering when it cannot.
+ *
+ * The screen used to be the export panel — the console's rarest job in front of
+ * everybody who opened it — while every queue stayed invisible until somebody
+ * remembered where it lived. Two regressions would undo that quietly: dropping
+ * the fallback, so a failed summary leaves an empty Home that reads as a month
+ * with nothing happening; and dropping the zero rows, so a quiet month looks
+ * identical to a broken request.
+ */
+describe('the admin home board', () => {
+  const src = readFileSync('public/js/admin-console.js', 'utf8');
+
+  it('is built from the summary endpoint', () => {
+    expect(src).toMatch(/api\.admin\.summary\(\)/);
+  });
+
+  it('still renders every section when the summary fails', () => {
+    // Not showError alone: an admin needs a way in even with no figures.
+    expect(src).toMatch(/catch\s*\{[\s\S]{0,800}unavailablePanel\(\)/);
+  });
+
+  it('keeps a row that has nothing in it, reading none', () => {
+    expect(src).toMatch(/board__row--quiet/);
+    expect(src).toMatch(/'none'/);
+  });
+
+  it('leaves Remind disabled until sending exists', () => {
+    // The button is drawn so the queue does not look already chased, but this
+    // portal has never emailed a resident about money and must not start by
+    // accident.
+    expect(src).toMatch(/disabled: true \}, 'Remind'\)/);
+  });
+});
+
+/**
  * Notices and the proof archive live with the things they describe.
  *
  * The Archive tab was one bin for two unrelated subjects, and notices were

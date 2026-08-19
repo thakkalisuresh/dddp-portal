@@ -13,6 +13,8 @@ import {
   previousPeriod, jumpWarning, changeRate, normaliseFlat,
 } from './lib/admin.js';
 import { previewGeneration, computeBill, isExempt } from './lib/billing.js';
+import { latestEndedPeriod, boardStage, daysOverdue, tallyByStatus } from './lib/summary.js';
+import { istToday } from './lib/time.js';
 import {
   approvalPolicy, canApprove, isSatisfied, needsApproval, expiresAt, approvalMessage,
 } from './lib/approvals.js';
@@ -212,6 +214,9 @@ export default {
           await reportError(env, 'DDP-ADMIN-004', { path, actor: session.actor.id });
           return problem(403, 'DDP-ADMIN-004', 'Admins only.');
         }
+        // The landing screen. One request rather than the five the board would
+        // otherwise make on every visit to /admin.
+        if (route === 'GET /api/admin/summary') return adminSummary(env, session);
         if (route === 'GET /api/admin/residents') return listResidents(env, session, url);
         if (route.startsWith('POST /api/admin/residents/') && path.endsWith('/reset/email')) {
           return emailTempPassword(request, env, session, path);
@@ -237,11 +242,25 @@ export default {
         if (route.startsWith('POST /api/admin/residents/') && path.endsWith('/reset')) {
           return resetPassword(request, env, session, path);
         }
-        if (route === 'POST /api/admin/roster/preview') return rosterPreview(request, env);
-        if (route === 'POST /api/admin/roster/import')  return rosterImport(request, env, session);
-        if (route === 'GET /api/admin/roster/status')   return rosterStatus(env);
-        if (route.startsWith('POST /api/admin/roster/sent/')) {
-          return rosterMarkSent(request, env, session, path);
+        // THE ROSTER IS THE SUPERADMIN'S, unlike flat activation next door.
+        // Both are "who lives here" knowledge that the admins walking the
+        // building hold, and the flats call went the other way on 2026-08-12
+        // for exactly that reason. The difference is blast radius: excluding
+        // one flat is one reversible row, while an import rewrites the whole
+        // directory in a single paste, and a bad one takes every resident's
+        // login with it. Sabarish's call, 2026-08-19.
+        if (path.startsWith('/api/admin/roster/')) {
+          if (!hasRole(session, 'superadmin')) {
+            await reportError(env, 'DDP-ADMIN-004', { path, actor: session.actor.id });
+            return problem(403, 'DDP-ADMIN-004',
+              `Only ${ADMINISTRATOR.name} can change the roster.`);
+          }
+          if (route === 'POST /api/admin/roster/preview') return rosterPreview(request, env);
+          if (route === 'POST /api/admin/roster/import')  return rosterImport(request, env, session);
+          if (route === 'GET /api/admin/roster/status')   return rosterStatus(env);
+          if (route.startsWith('POST /api/admin/roster/sent/')) {
+            return rosterMarkSent(request, env, session, path);
+          }
         }
         if (route === 'GET /api/admin/flats') return listFlats(env);
         if (request.method === 'PATCH' && /^\/api\/admin\/flats\/[^/]+$/.test(path)) {
@@ -2299,6 +2318,100 @@ async function proofImage(env, session, path) {
 const ownerJoin = (idColumn) => `LEFT JOIN owners o
     ON o.id = COALESCE(${idColumn},
                        (SELECT id FROM owners WHERE flat = b.flat ORDER BY id LIMIT 1))`;
+
+/**
+ * The admin console's landing screen, in one request.
+ *
+ * Every figure here was already reachable — but only by opening the section it
+ * lived in, which is why a pending correction could sit for a fortnight while
+ * three admins each looked at a screen that never mentioned it. Home now states
+ * them all, and the cost of that is exactly one query fan-out on arrival rather
+ * than five separate round trips from the browser.
+ *
+ * Counts, not rows, with one exception: the overdue list carries its flats,
+ * because chasing is the one job on this screen that has nowhere else to
+ * happen. Everything else links out to the screen that owns it.
+ */
+async function adminSummary(env, session) {
+  const today = istToday();
+  const latestEnded = latestEndedPeriod(today);
+
+  const period = await env.DB.prepare(
+    'SELECT * FROM periods ORDER BY period DESC LIMIT 1'
+  ).first();
+
+  // The month the board is reporting on. With no period row at all this is the
+  // month waiting to be opened, so the readings and bills queries below return
+  // honest zeroes rather than being skipped — one shape of response, whatever
+  // state the building is in.
+  const reporting = period?.period ?? latestEnded;
+
+  const [saved, expected, billRows, overdue, proofs, edits, messages, contacts] =
+    await Promise.all([
+      env.DB.prepare('SELECT COUNT(*) AS n FROM readings WHERE period = ?')
+        .bind(reporting).first(),
+      env.DB.prepare('SELECT COUNT(*) AS n FROM flats WHERE active = 1').first(),
+      env.DB.prepare(
+        'SELECT status, COUNT(*) AS n FROM bills WHERE period = ? GROUP BY status'
+      ).bind(reporting).all(),
+      // Across every period, not just this one: a bill from three months ago
+      // that nobody chased is the whole reason this row exists.
+      env.DB.prepare(
+        `SELECT b.id, b.flat, b.period, b.total, p.due_date, o.name
+           FROM bills b
+           JOIN periods p ON p.period = b.period
+           ${ownerJoin('b.owner_id')}
+          WHERE b.status IN ('unpaid', 'initiated', 'awaiting')
+            AND p.due_date < ?
+          ORDER BY p.due_date, b.flat
+          LIMIT 40`
+      ).bind(today).all(),
+      env.DB.prepare(
+        "SELECT COUNT(*) AS n FROM payment_proofs WHERE status = 'pending' AND deleted_at IS NULL"
+      ).first(),
+      env.DB.prepare(
+        "SELECT COUNT(*) AS n FROM bill_edit_requests WHERE status = 'pending'"
+      ).first(),
+      env.DB.prepare('SELECT COUNT(*) AS n FROM messages WHERE handled_at IS NULL').first(),
+      // Superadmin-only, because only the superadmin can decide one. Counting a
+      // queue an admin cannot act on would be a number that never moves for
+      // them, which reads as a broken screen rather than as somebody else's job.
+      hasRole(session, 'superadmin')
+        ? env.DB.prepare("SELECT COUNT(*) AS n FROM contact_requests WHERE state = 'pending'").first()
+        : Promise.resolve(null),
+    ]);
+
+  const bills = tallyByStatus(billRows.results ?? []);
+  const readings = { saved: saved?.n ?? 0, expected: expected?.n ?? 0 };
+
+  return json({
+    today,
+    period: period ?? null,
+    // What the board asks for when there is no period: the month that ended and
+    // still has no rate.
+    awaiting: period && period.period >= latestEnded ? null : latestEnded,
+    stage: boardStage({ period, latestEnded, readings, bills }),
+    readings,
+    bills,
+    overdue: (overdue.results ?? []).map((b) => ({
+      id: b.id,
+      flat: b.flat,
+      period: b.period,
+      total: b.total,
+      name: b.name ?? null,
+      dueDate: b.due_date,
+      daysOver: daysOverdue(b.due_date, today),
+    })),
+    waiting: {
+      proofs: proofs?.n ?? 0,
+      edits: edits?.n ?? 0,
+      messages: messages?.n ?? 0,
+      // null, not 0 — the board hides the row entirely for an admin rather
+      // than showing them a queue that is never theirs.
+      contacts: contacts ? contacts.n : null,
+    },
+  });
+}
 
 async function proofQueue(env) {
   const [proofs, claimed, decided] = await Promise.all([

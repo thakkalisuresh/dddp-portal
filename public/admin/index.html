@@ -23,6 +23,37 @@
                    font-family: var(--font-ui); font-size: var(--text-sm);
                    color: var(--accent); display: flex; align-items: center;
                    gap: var(--s-3); min-height: var(--touch); }
+  /* Home board. Rows are the whole control: the label, the count and the way
+     in are one target, because a count you cannot click is a count you have to
+     go and find. A row with nothing in it keeps its place and greys out —
+     a board that empties into whitespace looks exactly like one that failed. */
+  .board__h { font-family: var(--font-ui); font-size: var(--text-md); font-weight: 600;
+              margin: 0; letter-spacing: -0.01em; }
+  .board__row { display: flex; width: 100%; align-items: center; gap: var(--s-3);
+                padding: var(--s-3) 0; border-top: 1px solid var(--border);
+                font-family: var(--font-ui); font-size: var(--text-base);
+                text-align: left; background: none; border-left: 0; border-right: 0;
+                border-bottom: 0; color: var(--ink); text-decoration: none;
+                cursor: pointer; min-height: var(--touch); }
+  .board__row:hover { background: var(--accent-wash); }
+  .board__t { flex: 1; min-width: 0; }
+  .board__n { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .board__go { color: var(--ink-muted); }
+  .board__row--quiet { color: var(--ink-muted); cursor: default; }
+  .board__row--quiet:hover { background: none; }
+  .board__row--quiet .board__n { font-weight: 400; }
+  .board__fold > summary { list-style: none; }
+  .board__fold > summary::-webkit-details-marker { display: none; }
+  .board__fold > summary::after { content: '\25BE'; color: var(--ink-muted); }
+  .board__fold[open] > summary::after { content: '\25B4'; }
+  .board__sub { background: var(--accent-wash); padding: var(--s-2) var(--s-3) var(--s-3);
+                border-top: 1px solid var(--accent-line); }
+  .board__subrow { display: flex; gap: var(--s-3); align-items: center; flex-wrap: wrap;
+                   padding: var(--s-2) 0; border-bottom: 1px solid var(--accent-line);
+                   font-family: var(--font-ui); font-size: var(--text-sm); }
+  .board__subrow:last-of-type { border-bottom: 0; }
+  .board__subrow b { font-variant-numeric: tabular-nums; min-width: 4ch; }
+  .board__when { color: var(--ink-muted); flex: 1; }
   .rowitem { display: flex; gap: var(--s-4); align-items: center;
              padding: var(--s-3) 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   .rowitem__main { flex: 1; min-width: 200px; }
