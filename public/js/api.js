@@ -152,6 +152,14 @@ export const api = {
     setFlatActive: (flat, active, reason) =>
                                request('PATCH', `/api/admin/flats/${encodeURIComponent(flat)}`,
                                        { active, reason }),
+    /**
+     * Who is in this flat, as ONE act — the owner, the tenant, and whether it
+     * is billed at all. `to` is 'none' | 'owner' | 'owner+tenant' and nothing
+     * derived from it is stored; see planOccupancy.
+     */
+    setOccupancy: (flat, body) =>
+                               request('PUT', `/api/admin/flats/${encodeURIComponent(flat)}/occupancy`,
+                                       body),
     preview:       (period) => request('GET',  `/api/admin/preview?period=${period}`),
     openPeriod:    (body)   => request('POST', '/api/admin/periods', body),
     /** dryRun first, always: the caveat is built from what it returns. */

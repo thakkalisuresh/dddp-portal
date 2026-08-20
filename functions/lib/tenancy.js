@@ -518,3 +518,319 @@ export function planDeparture({ leaver, people, bills }) {
     },
   };
 }
+
+/* ── occupancy: the one control ──────────────────────────────────────────
+   The Residents tab used to ask this as two unrelated errands — a
+   `relationship` picked while adding a person, and a billing on/off list
+   further down the same tab. Nobody thinks of them as two errands. "12F is
+   unsold" is ONE fact with two consequences, and splitting it is how a flat
+   ends up with nobody on file and still on the billing roll, holding a month
+   open for the other 88.
+
+   What follows is a CONTROL, not a column. Migration 0011 refused to store a
+   three-state occupancy and the reason has not changed: the state is a
+   consequence of which `owners` rows are active, and a stored copy drifts the
+   first time a tenant leaves and nobody flips it back. Everything here reads
+   the rows and returns the writes to make.                                  */
+
+/** What the dropdown offers. `tenant-only` is a state but never an option. */
+export const OCCUPANCY_STATES = ['none', 'owner', 'owner+tenant'];
+
+/**
+ * The flat's occupancy, derived — never read from a column.
+ *
+ *   none         no active people at all. Unsold, or everybody has left.
+ *   owner        an active owner and nobody else. They occupy and are billed.
+ *   owner+tenant an active tenant with an owner behind them.
+ *   tenant-only  an active tenant and NO owner on record.
+ *
+ * The fourth is not one of the three the dropdown offers, and it is real:
+ * diagnostics has warned about it as TENANT-NO-OWNER since the tenancy work
+ * landed. It arises without anybody choosing it — deactivate the owner of a
+ * let flat and you are in it — so the control has to be able to say the words.
+ * It is shown as the current state and cannot be SELECTED; the way out is to
+ * fill in the owner, which is what `owner+tenant` already does.
+ */
+export function occupancyOf(people) {
+  const here = present(people);
+  if (!here.length) return 'none';
+  const tenanted = here.some((p) => p.relationship === 'tenant');
+  const owned = here.some((p) => p.relationship === 'owner');
+  if (tenanted) return owned ? 'owner+tenant' : 'tenant-only';
+  return 'owner';
+}
+
+/** In the committee's words, not the database's. */
+export function occupancyLabel(state) {
+  return {
+    none: 'No owner — nobody on file',
+    owner: 'Owner',
+    'owner+tenant': 'Owner + tenant',
+    'tenant-only': 'Tenant, no owner on record',
+  }[state] ?? state;
+}
+
+/* ── dates ───────────────────────────────────────────────────────────────
+   A tenancy start is asked for as a month, because that is what anybody
+   actually remembers, and STORED as the first of that month in ISO. Storing
+   'mm/yy' would sort '01/27' before '08/26' and make every comparison against
+   `moved_out_at`, `bills.period` or `inactive_since` wrong. Display is the
+   only place the short form belongs.                                        */
+
+/** '2026-08' -> '2026-08-01'. Null for anything that is not a month. */
+export function monthToISO(month) {
+  const m = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(String(month ?? '').trim());
+  return m ? `${m[1]}-${m[2]}-01` : null;
+}
+
+/** '2026-08-01' (or a full timestamp) -> '08/26', for a screen. */
+export function isoToMonth(iso) {
+  const m = /^(\d{4})-(\d{2})/.exec(String(iso ?? ''));
+  return m ? `${m[2]}/${m[1].slice(2)}` : null;
+}
+
+/** '2026-08-01' -> '2026-08', to put back in a <input type="month">. */
+export function isoToMonthInput(iso) {
+  const m = /^(\d{4})-(\d{2})/.exec(String(iso ?? ''));
+  return m ? `${m[1]}-${m[2]}` : '';
+}
+
+/**
+ * Two people in one flat cannot share a number.
+ *
+ * `owners.mobile` is NOT NULL UNIQUE because it IS the login id — there is no
+ * other identifier a resident types. A landlord who gives the committee their
+ * own number for their tenant is the ordinary way this gets attempted, and
+ * the database answers with a constraint violation and a 500. Caught here so
+ * the screen can say the actual reason at the field, before anything is sent.
+ *
+ * Compared on digits: '+91 98464 66511' and '9846466511' are one number, and
+ * a string comparison calls them two. Email is checked the same way and for
+ * the same reason — it is where a reset code goes, so a shared address is a
+ * shared account.
+ */
+export function contactClash({ owner, tenant }) {
+  const digits = (v) => String(v ?? '').replace(/\D/g, '').slice(-10);
+  const a = digits(owner?.mobile);
+  const b = digits(tenant?.mobile);
+  if (a && b && a === b) {
+    return {
+      field: 'mobile',
+      message: 'The owner and the tenant cannot share a mobile number — it is the '
+             + 'login id, so one number is one account. Ask the tenant for their own.',
+    };
+  }
+
+  const ea = String(owner?.email ?? '').trim().toLowerCase();
+  const eb = String(tenant?.email ?? '').trim().toLowerCase();
+  if (ea && eb && ea === eb) {
+    return {
+      field: 'email',
+      message: 'The owner and the tenant cannot share an email address — a reset code '
+             + 'sent to it would reach the wrong person. Leave one of them blank instead.',
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Does this flat get a bill at all this month? A different question from who.
+ *
+ * `flats.active` is the answer and it is stored, because it is a DECISION
+ * rather than a consequence: a flat can be owned, empty and still billed to
+ * its owner, which is not the same thing as unsold. Nothing derives it and
+ * nothing should.
+ */
+export function isBilled(flat) {
+  return Boolean(flat?.active);
+}
+
+/* ── planning a change ───────────────────────────────────────────────────── */
+
+const NEEDS_OWNER = 'An owner needs a name and a mobile number.';
+
+function nameOf(p) { return String(p?.name ?? '').trim(); }
+function mobileOf(p) { return String(p?.mobile ?? '').trim(); }
+
+/**
+ * Turn "this flat is now X" into the rows to write.
+ *
+ * Pure, and returns steps rather than performing them, for the same reason
+ * `planDeparture` and `planHandover` do: the decisions are the part worth
+ * testing, and they are testable without a database only if they are separate
+ * from the writing.
+ *
+ * TWO RULES THIS ENFORCES AND MUST KEEP ENFORCING.
+ *
+ * 1. Nobody is ever deleted. Somebody leaving is `active = 0` with a
+ *    `moved_out_at`, so their bills, proofs and comments stay attributable.
+ *    That is the whole value of the audit trail.
+ *
+ * 2. It never emits a write to an existing person's `mobile` or `email`.
+ *    Those two are behind approval since B22 — see REQUESTABLE_FIELDS and
+ *    canEditField — and an occupancy control that quietly rewrote them would
+ *    be a way round the queue, which is worse than no queue. A NEW person is a
+ *    different act: creating a resident with a number has always been an
+ *    admin's to do, and this changes none of that.
+ */
+export function planOccupancy({
+  people = [], to, owner = null, tenant = null, tenancyStart = null,
+  billed = true, billing = null, reason = null, now = new Date().toISOString(),
+}) {
+  if (!OCCUPANCY_STATES.includes(to)) {
+    return { ok: false, message: `Occupancy must be one of ${OCCUPANCY_STATES.join(', ')}.` };
+  }
+
+  const from = occupancyOf(people);
+  const here = present(people);
+  const curOwner = landlordOf(people);
+  const curTenant = here.find((p) => p.relationship === 'tenant') ?? null;
+
+  const steps = [];
+  const warnings = [];
+  const departed = (id) => steps.push({ op: 'deactivate', id, moved_out_at: now });
+
+  /* ── nobody on file ──────────────────────────────────────────────────── */
+  if (to === 'none') {
+    for (const p of here) departed(p.id);
+
+    // THE DECISION THIS CONTROL EXISTS TO STOP LOSING. With nobody on file
+    // `occupantOf` returns null, so there is no one to bill and no one to send
+    // the bill to — and yet the flat stays on the reading grid, where its
+    // missing reading refuses generation for the whole building. That is the
+    // jam. It is not closed by guessing, so the answer is required here.
+    if (billed) {
+      if (billing !== 'stop' && billing !== 'keep') {
+        return {
+          ok: false, field: 'billing',
+          message: 'With nobody on file, say what happens to the billing: stop billing '
+                 + 'this flat, or keep it billed. It cannot be left unanswered — a billed '
+                 + 'flat with nobody on it needs a meter reading every month, and without '
+                 + 'one no month can close for any flat.',
+        };
+      }
+      if (billing === 'stop') {
+        if (String(reason ?? '').trim().length < 3) {
+          return {
+            ok: false, field: 'reason',
+            message: 'Say why this flat is not being billed. It disappears from the reading '
+                   + 'grid and lowers the count generation checks against, so nothing else '
+                   + 'in the system would ever say why.',
+          };
+        }
+        steps.push({ op: 'flat', active: 0, reason: String(reason).trim() });
+      } else {
+        warnings.push({
+          kind: 'billed-with-nobody-on-file',
+          message: 'This flat stays on the billing roll with nobody on file. It will need '
+                 + 'a meter reading every month, and until it has one no month can be '
+                 + 'generated for any flat.',
+        });
+      }
+    }
+
+    return { ok: true, from, to, steps, warnings };
+  }
+
+  /* ── an owner, at least ──────────────────────────────────────────────── */
+  let ownerId = curOwner?.id ?? null;
+
+  if (owner?.id) {
+    // Keeping the person already on record. Their name may be corrected here;
+    // their number and address may not — see the rule above.
+    if (owner.id !== curOwner?.id) {
+      return { ok: false, field: 'owner', message: 'That person is not the owner on record for this flat.' };
+    }
+    if (nameOf(owner) && nameOf(owner) !== nameOf(curOwner)) {
+      steps.push({ op: 'update', id: curOwner.id, fields: { name: nameOf(owner) } });
+    }
+  } else if (owner) {
+    if (!nameOf(owner) || !mobileOf(owner)) {
+      return { ok: false, field: 'owner', message: NEEDS_OWNER };
+    }
+    // A new owner where one already sits is a sale, and a sale has outstanding
+    // balances to settle — transferFlat's job, not this control's.
+    if (curOwner) {
+      return {
+        ok: false, field: 'owner',
+        message: `${curOwner.name} is already the owner of record. Use the ownership `
+               + 'handover, which settles what they still owe before the flat changes hands.',
+      };
+    }
+    steps.push({
+      op: 'add', relationship: 'owner', name: nameOf(owner),
+      mobile: mobileOf(owner), email: owner.email ?? null,
+      moved_in_at: monthToISO(owner.movedIn) ?? now.slice(0, 10),
+    });
+    ownerId = null;   // assigned by the insert
+  } else if (!curOwner) {
+    return { ok: false, field: 'owner', message: NEEDS_OWNER };
+  }
+
+  /* ── the tenant half ─────────────────────────────────────────────────── */
+  if (to === 'owner') {
+    // The tenancy ended. The owner comes back to occupying and being billed
+    // with no second write, because that is what `occupantOf` already derives
+    // from an absent tenant — the drift 0011 refused to make possible.
+    if (curTenant) departed(curTenant.id);
+  } else {
+    const startedAt = monthToISO(tenancyStart);
+    if (!startedAt) {
+      return {
+        ok: false, field: 'tenancyStart',
+        message: 'When did the tenancy start? The month and year is enough.',
+      };
+    }
+
+    if (tenant?.id) {
+      if (tenant.id !== curTenant?.id) {
+        return { ok: false, field: 'tenant', message: 'That person is not the tenant on record for this flat.' };
+      }
+      const fields = {};
+      if (nameOf(tenant) && nameOf(tenant) !== nameOf(curTenant)) fields.name = nameOf(tenant);
+      if (startedAt !== curTenant.moved_in_at) fields.moved_in_at = startedAt;
+      if (Object.keys(fields).length) steps.push({ op: 'update', id: curTenant.id, fields });
+    } else {
+      if (!nameOf(tenant) || !mobileOf(tenant)) {
+        return { ok: false, field: 'tenant', message: 'A tenant needs a name and their own mobile number.' };
+      }
+      // One meter, one bill: a second active tenant means whichever row the
+      // query returns first is billed and the other is not (TWO-TENANTS).
+      if (curTenant) departed(curTenant.id);
+      steps.push({
+        op: 'add', relationship: 'tenant', name: nameOf(tenant),
+        mobile: mobileOf(tenant), email: tenant.email ?? null, moved_in_at: startedAt,
+      });
+    }
+
+    const clash = contactClash({
+      owner: owner?.id ? curOwner : owner,
+      tenant: tenant?.id ? curTenant : tenant,
+    });
+    if (clash) return { ok: false, ...clash };
+  }
+
+  /* ── back onto the roll ──────────────────────────────────────────────── */
+  // Somebody moving in ENDS the unsold state, and a flat somebody lives in that
+  // is not being billed is the same jam wearing the other face: they burn gas
+  // and are never asked for it. Offered rather than done, because "owned and
+  // deliberately excluded" is a real state the committee is allowed to hold.
+  if (!billed) {
+    if (billing === 'start') {
+      if (String(reason ?? '').trim().length < 3) {
+        return { ok: false, field: 'reason', message: 'Say why this flat is being billed again.' };
+      }
+      steps.push({ op: 'flat', active: 1, reason: String(reason).trim() });
+    } else {
+      warnings.push({
+        kind: 'occupied-but-not-billed',
+        message: 'Somebody is on file for this flat and it is still not being billed. '
+               + 'They will use gas and never be asked for it.',
+      });
+    }
+  }
+
+  if (!steps.length) return { ok: false, message: 'Nothing to change.' };
+  return { ok: true, from, to, steps, warnings };
+}

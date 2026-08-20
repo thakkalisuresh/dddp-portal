@@ -10,6 +10,7 @@ import {
   assertRateSetForPeriod, rateSanity, DEFAULT_CONVERSION,
 } from './billing.js';
 import { fail } from './errors.js';
+import { occupantOf } from './tenancy.js';
 
 /** '2026-06' -> '2026-07' */
 export function nextPeriod(period) {
@@ -29,6 +30,28 @@ export function readMonthFor(period) {
 }
 
 /**
+ * Flat -> the person billed for it, decided ONCE for the whole grid.
+ *
+ * Pure, and separate from the query, because this is the decision that ends up
+ * in `bills.owner_id`. Every row for a flat goes to `occupantOf`, which filters
+ * on `active` itself and picks the tenant over the owner — never re-derived
+ * from `relationship` at the call site (docs/RESIDENTS-OCCUPANCY.md).
+ */
+export function occupantsByFlat(people) {
+  const byFlat = new Map();
+  for (const p of people ?? []) {
+    if (!byFlat.has(p.flat)) byFlat.set(p.flat, []);
+    byFlat.get(p.flat).push(p);
+  }
+  const out = new Map();
+  for (const [flat, rows] of byFlat) {
+    const occupant = occupantOf(rows);
+    if (occupant) out.set(flat, occupant);
+  }
+  return out;
+}
+
+/**
  * Every active flat, with last month's reading and this month's if entered.
  * Flats without a reading are still returned — a missing flat must be visible,
  * because a partial month silently never bills someone.
@@ -36,7 +59,7 @@ export function readMonthFor(period) {
 export async function readingGrid(env, period) {
   const prev = previousPeriod(period);
 
-  const [periodRow, rows, excludedRows] = await Promise.all([
+  const [periodRow, rows, excludedRows, peopleRows] = await Promise.all([
     env.DB.prepare('SELECT * FROM periods WHERE period = ?').bind(period).first(),
     env.DB.prepare(
       // mc is joined here rather than fetched separately because every consumer
@@ -44,11 +67,17 @@ export async function readingGrid(env, period) {
       // about which flats had their meter swapped this month. A second query
       // somewhere else is how the grid shows one number and the bill says
       // another.
+      // The resident is NOT joined here. A flat can have several rows in
+      // `owners` — an absent owner and their tenant both — and a LEFT JOIN
+      // with GROUP BY returns whichever one SQLite reaches first. That was
+      // fine while the column was only a label on a screen; it is not fine now
+      // that generation binds the same person as `bills.owner_id`, because the
+      // wrong pick attaches the bill to the landlord instead of the tenant.
+      // occupantOf decides, off the full set of rows — see occupantsByFlat.
       `SELECT f.flat, f.floor,
               cur.reading  AS reading,
               cur.read_on  AS read_on,
               prv.reading  AS previous,
-              o.name       AS resident,
               mc.old_final AS mc_old_final,
               mc.new_start AS mc_new_start,
               mc.changed_on AS mc_changed_on,
@@ -56,7 +85,6 @@ export async function readingGrid(env, period) {
          FROM flats f
          LEFT JOIN readings cur ON cur.flat = f.flat AND cur.period = ?
          LEFT JOIN readings prv ON prv.flat = f.flat AND prv.period = ?
-         LEFT JOIN owners  o   ON o.flat = f.flat AND o.active = 1
          LEFT JOIN meter_changes mc ON mc.flat = f.flat AND mc.period = ?
         WHERE f.active = 1
         GROUP BY f.flat
@@ -66,14 +94,19 @@ export async function readingGrid(env, period) {
     // them out, so without this list there is no screen anywhere that admits
     // they exist, and no way to put one back.
     env.DB.prepare(
-      `SELECT f.flat, f.floor, o.name AS resident
+      `SELECT f.flat, f.floor
          FROM flats f
-         LEFT JOIN owners o ON o.flat = f.flat AND o.active = 1
         WHERE f.active = 0
-        GROUP BY f.flat
         ORDER BY f.floor, f.flat`
     ).all(),
+    // Every owners row, active and inactive both, because that is what
+    // occupantOf expects to be handed (docs/RESIDENTS-OCCUPANCY.md).
+    env.DB.prepare(
+      'SELECT id, flat, name, relationship, active FROM owners'
+    ).all(),
   ]);
+
+  const occupants = occupantsByFlat(peopleRows.results ?? []);
 
   const factor = periodRow?.conversion_factor ?? DEFAULT_CONVERSION;
 
@@ -102,7 +135,18 @@ export async function readingGrid(env, period) {
     }
 
     const { mc_old_final, mc_new_start, mc_changed_on, mc_note, ...rest } = r;
-    return { ...rest, meterChange, consumption, problem };
+    // `resident` and `residentId` are the same decision, made once. Generation
+    // binds residentId as the bill's owner_id, so a screen that named someone
+    // else would be describing a bill that belongs to a different person.
+    const occupant = occupants.get(r.flat) ?? null;
+    return {
+      ...rest,
+      resident: occupant?.name ?? null,
+      residentId: occupant?.id ?? null,
+      meterChange,
+      consumption,
+      problem,
+    };
   });
 
   return {
@@ -121,7 +165,9 @@ export async function readingGrid(env, period) {
     // nothing", and a month with unsold flats in it can close.
     total: flats.length,
     flats,
-    excluded: excludedRows.results ?? [],
+    excluded: (excludedRows.results ?? []).map((f) => ({
+      ...f, resident: occupants.get(f.flat)?.name ?? null,
+    })),
   };
 }
 
@@ -154,7 +200,20 @@ export async function generateBills(env, period, actorId) {
     .filter((f) => f.reading != null && f.previous != null)
     .map((f) => ({
       flat: f.flat, reading: f.reading, previous: f.previous, meterChange: f.meterChange,
+      ownerId: f.residentId,
     }));
+
+  /**
+   * A flat with a reading and nobody to bill. Refused rather than written with
+   * a NULL owner_id: dashboard.js matches `(owner_id IS NULL OR owner_id = ?)`,
+   * so an unattached bill is readable by whoever occupies the flat next — the
+   * privacy hole migration 0003 closed. This is the FLAT-BILLED-NO-OWNER state
+   * diagnostics warns about, which normally blocks the month earlier (no owner
+   * means no meter walk means no reading, and generation refuses a partial
+   * month). Somebody entering the reading anyway is the case this catches.
+   */
+  const unattached = rows.filter((r) => r.ownerId == null).map((r) => r.flat);
+  if (unattached.length) fail('DDP-BILL-015', { period, flats: unattached });
 
   const preview = previewGeneration({
     rows,
@@ -186,10 +245,10 @@ export async function generateBills(env, period, actorId) {
       ? meterDeltaAcrossChange(r.reading, r.previous, r.meterChange)
       : Math.round((r.reading - r.previous) * 1000) / 1000;
     return env.DB.prepare(
-      `INSERT INTO bills (flat, period, meter_delta, consumption, conversion_factor,
+      `INSERT INTO bills (flat, period, owner_id, meter_delta, consumption, conversion_factor,
                           rate_per_kg, gas_amount, total, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', ?)`
-    ).bind(r.flat, period, delta, consumption, periodRow.conversion_factor,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', ?)`
+    ).bind(r.flat, period, r.ownerId, delta, consumption, periodRow.conversion_factor,
            periodRow.rate_per_kg, gasAmount, total, now);
   });
 

@@ -101,6 +101,41 @@ describe('the checks catch the bugs that actually happened', () => {
     expect(f).toEqual([]);
   });
 
+  it('catches a billed flat with nobody on file — the one that jams a month', () => {
+    // Generation refuses a partial month, so this single flat blocks billing
+    // for all 89 while the readings screen only says "88 of 89 entered".
+    // Nothing anywhere used to say why.
+    const f = checkIntegrity({
+      owners: [owner({ flat: '4A' })],
+      flats: [{ flat: '4A', floor: 4, active: 1 }, { flat: '12F', floor: 12, active: 1 }],
+      readings: [],
+    });
+    const hit = f.find((x) => x.id === 'FLAT-BILLED-NO-OWNER');
+    expect(hit.severity).toBe('fail');
+    expect(hit.rows).toEqual([{ flat: '12F', floor: 12 }]);
+  });
+
+  it('says nothing about a flat that was properly taken off the roll', () => {
+    // Unsold AND marked inactive is the resolved state, not a finding.
+    const f = checkIntegrity({
+      owners: [owner({ flat: '4A' })],
+      flats: [{ flat: '4A', floor: 4, active: 1 }, { flat: '12F', floor: 12, active: 0 }],
+      readings: [],
+    });
+    expect(f.map((x) => x.id)).not.toContain('FLAT-BILLED-NO-OWNER');
+  });
+
+  it('counts a departed owner as nobody on file', () => {
+    // Departure is active = 0 and never a delete, so the row is still there
+    // and a naive "does this flat appear in owners" would miss it.
+    const f = checkIntegrity({
+      owners: [owner({ flat: '4A', active: 0 })],
+      flats: [{ flat: '4A', floor: 4, active: 1 }],
+      readings: [],
+    });
+    expect(f.map((x) => x.id)).toContain('FLAT-BILLED-NO-OWNER');
+  });
+
   it('catches a resident whose flat is not on the register', () => {
     const f = checkIntegrity({ owners: [owner({ flat: '99Z' })], flats: [{ flat: '4A' }], readings: [] });
     expect(f.map((x) => x.id)).toContain('OWNER-NO-FLAT');

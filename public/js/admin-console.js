@@ -465,9 +465,15 @@ async function residentsDirectory() {
   async function load() {
     list.replaceChildren(el('p', { class: 'muted' }, 'Loading…'));
     try {
-      const res = await api.admin.residents({ past: showPast });
+      // Both, because the directory is built from `owners` and the five flats
+      // nobody has bought have no row there. A per-flat control that could not
+      // reach an unsold flat would miss the one case it exists for.
+      const [res, { flats }] = await Promise.all([
+        api.admin.residents({ past: showPast }),
+        api.admin.flats(),
+      ]);
       mailConfigured = res.mailConfigured !== false;
-      groups = groupByFlat(res.residents);
+      groups = groupByFlat(res.residents, flats);
       render();
     } catch (err) { showError(list, err); }
   }
@@ -490,7 +496,7 @@ async function residentsDirectory() {
     // rebuilt each keystroke, so clearing the box collapses the list again —
     // predictable, and the alternative is leaving it expanded on whatever was
     // last looked for.
-    list.replaceChildren(...shown.map((group) => flatCard(group, status, Boolean(query))));
+    list.replaceChildren(...shown.map((group) => flatCard(group, status, Boolean(query), load)));
   }
 
   await load();
@@ -575,23 +581,74 @@ async function billingPanel() {
     } catch (err) { showError(list, err); }
   };
 
-  const set = async (f, billed) => {
-    const reason = prompt(billed
-      ? `Bill ${f.flat} again?\n\nReason (kept on the flat):`
-      : `Stop billing ${f.flat}?\n\n`
-        + 'It leaves the readings screen and every month can close without it, '
-        + 'until you turn it back on here. This is set once, not monthly.\n\n'
-        + (f.unsold
-            ? 'Nobody is on file for this flat.'
-            : `${f.flat} is listed to ${f.residents}. Use this only if nobody is `
-              + 'living there. If somebody is, and simply burned no gas, enter the '
-              + 'same reading as last month instead.')
-        + '\n\nReason (kept on the flat):');
-    if (reason == null) return;
-    try {
-      await api.admin.setFlatActive(f.flat, billed, reason);
-      await load();
-    } catch (err) { showError(status, err); }
+  /**
+   * Ask for the reason IN THE PAGE, not in a `prompt()`.
+   *
+   * This codebase bans suppressible browser dialogs — see askFirst in
+   * public/js/ui.js and the notice-board Withdraw button that did nothing,
+   * said nothing and sent nothing for as long as somebody's browser had
+   * dialogs suppressed. `prompt()` fails the same way and worse: it returns
+   * null, which reads here as "cancelled", so the button was silently dead.
+   *
+   * askFirst itself is not the right shape for this one — a reason is text,
+   * not a yes. So it is the same idiom with a field: the question, an input,
+   * the destructive choice as a real button and the way out as the quiet one.
+   */
+  const set = (f, billed, slot) => {
+    const reason = el('input', {
+      class: 'input',
+      placeholder: billed ? 'Somebody has moved in' : 'Unsold — nobody on file',
+      'aria-label': billed ? `Why ${f.flat} is being billed again`
+                           : `Why ${f.flat} is not being billed`,
+    });
+    const go = el('button', { class: 'btn btn--sm', type: 'button' },
+      billed ? 'Bill it' : 'Stop billing it');
+
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      try {
+        await api.admin.setFlatActive(f.flat, billed, reason.value || reason.placeholder);
+        slot.replaceChildren();
+        await load();
+      } catch (err) { go.disabled = false; showError(slot, err); }
+    });
+
+    slot.replaceChildren(el('div', { class: 'note note--warn stack', style: 'gap:var(--s-3)',
+                                     role: 'alertdialog' },
+      el('p', { class: 'small' }, billed
+        ? `Bill ${f.flat} again? It comes back onto the readings grid from this month.`
+        : `Stop billing ${f.flat}? It leaves the readings screen and every month can `
+          + 'close without it, until you turn it back on here. This is set once, not monthly.'),
+      billed ? null : el('p', { class: 'small' },
+        f.unsold
+          ? 'Nobody is on file for this flat.'
+          : `${f.flat} is listed to ${f.residents}. Use this only if nobody is living `
+            + 'there. If somebody is, and simply burned no gas, enter the same reading '
+            + 'as last month instead — that bills it at zero and keeps it on the roll.'),
+      el('div', { class: 'field' },
+        el('label', {}, 'Why (kept on the flat)'), reason),
+      el('div', { class: 'row', style: 'gap:var(--s-3);flex-wrap:wrap' }, go,
+        el('button', { class: 'linkish small', type: 'button',
+                       onclick: () => slot.replaceChildren() }, 'Leave it as it is'))));
+    reason.focus();
+  };
+
+  /**
+   * One row, with the question opening UNDER it rather than over the page.
+   *
+   * The slot has to be on screen and inside this row: askFirst's own comment
+   * records what happens when it is not — a failed Withdraw asked its question
+   * inside a collapsed <details> and was invisible.
+   */
+  const askRow = (f, billed, ...cells) => {
+    const slot = el('div');
+    return el('div', { class: 'stack', style: 'gap:0' },
+      el('div', { class: 'rowitem' }, ...cells,
+        el('button', {
+          class: 'btn btn--sm btn--quiet', type: 'button',
+          onclick: () => set(f, billed, slot),
+        }, billed ? 'Bill it' : 'Stop billing')),
+      slot);
   };
 
   const render = (flats) => {
@@ -607,7 +664,7 @@ async function billingPanel() {
       off.length
         ? el('div', { class: 'stack', style: 'gap:0' },
             el('p', { class: 'label' }, 'Not being billed'),
-            ...off.map((f) => el('div', { class: 'rowitem' },
+            ...off.map((f) => askRow(f, true,
               el('div', { class: 'rowitem__main' },
                 el('b', {}, f.flat),
                 el('div', { class: 'small' },
@@ -615,11 +672,7 @@ async function billingPanel() {
                 f.reason
                   ? el('div', { class: 'small muted' },
                       `${f.reason}${f.since ? ` · since ${dayLabel(f.since)}` : ''}`)
-                  : null),
-              el('button', {
-                class: 'btn btn--sm btn--quiet', type: 'button',
-                onclick: () => set(f, true),
-              }, 'Bill it'))))
+                  : null))))
         : el('p', { class: 'note note--good' }, 'Every flat is being billed.'),
 
       // Surfaced rather than left to be discovered on the readings screen at
@@ -631,29 +684,21 @@ async function billingPanel() {
             el('p', { class: 'small muted' },
               'Each of these will need a reading before a month can close. If '
               + 'the flat is unsold, stop billing it.'),
-            ...unsold.map((f) => el('div', { class: 'rowitem' },
-              el('div', { class: 'rowitem__main' }, el('b', {}, f.flat)),
-              el('button', {
-                class: 'btn btn--sm btn--quiet', type: 'button',
-                onclick: () => set(f, false),
-              }, 'Stop billing'))))
+            ...unsold.map((f) => askRow(f, false,
+              el('div', { class: 'rowitem__main' }, el('b', {}, f.flat)))))
         : null,
 
       el('details', { style: 'margin-top:var(--s-4)' },
         el('summary', { style: 'font-family:var(--font-ui);cursor:pointer' },
           'Every flat'),
         el('div', { class: 'stack', style: 'gap:0;margin-top:var(--s-3)' },
-          ...flats.map((f) => el('div', { class: 'rowitem' },
+          ...flats.map((f) => askRow(f, !f.billed,
             el('div', { class: 'rowitem__main' },
               el('b', {}, f.flat),
               el('div', { class: 'small muted' },
                 f.residents ?? 'Nobody on file')),
             el('span', { class: `chip ${f.billed ? 'chip--paid' : 'chip--awaiting'}` },
-              f.billed ? 'Billed' : 'Not billed'),
-            el('button', {
-              class: 'btn btn--sm btn--quiet', type: 'button',
-              onclick: () => set(f, !f.billed),
-            }, f.billed ? 'Stop billing' : 'Bill it'))))));
+              f.billed ? 'Billed' : 'Not billed'))))));
   };
 
   await load();
@@ -680,30 +725,56 @@ function matchesFlat(group, query) {
     || (digits.length >= 3 && String(p.mobile ?? '').replace(/\D/g, '').includes(digits)));
 }
 
-/** [{flat, floor, people}] in the order the server sent, flats not repeated. */
-function groupByFlat(residents) {
+/**
+ * [{flat, floor, billed, reason, people}], flats not repeated.
+ *
+ * SEEDED FROM FLATS, not from the people. Grouping the residents alone can
+ * only ever produce flats that already have somebody in them, so the five
+ * nobody has bought would have no card and no occupancy control — and those
+ * are precisely the flats this control is for. `flats` also carries whether
+ * the flat is billed, which is the other half of the same question.
+ */
+function groupByFlat(residents, flats = []) {
   const byFlat = new Map();
+  for (const f of flats) {
+    byFlat.set(f.flat, {
+      flat: f.flat, floor: f.floor, billed: f.billed,
+      reason: f.reason ?? null, since: f.since ?? null, people: [],
+    });
+  }
   for (const r of residents) {
-    if (!byFlat.has(r.flat)) byFlat.set(r.flat, { flat: r.flat, floor: r.floor, people: [] });
+    if (!byFlat.has(r.flat)) {
+      // A resident whose flat is not on the register — diagnostics calls it
+      // OWNER-NO-FLAT. Shown rather than dropped: hiding them is how it stays
+      // unnoticed.
+      byFlat.set(r.flat, { flat: r.flat, floor: r.floor, billed: true, people: [] });
+    }
     byFlat.get(r.flat).people.push(r);
   }
   return [...byFlat.values()];
 }
 
-function flatCard(group, status, open = false) {
+function flatCard(group, status, open = false, reload = async () => {}) {
   const current = group.people.filter((p) => p.active !== 0);
   // Tenanted is derived, never stored — an active tenant in the flat means the
   // tenant is billed and the owner is absent (migration 0011).
   const tenanted = current.some((p) => p.relationship === 'tenant');
   const names = (current.length ? current : group.people).map((p) => p.name).join(', ');
+  const state = occupancyOf(group.people);
 
   return el('details', { class: 'flat', open: open || null },
     el('summary', {},
       el('span', { class: 'flat__no' }, group.flat),
       el('span', { class: 'flat__who' }, names || 'No current resident'),
       tenanted ? el('span', { class: 'chip chip--neutral' }, 'Tenanted') : null,
+      // The gap diagnostics warns about as TENANT-NO-OWNER, said on the card
+      // rather than only in a report nobody has open: the tenant is billed and
+      // nobody is liable if they leave owing.
+      state === 'tenant-only' ? el('span', { class: 'chip chip--awaiting' }, 'No owner') : null,
+      group.billed === false ? el('span', { class: 'chip chip--neutral' }, 'Not billed') : null,
       current.some((p) => p.must_change_pw)
         ? el('span', { class: 'chip chip--awaiting' }, 'Temp password') : null),
+    occupancyControl(group, status, reload),
     ...group.people.map((p) => personCard(p, status)));
 }
 
@@ -1733,4 +1804,306 @@ async function lateFeesPanel() {
 
   draw().catch((err) => showError(wrap, err));
   return wrap;
+}
+
+/* ── occupancy ─────────────────────────────────────────────────────────── */
+
+/**
+ * ONE control for who is in a flat.
+ *
+ * It used to be two errands on one tab and nobody thinks of them as two: the
+ * `relationship` picked while adding a person, and whether the flat is billed
+ * at all, in a separate list further down. "12F is unsold" is a single fact,
+ * and the split is exactly how a flat ends up with nobody on file, still on
+ * the billing roll, holding the month open for the other 88.
+ *
+ * NOTHING HERE IS STORED AS A STATE. The dropdown writes `owners` rows and
+ * `flats.active`, and the state is read back out of them — migration 0011's
+ * rule, whose reason is that a stored copy drifts the first time a tenant
+ * leaves and nobody flips the owner back. The server plans the writes
+ * (`planOccupancy`); this collects the answers and shows what came back.
+ */
+const OCCUPANCY_OPTIONS = [
+  ['none', 'No owner — nobody on file'],
+  ['owner', 'Owner'],
+  ['owner+tenant', 'Owner + tenant'],
+];
+
+/** The same derivation the server does, so the screen cannot disagree with it. */
+function occupancyOf(people) {
+  const here = people.filter((p) => p.active !== 0);
+  if (!here.length) return 'none';
+  const tenanted = here.some((p) => p.relationship === 'tenant');
+  const owned = here.some((p) => p.relationship === 'owner');
+  if (tenanted) return owned ? 'owner+tenant' : 'tenant-only';
+  return 'owner';
+}
+
+/** '2026-08-01' or a full timestamp -> '2026-08', for <input type="month">. */
+function monthInput(iso) {
+  const m = /^(\d{4})-(\d{2})/.exec(String(iso ?? ''));
+  return m ? `${m[1]}-${m[2]}` : '';
+}
+
+/** '2026-08-01' -> '08/26'. Short form on screen, ISO in the column. */
+function monthLabel(iso) {
+  const m = /^(\d{4})-(\d{2})/.exec(String(iso ?? ''));
+  return m ? `${m[2]}/${m[1].slice(2)}` : null;
+}
+
+function occupancyControl(group, status, reload) {
+  const state = occupancyOf(group.people);
+  const here = group.people.filter((p) => p.active !== 0);
+  const curOwner = here.find((p) => p.relationship === 'owner') ?? null;
+  const curTenant = here.find((p) => p.relationship === 'tenant') ?? null;
+  const billed = group.billed !== false;
+
+  const form = el('div');
+
+  const select = el('select', { class: 'input', id: `occ-${group.flat}` },
+    // The fourth state is real and is not one of the three. An active tenant
+    // with no owner on record arrives without anybody choosing it — deactivate
+    // the owner of a let flat and you are in it — and diagnostics has warned
+    // about it as TENANT-NO-OWNER all along. Making it unrepresentable here
+    // would leave the flats already in it with a dropdown that lies. So it is
+    // shown, disabled, as what the flat IS; the way out is to pick
+    // "Owner + tenant" and fill in the owner, which is the repair.
+    ...(state === 'tenant-only'
+      ? [el('option', { value: 'tenant-only', disabled: true, selected: true },
+            'Tenant, no owner on record — needs an owner')]
+      : []),
+    ...OCCUPANCY_OPTIONS.map(([value, label]) =>
+      el('option', { value, selected: value === state || null }, label)));
+
+  // The form opens with the choice. A dropdown that silently fills in a panel
+  // inside a collapsed <details> is the mistake askFirst's own comment records:
+  // the question was asked somewhere nobody could see it.
+  const panel = el('details', { ontoggle: () => { if (panel.open && !form.firstChild) draw(select.value); } },
+    el('summary', { style: 'font-family:var(--font-ui);cursor:pointer' },
+      state === 'tenant-only' ? 'Add the owner' : 'Change this'),
+    el('div', { style: 'margin-top:var(--s-3)' }, form));
+
+  select.addEventListener('change', () => { draw(select.value); panel.open = true; });
+
+  function draw(chosen) {
+    // 'tenant-only' is a state, never a target — the dropdown shows it as what
+    // the flat IS and the only way out of it is to supply the owner, which is
+    // what 'owner+tenant' does. Opening the panel on such a flat therefore
+    // draws the repair, with the tenant already filled in.
+    const to = chosen === 'tenant-only' ? 'owner+tenant' : chosen;
+    status.replaceChildren();
+    form.replaceChildren(to === 'none' ? emptyForm() : peopleForm(to));
+  }
+
+
+  /* ── nobody on file ──────────────────────────────────────────────────── */
+  function emptyForm() {
+    const leaving = here.map((p) => p.name).join(' and ');
+    const reason = el('input', {
+      class: 'input', placeholder: 'Unsold — nobody on file',
+      'aria-label': `Why ${group.flat} is not being billed`,
+    });
+    const stop = el('input', { type: 'radio', name: `bill-${group.flat}`, checked: true });
+    const keep = el('input', { type: 'radio', name: `bill-${group.flat}` });
+    const reasonRow = el('div', { class: 'field' },
+      el('label', {}, 'Why (kept on the flat)'), reason);
+    const repaint = () => { reasonRow.hidden = !stop.checked; };
+    stop.addEventListener('change', repaint);
+    keep.addEventListener('change', repaint);
+
+    return el('div', { class: 'stack' },
+      leaving
+        ? el('p', { class: 'note note--warn small' },
+            `${leaving} will be marked as moved out. Nobody is deleted — their bills, `
+            + 'payments and comments stay attributable, and they lose access from now on.')
+        : null,
+
+      // THE QUESTION THIS CONTROL EXISTS TO STOP LOSING. With nobody on file
+      // there is no one to bill and no one to send a bill to, and the flat
+      // stays on the reading grid regardless — where the reading it will never
+      // have refuses generation for the entire building. So it is asked here,
+      // once, rather than discovered at the end of a meter walk.
+      billed
+        ? el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+            el('p', { class: 'label' }, `${group.flat} is currently being billed`),
+            el('label', { class: 'small', style: 'display:flex;gap:var(--s-2)' },
+              stop, 'Stop billing it — it leaves the readings grid until somebody moves in'),
+            el('label', { class: 'small', style: 'display:flex;gap:var(--s-2)' },
+              keep, 'Keep it billed — it will need a meter reading every month, '
+                  + 'and no month can close for any flat until it has one'),
+            reasonRow)
+        : el('p', { class: 'small muted' }, `${group.flat} is already not being billed.`),
+
+      save(() => ({
+        to: 'none',
+        billing: billed ? (stop.checked ? 'stop' : 'keep') : null,
+        reason: reason.value || reason.placeholder,
+      })));
+  }
+
+  /* ── an owner, and possibly a tenant ─────────────────────────────────── */
+  function peopleForm(to) {
+    const ownerName = el('input', {
+      class: 'input', value: curOwner?.name ?? '', placeholder: 'Name',
+      'aria-label': `Owner of ${group.flat}` });
+    const ownerMobile = mobileField('', { label: `Owner's mobile` });
+    const ownerEmail = el('input', {
+      class: 'input', type: 'email', placeholder: 'none', 'aria-label': `Owner's email` });
+
+    const ownerBlock = curOwner
+      ? el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+          el('p', { class: 'label' }, 'Owner'),
+          el('div', { class: 'field' }, el('label', {}, 'Name'), ownerName),
+          // Deliberately not editable here. mobile and email are behind
+          // approval since B22 — an occupancy control that quietly rewrote
+          // them would be a way round the queue, which is worse than no queue.
+          // The person's own row below has the Request button.
+          el('p', { class: 'small muted' },
+            `${curOwner.mobile}${curOwner.email ? ` · ${curOwner.email}` : ''} — `
+            + 'change these from their own row below.'))
+      : el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+          el('p', { class: 'label' }, 'Owner'),
+          el('div', { class: 'field' }, el('label', {}, 'Name'), ownerName),
+          el('div', { class: 'field' }, el('label', {}, 'Mobile'), ownerMobile.node),
+          el('div', { class: 'field' }, el('label', {}, 'Email'), ownerEmail));
+
+    /* the tenant half */
+    const replace = el('input', { type: 'checkbox' });
+    const tenantName = el('input', {
+      class: 'input', value: curTenant?.name ?? '', placeholder: 'Name',
+      'aria-label': `Tenant of ${group.flat}` });
+    const tenantMobile = mobileField('', { label: `Tenant's mobile` });
+    const tenantEmail = el('input', {
+      class: 'input', type: 'email', placeholder: 'none', 'aria-label': `Tenant's email` });
+    // Month and year is what anybody actually remembers. Stored as the first of
+    // that month in ISO — 'mm/yy' would sort 01/27 before 08/26 and break every
+    // comparison against moved_out_at and the billing periods.
+    const started = el('input', {
+      class: 'input', type: 'month', value: monthInput(curTenant?.moved_in_at),
+      'aria-label': `When the tenancy of ${group.flat} started` });
+
+    const newTenantRows = el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+      el('div', { class: 'field' }, el('label', {}, 'Mobile'), tenantMobile.node),
+      // The one collision the schema cannot absorb, said before it is hit:
+      // owners.mobile is NOT NULL UNIQUE because it is the login id, so a
+      // landlord handing over their own number for their tenant produces a
+      // constraint violation. The server checks it too and answers with the
+      // same sentence rather than a 500.
+      el('p', { class: 'small muted' },
+        'Their own number, not the owner’s — it is the login id, so one number '
+        + 'is one account.'),
+      el('div', { class: 'field' }, el('label', {}, 'Email'), tenantEmail));
+
+    if (curTenant) newTenantRows.hidden = true;
+    replace.addEventListener('change', () => {
+      newTenantRows.hidden = !replace.checked;
+      tenantName.value = replace.checked ? '' : (curTenant?.name ?? '');
+    });
+
+    const tenantBlock = el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+      el('p', { class: 'label' }, 'Tenant'),
+      curTenant
+        ? el('label', { class: 'small', style: 'display:flex;gap:var(--s-2)' },
+            replace, `A different tenant has moved in — ${curTenant.name} has left`)
+        : null,
+      el('div', { class: 'field' }, el('label', {}, 'Name'), tenantName),
+      newTenantRows,
+      el('div', { class: 'field' },
+        el('label', {}, 'Tenancy started'), started));
+
+    const billingBack = el('input', { type: 'checkbox', checked: true });
+    const billingReason = el('input', {
+      class: 'input', placeholder: 'Somebody has moved in',
+      'aria-label': `Why ${group.flat} is being billed again` });
+
+    return el('div', { class: 'stack' },
+      ownerBlock,
+      to === 'owner+tenant' ? tenantBlock : null,
+      to === 'owner' && curTenant
+        ? el('p', { class: 'note note--warn small' },
+            `${curTenant.name} will be marked as moved out, and ${curOwner?.name ?? 'the owner'} `
+            + 'goes back to being the one billed. Nothing else is written — who is billed '
+            + 'is read from who is here.')
+        : null,
+
+      // A flat somebody lives in that is not being billed is the same jam
+      // wearing the other face: they burn gas and are never asked for it.
+      // Offered rather than done, because "owned, empty, deliberately left off"
+      // is a state the committee is allowed to hold.
+      !billed
+        ? el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+            el('p', { class: 'note note--warn small' },
+              `${group.flat} is not being billed${group.reason ? ` — “${group.reason}”` : ''}.`),
+            el('label', { class: 'small', style: 'display:flex;gap:var(--s-2)' },
+              billingBack, 'Bill it again'),
+            el('div', { class: 'field' },
+              el('label', {}, 'Why (kept on the flat)'), billingReason))
+        : null,
+
+      save(() => ({
+        to,
+        owner: curOwner
+          ? { id: curOwner.id, name: ownerName.value }
+          : { name: ownerName.value, mobile: ownerMobile.value(), email: ownerEmail.value || null },
+        tenant: to !== 'owner+tenant' ? null
+          : (curTenant && !replace.checked)
+              ? { id: curTenant.id, name: tenantName.value }
+              : { name: tenantName.value, mobile: tenantMobile.value(), email: tenantEmail.value || null },
+        tenancyStart: to === 'owner+tenant' ? started.value : null,
+        billing: !billed && billingBack.checked ? 'start' : null,
+        reason: billingReason.value || billingReason.placeholder,
+      })));
+  }
+
+  function save(body) {
+    const btn = el('button', { class: 'btn', type: 'button' }, 'Save');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      status.replaceChildren();
+      try {
+        const r = await api.admin.setOccupancy(group.flat, body());
+        // The panel's own status, at the top of the tab — NOT a slot inside
+        // this card. Reloading rebuilds every card, so anything written into
+        // this one lands on a node that is no longer in the document, and a
+        // temporary password has no second chance to be read.
+        status.replaceChildren(occupancyResult(r, group.flat));
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        // Reloaded rather than patched in place: this writes people AND the
+        // flat's billing, so every card and count on the tab is now stale.
+        await reload();
+      } catch (err) {
+        btn.disabled = false;
+        showError(status, err);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    });
+    return el('div', { class: 'row', style: 'gap:var(--s-3)' }, btn);
+  }
+
+  return el('div', { class: 'stack', style: 'gap:var(--s-3);margin:var(--s-3) 0' },
+    el('div', { class: 'field' },
+      el('label', { for: `occ-${group.flat}` }, 'Who is in this flat'), select),
+    curTenant?.moved_in_at
+      ? el('p', { class: 'small muted' },
+          `Tenancy started ${monthLabel(curTenant.moved_in_at) ?? curTenant.moved_in_at}.`)
+      : null,
+    panel);
+
+  function occupancyResult(r, flat) {
+    return el('div', { class: 'note note--good stack' },
+      el('p', { class: 'label' }, `${flat} is now ${labelFor(r.to)}`),
+      ...(r.warnings ?? []).map((w) => el('p', { class: 'small' }, w.message)),
+      // Shown once and never stored, exactly as adding a resident does. There
+      // is no second chance to read it — a reset is the only way back.
+      ...(r.issued ?? []).map((i) => el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+        el('p', { class: 'small' }, `Temporary password for ${i.name} (${i.relationship}):`),
+        el('p', { style: 'font-family:var(--font-ui);font-size:var(--text-xl);font-weight:600' },
+          i.oneTimePassword),
+        el('a', { class: 'btn btn--sm btn--quiet', href: i.whatsapp, target: '_blank',
+                  rel: 'noopener' }, `Send it to ${i.name} on WhatsApp`))));
+  }
+}
+
+function labelFor(state) {
+  return OCCUPANCY_OPTIONS.find(([v]) => v === state)?.[1] ?? state;
 }
