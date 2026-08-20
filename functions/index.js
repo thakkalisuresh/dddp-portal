@@ -10,9 +10,15 @@ import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex, deriv
 import { dashboardPayload } from './lib/dashboard.js';
 import {
   readingGrid, saveReadings, generateBills, openPeriod, parseReadings,
-  previousPeriod, jumpWarning, changeRate, normaliseFlat,
+  previousPeriod, jumpWarning, changeRate, planRateChange, normaliseFlat,
 } from './lib/admin.js';
-import { previewGeneration, computeBill, isExempt } from './lib/billing.js';
+import { previewGeneration, computeBill, isExempt, DEFAULT_CONVERSION } from './lib/billing.js';
+import {
+  publishBills, drainAnnouncements, announcementCounts, unreachableFlats,
+} from './lib/announce.js';
+import {
+  planReadingCorrection, priceCorrectionTotals, READING_FIELD, PRICE_FIELD,
+} from './lib/corrections.js';
 import { latestEndedPeriod, boardStage, daysOverdue, tallyByStatus } from './lib/summary.js';
 import { istToday } from './lib/time.js';
 import { reminderDecision, batchDecision, reminderEmail, periodLabel, MAX_REMINDERS }
@@ -283,6 +289,24 @@ export default {
         if (route.startsWith('POST /api/admin/periods/') && path.endsWith('/generate')) {
           return postGenerate(env, session, path);
         }
+        // Publishing IS generating, plus an outbox — see publishBills. The
+        // /generate route stays for the CLI and the tests; nothing in the
+        // console calls it any more.
+        if (route.startsWith('POST /api/admin/periods/') && path.endsWith('/publish')) {
+          return postPublish(request, env, session, path);
+        }
+        if (route.startsWith('POST /api/admin/periods/') && path.endsWith('/announce')) {
+          return postAnnounce(request, env, session, path);
+        }
+        if (route.startsWith('GET /api/admin/periods/') && path.endsWith('/announcements')) {
+          return getAnnouncements(env, path);
+        }
+        // The month-wide half of the correction rule. A locked month refuses a
+        // direct rate change (DDP-BILL-012) and always will; this is the route
+        // that goes to two other admins instead.
+        if (route.startsWith('POST /api/admin/periods/') && path.endsWith('/price-correction')) {
+          return requestPriceCorrection(request, env, session, path);
+        }
         if (route === 'GET /api/admin/proofs') return proofQueue(env);
         if (request.method === 'POST' && /^\/api\/admin\/proofs\/\d+\/approve$/.test(path)) {
           return reviewProof(env, session, path, true);
@@ -303,6 +327,12 @@ export default {
         if (route === 'GET /api/admin/bills') return godBills(env, url);
         if (route.startsWith('PATCH /api/admin/bill/')) {
           return editBill(request, env, session, path);
+        }
+        // The per-flat half of the correction rule: the corrected READING and
+        // the total it produces, never a total somebody chose. Same approval
+        // machinery, same two other admins.
+        if (request.method === 'POST' && /^\/api\/admin\/bills\/\d+\/reading-correction$/.test(path)) {
+          return requestReadingCorrection(request, env, session, path);
         }
 
         // Approving is an ADMIN action, not a god one — the whole point is that
@@ -3268,6 +3298,18 @@ async function getReadings(env, url) {
   // the stored reading. The grid must be able to warn about a value as it is
   // typed; deriving the warning server-side from an already-saved reading means
   // it can only ever fire after the fact, which is the wrong way round.
+  // The bill each flat already has for THIS month, once there is one.
+  //
+  // Carried on the grid so the published state can offer a reading correction
+  // without a second round trip that would have to re-answer "which bill is
+  // 4A's August one" — a question this row already knows the answer to. Null
+  // for every flat until the month is published, which is exactly when the
+  // control appears.
+  const raised = await env.DB.prepare(
+    'SELECT id, flat FROM bills WHERE period = ?'
+  ).bind(period).all();
+  const billOf = new Map((raised.results ?? []).map((b) => [b.flat, b.id]));
+
   grid.flats = grid.flats.map((f) => {
     const past = (byFlat.get(f.flat) ?? []).filter((n) => Number.isFinite(n) && n > 0);
     const average = past.length >= 2
@@ -3276,6 +3318,7 @@ async function getReadings(env, url) {
     return {
       ...f,
       average,
+      billId: billOf.get(f.flat) ?? null,
       jump: f.consumption == null ? null : jumpWarning(f.consumption, past),
     };
   });
@@ -3385,6 +3428,45 @@ async function patchPeriodRate(request, env, session, path) {
   const body = await readJson(request);
   const dryRun = body?.dryRun === true;
 
+  /**
+   * The due date and the late fee, without the rate.
+   *
+   * Separated because neither moves a single amount: nothing recalculates, so
+   * there is no impact to show and nothing for an approver to agree to. Step 1
+   * of the Billing tab holds all three together, and before this there was no
+   * way to change two of them once the month was open — the treasurer's only
+   * route was to open the month again, which `periods` refuses.
+   *
+   * A locked month is still refused. The due date on a published month is
+   * printed on 89 bills and quoted in 89 emails.
+   */
+  if (body?.ratePerKg == null) {
+    const periodRow = await env.DB.prepare('SELECT status FROM periods WHERE period = ?')
+      .bind(period).first();
+    if (!periodRow) return problem(404, 'DDP-BILL-005', 'No such month.');
+    if (periodRow.status === 'locked') {
+      return problem(409, 'DDP-BILL-007',
+        `${periodName(period)} is published, so its due date cannot be moved. `
+        + 'Residents have already been told this one.');
+    }
+
+    const dueDate = String(body?.dueDate ?? '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
+      return problem(400, 'DDP-SYS-003', 'That is not a date.');
+    }
+    const lateFee = Number(body?.lateFee ?? 0);
+    // Whole rupees. `periods` carries CHECK (late_fee = CAST(late_fee AS
+    // INTEGER)), so 50.50 would pass here and die at the database as a 500.
+    if (!Number.isInteger(lateFee) || lateFee < 0) {
+      return problem(400, 'DDP-BILL-008', 'The late fee is whole rupees. No paise.');
+    }
+
+    await env.DB.prepare('UPDATE periods SET due_date = ?, late_fee = ? WHERE period = ?')
+      .bind(dueDate, lateFee, period).run();
+    await audit(env, session, 'period.terms', { period, dueDate, lateFee });
+    return json({ period, dueDate, lateFee });
+  }
+
   let result;
   try {
     result = await changeRate(env, {
@@ -3435,6 +3517,247 @@ async function postGenerate(env, session, path) {
   const result = await generateBills(env, period, session.actor.id);
   await audit(env, session, 'bills.generate', result);
   return json(result, { status: 201 });
+}
+
+/**
+ * Publish a month: generate the bills, and queue the telling of it.
+ *
+ * Any admin, alone — the same as generation has always been. What needs two
+ * other admins is CORRECTING a published month, and that is the point of
+ * publishing being a distinct act: most mistakes are now caught in the draft,
+ * before anybody has seen a bill, so the two-admin rule guards genuine errors
+ * rather than ordinary typos.
+ *
+ * Nothing is sent here. The outbox is drained separately, 20 at a time, for
+ * the subrequest reasons set out in announce.js.
+ */
+async function postPublish(request, env, session, path) {
+  const period = decodeURIComponent(path.split('/')[4] ?? '');
+
+  let result;
+  try {
+    result = await publishBills(env, period, session.actor.id);
+  } catch (err) {
+    // The blocker the Billing tab has to draw as ITS OWN THING, not as a
+    // missing reading. A flat being billed with nobody on file cannot produce
+    // a bill however many readings are entered, and the treasurer who reads
+    // this as "one more meter to walk" goes looking for a meter that is not
+    // there. The flats come back named so the screen can link to each card.
+    if (err?.code === 'DDP-BILL-015') {
+      await reportError(env, 'DDP-BILL-015', { period, flats: err.details?.flats ?? [] });
+      return problem(409, 'DDP-BILL-015',
+        'Some flats are being billed with nobody on record, so their bills '
+        + 'would have no one to go to. Put a resident on each, or stop billing '
+        + 'the flat — both are on the Residents tab.',
+        { flats: err.details?.flats ?? [] });
+    }
+    throw err;
+  }
+
+  await audit(env, session, 'bills.publish', result);
+  return json(result, { status: 201 });
+}
+
+/**
+ * Send the next slice of a month's announcements.
+ *
+ * Called in a loop by the console behind a progress bar, and by the 3am cron
+ * for whatever is left. Both are the same operation — see drainAnnouncements —
+ * so the treasurer closing the laptop mid-drain costs nothing.
+ */
+async function postAnnounce(request, env, session, path) {
+  const period = decodeURIComponent(path.split('/')[4] ?? '');
+  const result = await drainAnnouncements(env, period, {
+    origin: new URL(request.url).origin,
+  });
+
+  // Recorded per drain rather than per row: 89 identical warn rows would bury
+  // the digest, and what a human needs to know is that this month's telling is
+  // not finishing on its own.
+  if (result.failed) {
+    await reportError(env, 'DDP-BILL-018', { period, failed: result.failed });
+  }
+  return json(result);
+}
+
+/**
+ * How the month's telling stands, plus the flats nobody could email.
+ *
+ * The WhatsApp list is here rather than computed on the client because it needs
+ * `owners.mobile`, and the mobile is the login id — it is not in any payload
+ * the console already holds. Read off `bills.owner_id`, never re-derived: the
+ * bill already knows whose it is (docs/RESIDENTS-OCCUPANCY.md).
+ */
+async function getAnnouncements(env, path) {
+  const period = decodeURIComponent(path.split('/')[4] ?? '');
+  const [counts, unreachable] = await Promise.all([
+    announcementCounts(env, period),
+    unreachableFlats(env, period),
+  ]);
+  return json({ period, counts, unreachable });
+}
+
+/**
+ * Correct a published month's price of gas — every bill in it.
+ *
+ * ANY ADMIN MAY ASK, two others approve. That is a change from the rule this
+ * replaces, where a locked month refused the rate outright and named the
+ * superadmin (DDP-BILL-012). The refusal stays on the direct route; what is new
+ * is that there is now a route with a committee at the end of it, because "the
+ * supplier priced August wrong" is a real thing that happens after bills go
+ * out, and the only alternative was 89 hand-typed amounts — the exact thing
+ * this whole design removes.
+ *
+ * Held as ONE request rather than 89. The approver sees the month's totals move
+ * because that is what they are agreeing to; agreeing to it flat by flat would
+ * be 89 decisions about one decision.
+ */
+async function requestPriceCorrection(request, env, session, path) {
+  const period = decodeURIComponent(path.split('/')[4] ?? '');
+  const body = await readJson(request);
+  const ratePerKg = Number(body?.ratePerKg);
+  const reason = checkReason('rate_per_kg', body?.reason);
+
+  const periodRow = await env.DB.prepare('SELECT * FROM periods WHERE period = ?')
+    .bind(period).first();
+  if (!periodRow) return problem(404, 'DDP-BILL-005', 'No such month.');
+  if (!Number.isFinite(ratePerKg) || ratePerKg <= 0) {
+    return problem(400, 'DDP-BILL-005', 'That is not a price.');
+  }
+  if (ratePerKg === periodRow.rate_per_kg) {
+    // Equality is its own case. Falling through to the recalculation would tell
+    // the committee that every bill in the month is about to move while both
+    // sides of the sentence showed the same figure.
+    return json({ ok: true, unchanged: true });
+  }
+
+  const rows = await env.DB.prepare(
+    `SELECT id, flat, consumption, gas_amount, other_charges, additional_charges,
+            late_fee, total, status, manual_total
+       FROM bills WHERE period = ? ORDER BY id`
+  ).bind(period).all();
+  const bills = rows.results ?? [];
+  if (!bills.length) {
+    return problem(409, 'DDP-BILL-005',
+      'No bills exist for that month yet, so there is nothing to correct. '
+      + 'Change the rate on the Billing tab instead.');
+  }
+
+  const plan = planRateChange(bills, {
+    ratePerKg, conversionFactor: periodRow.conversion_factor,
+  });
+  const totals = priceCorrectionTotals(plan, bills);
+
+  if (body?.dryRun === true) {
+    return json({ period, from: periodRow.rate_per_kg, to: ratePerKg, dryRun: true,
+                  ...plan, totals });
+  }
+
+  /**
+   * THE ANCHOR, said out loud because it is the one liberty this takes.
+   *
+   * `bill_edit_requests.bill_id` is NOT NULL, and this request is about the
+   * month rather than about one bill. It is anchored to the month's first bill
+   * — a real bill, really affected — and `field` names it as period-level so
+   * nothing mistakes it for an edit to that flat.
+   *
+   * The consequence that has to be handled rather than inherited: the approval
+   * policy excludes the bill's own HOUSEHOLD, which is right for one flat's
+   * bill and wrong for a change to all of them. Passing no flat is what makes
+   * every admin but the requester eligible, which is the rule the committee
+   * actually agreed.
+   */
+  const anchor = bills[0];
+  return requestBillEdit(env, session, {
+    bill: { ...anchor, flat: null, period },
+    field: PRICE_FIELD,
+    value: ratePerKg,
+    reason,
+    totalBefore: totals.totalBefore,
+    totalAfter: totals.totalAfter,
+    origin: new URL(request.url).origin,
+  });
+}
+
+/**
+ * Correct one flat's meter reading on a published month.
+ *
+ * The request carries the corrected READING and the total it produces, rather
+ * than a total somebody chose — which is the whole difference between this and
+ * the path it replaces. Every rupee still traces to a meter reading and a rate.
+ */
+async function requestReadingCorrection(request, env, session, path) {
+  const id = Number(path.split('/')[4]);
+  const bill = await env.DB.prepare('SELECT * FROM bills WHERE id = ?').bind(id).first();
+  if (!bill) return problem(404, 'DDP-ADMIN-010', 'No such bill.');
+
+  const body = await readJson(request);
+  const reason = checkReason('reading', body?.reason);
+
+  const context = await readingContext(env, bill);
+  if (!context) {
+    return problem(409, 'DDP-BILL-005',
+      'That month has no rate on record, so a corrected reading cannot be priced.');
+  }
+
+  let plan;
+  try {
+    plan = planReadingCorrection({ bill, reading: body?.reading, ...context });
+  } catch (err) {
+    if (err?.code === 'DDP-BILL-002') {
+      return problem(400, 'DDP-BILL-002',
+        `Meters don’t go down. Last month’s reading for ${bill.flat} was ${context.previous}.`);
+    }
+    if (err?.code === 'DDP-BILL-001') {
+      return problem(400, 'DDP-BILL-001', 'That is not a meter reading.');
+    }
+    throw err;
+  }
+
+  if (plan.total === bill.total && plan.reading === context.currentReading) {
+    return json({ ok: true, unchanged: true });
+  }
+
+  return requestBillEdit(env, session, {
+    bill,
+    field: READING_FIELD,
+    value: plan.reading,
+    reason,
+    totalBefore: bill.total,
+    totalAfter: plan.total,
+    origin: new URL(request.url).origin,
+  });
+}
+
+/**
+ * Everything pricing a corrected reading needs: last month's figure, this
+ * month's, the rate it was billed at, and any meter change.
+ *
+ * The rate comes from the BILL, not from the period. `bills.rate_per_kg` is a
+ * snapshot — a bill keeps the rate it was generated with — so pricing a
+ * corrected reading off the period row would silently apply a later price
+ * change to one flat, which is precisely the per-flat rate the design rules
+ * out.
+ */
+async function readingContext(env, bill) {
+  const prev = previousPeriod(bill.period);
+  const [current, previous, change] = await Promise.all([
+    env.DB.prepare('SELECT reading FROM readings WHERE flat = ? AND period = ?')
+      .bind(bill.flat, bill.period).first(),
+    env.DB.prepare('SELECT reading FROM readings WHERE flat = ? AND period = ?')
+      .bind(bill.flat, prev).first(),
+    env.DB.prepare('SELECT old_final, new_start, changed_on FROM meter_changes WHERE flat = ? AND period = ?')
+      .bind(bill.flat, bill.period).first(),
+  ]);
+  if (!Number.isFinite(bill.rate_per_kg) || bill.rate_per_kg <= 0) return null;
+
+  return {
+    currentReading: current?.reading ?? null,
+    previous: previous?.reading ?? null,
+    ratePerKg: bill.rate_per_kg,
+    conversionFactor: bill.conversion_factor ?? DEFAULT_CONVERSION,
+    meterChange: change ? { ...change, new_start: change.new_start ?? 0 } : null,
+  };
 }
 
 // ── god mode ────────────────────────────────────────────────────────────
@@ -3752,8 +4075,13 @@ async function writeBillEdit(env, session, { bill, field, value, reason, actorId
  * here: the proposed value waits in its own row, because a bill that briefly
  * says something nobody approved is exactly what this is preventing.
  */
-async function requestBillEdit(env, session, { bill, field, value, reason, totalAfter, origin = '' }) {
+async function requestBillEdit(env, session, { bill, field, value, reason, totalAfter,
+                                              totalBefore = null, origin = '' }) {
   const policy = await policyFor(env, { bill, requesterId: session.actor.id });
+  // A month-wide price correction moves the MONTH's total, not the anchor
+  // bill's, so the pair of figures an approver is shown has to come from the
+  // caller. Everything else is about one bill and reads it off the bill.
+  const before = totalBefore ?? bill.total;
 
   if (!policy.satisfiable) {
     await reportError(env, 'DDP-ADMIN-016', {
@@ -3773,12 +4101,12 @@ async function requestBillEdit(env, session, { bill, field, value, reason, total
        (bill_id, field, value, value_text, reason, total_before, total_after,
         requested_by, requested_at, expires_at, status)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
-  ).bind(bill.id, field, numeric, text, reason, bill.total, totalAfter,
+  ).bind(bill.id, field, numeric, text, reason, before, totalAfter,
          session.actor.id, now, expiresAt(now)).run();
 
   await audit(env, session, 'bill.edit.request', {
     billId: bill.id, flat: bill.flat, period: bill.period, field,
-    totalBefore: bill.total, totalAfter, required: policy.required,
+    totalBefore: before, totalAfter, required: policy.required,
   });
 
   // TELLING THEM IS THE POINT. Without this the request sits in a tab until an
@@ -3787,7 +4115,8 @@ async function requestBillEdit(env, session, { bill, field, value, reason, total
   // correction is recorded either way, and an alert that throws must not undo
   // money work — the same rule the digest follows.
   const alerted = await alertApprovers(env, {
-    policy, bill, totalAfter, reason, requestedBy: session.actor.name, origin,
+    policy, bill, totalAfter, totalBefore: before,
+    reason, requestedBy: session.actor.name, origin,
   }).catch(() => ({ emailed: 0, missing: [], telegram: false }));
 
   return json({
@@ -3797,7 +4126,7 @@ async function requestBillEdit(env, session, { bill, field, value, reason, total
     required: policy.required,
     approvers: policy.approverIds,
     subjectIsAdmin: policy.subjectIsAdmin,
-    totalBefore: bill.total,
+    totalBefore: before,
     totalAfter,
     note: policy.subjectIsAdmin
       ? 'This bill belongs to an admin, so every other eligible admin must approve.'
@@ -3822,7 +4151,8 @@ async function requestBillEdit(env, session, { bill, field, value, reason, total
  * notifications quietly went nowhere is worse than one with no notifications
  * at all, because the second is at least known to need checking.
  */
-async function alertApprovers(env, { policy, bill, totalAfter, reason, requestedBy, origin }) {
+async function alertApprovers(env, { policy, bill, totalAfter, totalBefore = null,
+                                     reason, requestedBy, origin }) {
   if (!policy.approverIds.length) return { emailed: 0, missing: [], telegram: false };
 
   const people = await env.DB.prepare(
@@ -3831,7 +4161,13 @@ async function alertApprovers(env, { policy, bill, totalAfter, reason, requested
   ).bind(...policy.approverIds).all();
 
   const { subject, text } = approvalMessage({
-    flat: bill.flat, period: bill.period, totalBefore: bill.total, totalAfter,
+    // A month-wide price correction has no flat, and saying so is the point:
+    // an approver who reads a flat number will look for one bill and agree to
+    // a month. `bill.flat` is null on that path by construction.
+    flat: bill.flat ?? 'every flat',
+    period: bill.period,
+    totalBefore: totalBefore ?? bill.total,
+    totalAfter,
     reason, requestedBy, required: policy.required, origin,
   });
 
@@ -3955,9 +4291,26 @@ async function decideBillEdit(request, env, session, path, decision) {
     return json({ ok: true, status: 'pending', approvals: yes, required: policy.required });
   }
 
-  // The last approval lands: now, and only now, the bill changes.
+  // The last approval lands: now, and only now, anything changes.
   const bill = await env.DB.prepare('SELECT * FROM bills WHERE id = ?').bind(req.bill_id).first();
+
+  // The month-wide price correction is not an edit to this bill — the bill is
+  // only the row the request is anchored to (see requestPriceCorrection). It
+  // moves every bill in the month, so it is applied by the same code an open
+  // month's rate change uses, and then it is done.
+  if (req.field === PRICE_FIELD) {
+    return applyPriceCorrection(env, session, { req, bill, id, now, approvals });
+  }
+
   const value = req.value_text ?? req.value;
+  // A corrected reading writes the READING as well as the bill, in one batch.
+  // Writing only the bill would leave the archive saying one thing and the
+  // amount another — and the reading is what a resident checks their own meter
+  // against, so it is the half that must not be left stale.
+  if (req.field === READING_FIELD) {
+    return applyReadingCorrection(env, session, { req, bill, id, now, approvals, value });
+  }
+
   const { next, derived, computed } = await writeBillEdit(env, session, {
     bill, field: req.field, value, reason: req.reason, actorId: req.requested_by,
   });
@@ -3977,6 +4330,95 @@ async function decideBillEdit(request, env, session, path, decision) {
   return json({ ok: true, status: 'applied', total: next.total });
 }
 
+/**
+ * A price correction the committee agreed, applied to the whole month.
+ *
+ * `changeRate` is the same code an OPEN month's rate change runs, and reusing
+ * it is the point: a second implementation of "recalculate every bill" would
+ * eventually disagree with the impact figures the approver was shown, and the
+ * one nobody is looking at is the one that ran. What it will not do on its own
+ * is touch a locked month (DDP-BILL-012) — `allowLocked` is what two other
+ * admins buy, and it is the ONLY caller that passes it.
+ *
+ * A bill carrying `manual_total` is skipped by `planRateChange`, as it always
+ * has been. Those are the 898 demo rows from the retired amount-editing path;
+ * the doctor counts them so the number can go to zero.
+ */
+async function applyPriceCorrection(env, session, { req, bill, id, now, approvals }) {
+  const result = await changeRate(env, {
+    period: bill.period,
+    ratePerKg: req.value,
+    reason: req.reason,
+    actorId: req.requested_by,
+    allowLocked: true,
+  });
+
+  await env.DB.prepare(
+    "UPDATE bill_edit_requests SET status = 'applied', resolved_at = ? WHERE id = ?"
+  ).bind(now, id).run();
+
+  // Not a fault, and loud on purpose. Every bill in a published month just
+  // moved and some residents who had paid now owe again; that is the largest
+  // single act available on this tab and it should never happen quietly.
+  await reportError(env, 'DDP-BILL-017', {
+    period: bill.period, from: result.from, to: result.to,
+    affected: result.totals.billsAffected, owesAgain: result.totals.owesAgainCount,
+    requestId: id,
+  });
+
+  await audit(env, session, 'period.rate-correction', {
+    requestId: id, period: bill.period, from: result.from, to: result.to,
+    reason: req.reason, totals: result.totals,
+    approvedBy: (approvals.results ?? []).filter((a) => a.decision === 'approve').map((a) => a.approver_id),
+  });
+
+  return json({ ok: true, status: 'applied', period: bill.period, totals: result.totals });
+}
+
+/**
+ * A corrected reading the committee agreed, applied to the reading AND the bill.
+ *
+ * One D1 batch, because a reading written without its bill (or the other way
+ * round) is a flat whose amount no longer matches its own meter — the exact
+ * condition DDP-BILL-003 exists to shout about, arrived at by our own hand.
+ *
+ * `manual_total` is cleared: this total IS derived now, which is the whole
+ * point of correcting the reading rather than the amount.
+ */
+async function applyReadingCorrection(env, session, { req, bill, id, now, approvals, value }) {
+  const context = await readingContext(env, bill);
+  const plan = planReadingCorrection({ bill, reading: value, ...context });
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO readings (flat, period, reading, read_on, entered_by, entered_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (flat, period) DO UPDATE SET
+         reading = excluded.reading, entered_by = excluded.entered_by,
+         entered_at = excluded.entered_at`
+    ).bind(bill.flat, bill.period, plan.reading, `${bill.period}-02`, req.requested_by, now),
+    env.DB.prepare(
+      `UPDATE bills SET consumption = ?, meter_delta = ?, gas_amount = ?, total = ?,
+              manual_total = 0, adjusted_by = ?, adjusted_at = ?, adjust_reason = ?
+        WHERE id = ?`
+    ).bind(plan.consumption, plan.delta, plan.gasAmount,
+           plan.total, req.requested_by, now, req.reason, bill.id),
+  ]);
+
+  await env.DB.prepare(
+    "UPDATE bill_edit_requests SET status = 'applied', resolved_at = ? WHERE id = ?"
+  ).bind(now, id).run();
+
+  await audit(env, session, 'bill.reading-correction', {
+    requestId: id, billId: bill.id, flat: bill.flat, period: bill.period,
+    readingFrom: context.currentReading, readingTo: plan.reading,
+    totalBefore: bill.total, totalAfter: plan.total, reason: req.reason,
+    approvedBy: (approvals.results ?? []).filter((a) => a.decision === 'approve').map((a) => a.approver_id),
+  });
+
+  return json({ ok: true, status: 'applied', total: plan.total, reading: plan.reading });
+}
+
 async function editBill(request, env, session, path) {
   if (session.impersonating) {
     await reportError(env, 'DDP-AUTH-007', { actor: session.actor.id });
@@ -3989,6 +4431,19 @@ async function editBill(request, env, session, path) {
 
   const body = await readJson(request);
   const field = String(body?.field ?? '');
+
+  // NAMED, not merely refused. "Cannot edit total" tells somebody holding a
+  // bill they believe is wrong that the portal will not help them, and the
+  // next thing they do is look for another way in. There are two, both real,
+  // and both correct the thing that was actually wrong.
+  if (field === 'total') {
+    await reportError(env, 'DDP-BILL-016', { billId: id, actor: session.actor.id });
+    return problem(400, 'DDP-BILL-016',
+      'A bill’s amount is not editable. It is consumption times rate, so '
+      + 'correct whichever of those was wrong: the flat’s meter reading, or '
+      + 'the month’s price of gas. Both are on the Billing tab, and both go '
+      + 'to two other admins.');
+  }
   if (!BILL_FIELDS.includes(field)) {
     return problem(400, 'DDP-ADMIN-010', `Cannot edit "${field}".`);
   }

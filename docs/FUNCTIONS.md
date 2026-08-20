@@ -52,6 +52,24 @@ Portal analytics — who is actually using this thing.
 | fn | `reachOf` | Rollout reach — the number the committee actually asks for. |
 | fn | `topList` |  |
 
+### `functions/lib/announce.js`
+
+The announcement outbox: telling the building its bills exist.
+
+| | Export | What it does |
+|---|---|---|
+| const | `DRAIN_SIZE` |  |
+| const | `MAX_ATTEMPTS` | How many times a failed row is retried before it is left for a human. |
+| fn | `permanentFailure` | Is this failure worth trying again? NOT EVERY FAILURE IS, and treating them alike is how a safety net becomes a hammer. |
+| fn | `queueStatement` | The statement that queues a month's announcements. |
+| fn | `publishBills` | Generate the month's bills and queue the telling of it, as one act. |
+| fn | `announcementCounts` |  |
+| fn | `announcementEmail` | One month's announcement email. |
+| fn | `drainAnnouncements` | Send up to `limit` of a month's queued announcements. |
+| fn | `pendingAnnouncementPeriods` | Every month with announcements still outstanding — the cron's worklist. |
+| fn | `sweepAnnouncements` | The 3am sweep. |
+| fn | `unreachableFlats` | The flats nobody could email, with who to WhatsApp about it. |
+
 ### `functions/lib/approvals.js`
 
 Who may approve a bill edit, and how many of them it takes.
@@ -202,6 +220,17 @@ An admin asks for a resident's mobile or email to be changed; the superadmin app
 | fn | `isStillAChange` | Would this request still be a change if approved now? Approval can land days after the request, by which time the resident may have corrected it themselves through their profile. |
 | fn | `requestNotification` | The Telegram nudge. |
 
+### `functions/lib/corrections.js`
+
+Correcting a published month, without ever typing a rupee figure.
+
+| | Export | What it does |
+|---|---|---|
+| const | `READING_FIELD` | The field name a reading correction rides on. |
+| const | `PRICE_FIELD` |  |
+| fn | `planReadingCorrection` | What a corrected reading does to one bill. |
+| fn | `priceCorrectionTotals` | What a corrected price does to a whole month. |
+
 ### `functions/lib/cron.js`
 
 Scheduled work: late fees, and the nudge for bills stuck claiming payment.
@@ -292,6 +321,7 @@ The association's email look, in the subset of HTML mail clients render.
 
 | | Export | What it does |
 |---|---|---|
+| const | `SITE` | The portal's public address. |
 | fn | `para` | A paragraph of prose. |
 | fn | `heading` | A section heading, for a message long enough to have sections. |
 | fn | `figure` | The one number the message is about — an amount due, a reading, a code. |
@@ -347,7 +377,8 @@ God edits — the superadmin changing anything.
 |---|---|---|
 | const | `OWNER_FIELDS` |  |
 | const | `BILL_COMPONENTS` | Money fields. |
-| const | `BILL_FIELDS` |  |
+| const | `BILL_FIELDS` | What `editBill` will accept. |
+| const | `MONEY_FIELDS` | Every field that has ever moved money on a bill, which is what "does this need a reason on the record" asks about. |
 | const | `BILL_STATUSES` |  |
 | fn | `reasonRequired` | Acts that need a reason on the record. |
 | const | `MAX_REASON` |  |
@@ -663,6 +694,14 @@ One router. Route table at the top, handlers below it.
 
 No framework and no build step. Modules are loaded directly, and the CSP forbids inline script.
 
+### `public/js/admin-billing.js`
+
+Billing — one flow from the price of gas to the published bill.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `billingPanel` | The whole tab. |
+
 ### `public/js/api.js`
 
 Thin fetch wrapper.
@@ -840,4 +879,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-455 exports. 224 have no doc comment.
+473 exports. 226 have no doc comment.

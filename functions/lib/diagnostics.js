@@ -144,10 +144,30 @@ export function checkBills(bills) {
       }))));
   }
 
+  /**
+   * Bills carrying a typed amount, from the path that no longer exists.
+   *
+   * THIS NUMBER IS MEANT TO REACH ZERO. Until 2026-08-20 a bill's total could
+   * be typed directly and `manual_total` marked it as somebody's considered
+   * decision; the amount is now never editable, and the two things that can be
+   * wrong with a bill — the reading and the month's price of gas — are
+   * corrected as themselves. `editBill` refuses `total` outright, so nothing
+   * can add to this count any more.
+   *
+   * The column stays, and `changeRate` goes on skipping these rows, because
+   * dropping a column in SQLite is a table rebuild and these bills are real
+   * history. Counted here so the number is visible rather than assumed: when it
+   * reads zero, the column and its guards can go in a follow-up that costs
+   * nothing.
+   */
   const overridden = bills.filter((b) => b.manual_total);
   if (overridden.length) {
-    out.push(finding('info', 'BILL-OVERRIDE', 'Bills with a manual total',
-      'Deliberate adjustments. Listed so they are never a surprise at audit.',
+    out.push(finding('info', 'BILL-OVERRIDE', 'Bills carrying a typed amount',
+      'Written by the amount-editing path retired on 2026-08-20, when the rule '
+      + 'became that a bill\'s amount is visible and never editable. Nothing can '
+      + 'add to this list now. A rate change leaves these rows alone, so they '
+      + 'are the bills that will not follow a price correction — and when this '
+      + 'count reaches zero the manual_total column can be removed.',
       overridden.map((b) => ({
         flat: b.flat, period: b.period, total: b.total,
         components: computedTotal(b), reason: b.adjust_reason ?? '(none recorded)',

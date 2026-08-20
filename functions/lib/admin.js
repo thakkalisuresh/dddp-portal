@@ -183,8 +183,17 @@ export { JUMP_MULTIPLE, jumpWarning, dropWarning } from './billing.js';
  * never gets billed, which is worse than a loud failure.
  *
  * Writes as one D1 batch so a half-generated month cannot exist.
+ *
+ * `extraStatements` ride in THAT SAME BATCH, after the inserts and the lock.
+ * It exists for the announcement outbox: a month that was generated but not
+ * queued would look published on every screen and tell nobody, and there is no
+ * second pass anywhere that would notice. Anything passed here must be able to
+ * see the bills — they are inserted first, and SQLite runs a batch in order —
+ * and must not need their ids on this side of the wire, because the ids do not
+ * exist yet. See queueStatement in announce.js, which is INSERT…SELECT for
+ * exactly that reason.
  */
-export async function generateBills(env, period, actorId) {
+export async function generateBills(env, period, actorId, { extraStatements = [] } = {}) {
   const periodRow = await env.DB.prepare('SELECT * FROM periods WHERE period = ?').bind(period).first();
   if (!periodRow) fail('DDP-BILL-005', { period });
   if (periodRow.status === 'locked') fail('DDP-BILL-007', { period });
@@ -255,6 +264,7 @@ export async function generateBills(env, period, actorId) {
   statements.push(
     env.DB.prepare("UPDATE periods SET status = 'locked' WHERE period = ?").bind(period)
   );
+  statements.push(...extraStatements);
 
   await env.DB.batch(statements);
 
@@ -356,13 +366,20 @@ export function planRateChange(bills, { ratePerKg, conversionFactor = DEFAULT_CO
  * A LOCKED month is refused here rather than in the interface, because the
  * interface is not the only caller. Reopening one means every bill recalculated,
  * residents who already paid asked to pay again, and a month that was reconciled
- * needing to be reconciled afresh — a decision that belongs to Sabarish, not to
- * whoever happens to be holding the treasurer's login.
+ * needing to be reconciled afresh — a decision that belongs to nobody holding
+ * the treasurer's login alone.
+ *
+ * `allowLocked` is the door that two other admins buy, and it has exactly one
+ * caller: applyPriceCorrection, on the last approval of a request the committee
+ * agreed to. It is not a flag any route accepts and no request body can reach
+ * it. Everything else meets DDP-BILL-012 as it always has — including the
+ * treasurer, including the superadmin, including this function called by hand.
  */
-export async function changeRate(env, { period, ratePerKg, reason, actorId, dryRun = false }) {
+export async function changeRate(env, { period, ratePerKg, reason, actorId,
+                                        dryRun = false, allowLocked = false }) {
   const periodRow = await env.DB.prepare('SELECT * FROM periods WHERE period = ?').bind(period).first();
   if (!periodRow) fail('DDP-BILL-005', { period });
-  if (periodRow.status === 'locked') fail('DDP-BILL-012', { period, ratePerKg });
+  if (periodRow.status === 'locked' && !allowLocked) fail('DDP-BILL-012', { period, ratePerKg });
 
   const text = String(reason ?? '').trim();
   if (text.length < 3) fail('DDP-ADMIN-011', { field: 'rate_per_kg' });

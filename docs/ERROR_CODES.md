@@ -54,6 +54,9 @@ Ask the bot a code and it will explain it.
 | `DDP-BILL-013` | warn | live | Rate changed on a month that already has bills — totals recalculated |
 | `DDP-BILL-014` | error | live | Meter change is not consistent with the readings either side of it |
 | `DDP-BILL-015` | error | live | Flat has a reading but nobody to bill — the bill would have no owner |
+| `DDP-BILL-016` | warn | live | Bill amount edit refused — correct the reading or the month’s price instead |
+| `DDP-BILL-017` | warn | live | Published month’s price of gas corrected — every bill recalculated |
+| `DDP-BILL-018` | warn | live | Bill announcement could not be emailed to the resident |
 
 ## PAY
 
@@ -150,7 +153,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-90 codes across 10 domains — 12 fatal, 3 awaiting their call site, 3 retired.
+93 codes across 10 domains — 12 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

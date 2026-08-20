@@ -8,6 +8,7 @@
  */
 
 import { lateFeeDecision, applyLateFee } from './billing.js';
+import { sweepAnnouncements } from './announce.js';
 import { reportError, fail, postToTelegram } from './errors.js';
 import { runDigest } from './digest.js';
 import { istToday } from './time.js';
@@ -266,6 +267,20 @@ export async function runScheduled(env, ctx) {
       }, ctx);
     }
 
+    // The bills the treasurer published and did not finish telling anyone
+    // about. Same drain the console runs, same idempotency — a `sent` row is
+    // never selected, so the laptop closing mid-drain costs nothing and this
+    // cannot mail anybody twice.
+    //
+    // AFTER the fee run and before the digest, so the digest can report it,
+    // and swallowing its failures for the same reason the digest's are
+    // swallowed: telling somebody about a bill must never cost the building
+    // its late-fee run.
+    // No origin to pass: there is no request behind a cron run, and
+    // announcementEmail falls back to the portal's own address for exactly
+    // this caller.
+    const announced = await sweepAnnouncements(env).catch(() => []);
+
     // Last, and in its own try. The digest is a convenience; late fees are
     // money. A digest that throws must never cost the building its fee run,
     // and the ordering means the digest can also report what just happened.
@@ -277,7 +292,7 @@ export async function runScheduled(env, ctx) {
     // watermark is also written to avoid.
     const healthcheck = await pingHealthcheck(env);
 
-    return { fees, stale: stale.length, digest, healthcheck };
+    return { fees, stale: stale.length, announced, digest, healthcheck };
   } catch (err) {
     await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);
     return null;

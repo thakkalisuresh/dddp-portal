@@ -28,6 +28,12 @@ export const TABLES = [
   'committee', 'messages', 'contact_requests',
   'statement_sessions', 'statement_credits', 'reconciliations',
   'bill_edit_requests', 'bill_edit_approvals',
+  // The announcement outbox, after the bills it points at. It is backed up for
+  // one reason: it is the record of who has ALREADY been told. A restore that
+  // brought back the bills without it would find 89 rows missing, queue them
+  // afresh and mail the whole building a second time about a month they were
+  // told about weeks ago.
+  'bill_announcements',
   // Batches before the reminders that point at them, since a restore reads
   // the bundle top to bottom.
   'reminder_batches', 'bill_reminders',
