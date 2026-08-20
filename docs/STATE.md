@@ -11,9 +11,17 @@ The portal is **built and deployed**. It has never billed a real month.
 
 ## Production right now
 
-**https://diamondpark.pages.dev** · 799 tests · `npm run doctor` reports 0 failing
+**https://diamondpark.pages.dev** · 1200 tests · `npm run doctor` reports
+**1 failing** — see *The five flats with nobody on them*, below.
 
-Figures below read from production on 2026-08-12.
+Figures below read from production on 2026-08-20.
+
+> **The Billing tab is merged but not deployed.** Production runs the code as of
+> PR #48. Migration `0033_bill_announcements.sql` is in the repo and **not
+> applied** — it creates the table publishing writes to, so it has to go in
+> BEFORE the code does (`npm run db:remote`, then `npm run deploy:all`). The
+> reverse order gives you a publish that generates 99 bills and then fails
+> trying to queue the announcements.
 
 | | |
 |---|---|
@@ -22,8 +30,8 @@ Figures below read from production on 2026-08-12.
 | Bills | 898 — all demo (0 belong to a real account) |
 | Readings | 990 |
 | Months | 10 — all demo |
-| Migrations applied | 25 |
-| Error codes | 81 |
+| Migrations applied | 32 of the 33 in the repo — `0033` pending |
+| Error codes | 93 |
 
 > ### The demo data is live
 >
@@ -42,6 +50,41 @@ Figures below read from production on 2026-08-12.
 > `npm run doctor` reports this as `DEMO-DATA-PRESENT` and stops reporting it
 > the moment the data is gone, so the database is the source of truth rather
 > than this paragraph.
+
+### The five flats with nobody on them
+
+`npm run doctor` fails on `FLAT-BILLED-NO-OWNER` for **8B, 9E, 11D, 14A and
+16D**. Recorded here on 2026-08-20 so the finding is not investigated from
+scratch a second time.
+
+**They are a demo-coverage gap, not a fact about the building.** The register
+holds 99 flats; the demo seed populated 89, plus the real committee accounts,
+which is 94 with people. These five have **zero owner rows, ever** — not
+departed residents. Nobody yet knows whether they are unsold, empty, or simply
+not imported, and that question is answered by the roster import, not by
+guessing now.
+
+**Why it is left failing.** Setting an occupancy for them today would be an
+invented answer that the roster import overwrites. The sequence that resolves it
+is: remove the demo data, import the real roster, and then whatever
+`FLAT-BILLED-NO-OWNER` still reports is a genuine finding worth acting on.
+
+**What it costs while it sits there.** Generation refuses a partial month, so
+these five would block billing for all 99 flats. That does not matter until a
+month is generated — but **anyone rehearsing a month on the current demo data
+must mark them "not billed" first**, on the Residents tab. It is reversible and
+the roster import supersedes it.
+
+And a red check is not free: a doctor report that always fails is how people
+learn to skim past one. That is the same habit that let a misnamed API key kill
+vision in production until a resident noticed the yellow boxes.
+
+**Set them through the Residents tab, never with a direct database write.** The
+occupancy endpoint shipped on 2026-08-20, writes an audit row, and has not yet
+been used against production once.
+
+**Also learned from this:** the building has floors above 12 — 14A and 16D are
+real. Any fixture or prototype assuming 12 floors is a stand-in.
 
 ## Built and verified
 
