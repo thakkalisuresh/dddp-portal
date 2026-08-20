@@ -286,6 +286,23 @@ The daily digest.
 | fn | `buildDigest` | Build the message, or null when there is nothing worth sending. |
 | fn | `runDigest` | Read, build, send, and only then record the new watermark. |
 
+### `functions/lib/email-template.js`
+
+The association's email look, in the subset of HTML mail clients render.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `para` | A paragraph of prose. |
+| fn | `heading` | A section heading, for a message long enough to have sections. |
+| fn | `figure` | The one number the message is about — an amount due, a reading, a code. |
+| fn | `details` | Label/value rows: `[['Flat', 'A-204'], ['Units', '31']]`. |
+| fn | `action` | The single thing you want the reader to do. |
+| fn | `aside` | Small print — the "if you did not ask for this" line. |
+| fn | `renderEmail` | One message description in, `{ subject, html, text }` out. |
+| fn | `excerpt` | The opening of a notice, short enough that the portal is still the place to read it. |
+| fn | `subjectFor` | The subject carries the association's name; the headline does not. |
+| fn | `escapeHtml` | `&` and `<` in a resident's name must not become markup. |
+
 ### `functions/lib/error-codes.js`
 
 Single registry of every error code.
@@ -367,6 +384,7 @@ Sending email, via the Gmail API.
 |---|---|---|
 | fn | `mailConfigured` |  |
 | fn | `buildRawMessage` | RFC 2822, base64url. |
+| fn | `mailToken` | A token to spend across a batch of sends. |
 | fn | `sendEmail` | Send one message. |
 
 ### `functions/lib/notice-doc.js`
@@ -822,4 +840,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-444 exports. 224 have no doc comment.
+455 exports. 224 have no doc comment.
