@@ -15,10 +15,9 @@ pages_build_output_dir = "dist"
 binding = "DB"
 database_name = "dddp"
 database_id = "56951152-d3c7-4476-a779-9ef9afe0b4d8"
-# Preview deploys and `wrangler pages dev` bind to staging instead, so trying a
-# feature out cannot write to residents' records. This is the safety that does
-# not depend on remembering to be careful: the default target for anything that
-# is not a production deploy is the disposable database.
+# LOCAL `wrangler pages dev` only. This key does NOT affect deployed previews
+# -- see the [env.preview] block at the bottom, which is what does. Keeping it
+# means a local dev session also stays off production.
 #
 # Staging is rebuilt from a prod export by `npm run staging:refresh`. Data only
 # ever moves prod -> staging; nothing here is ever promoted back up.
@@ -61,4 +60,38 @@ PBKDF2_ITERATIONS = "100000"
 # Put it on an account the ASSOCIATION owns. The old site's map is keyed to a
 # Cloud project nobody can reach, which is how it became unfixable.
 #
+GOOGLE_MAPS_KEY = "AIzaSyCpEURTEHHTSKK5SOM2EXuTJkv6WtHvSSY"
+
+# ---------------------------------------------------------------------------
+# Preview deployments -- every branch that is not `main`.
+#
+# THIS is what binds a preview to staging. The `preview_database_id` line above
+# does not: that key is a WORKERS convention, read by `wrangler dev`, and Pages
+# ignores it at deploy time. A deploy carrying only that line looks correct in
+# the config and serves PRODUCTION data. That was found the hard way -- a probe
+# row present in dddp-migtest and absent from dddp came back absent from the
+# staging site, which meant the site was reading production.
+#
+# Pages resolves bindings by ENVIRONMENT: the top level of this file is
+# production, [env.preview] is every other branch. Nothing is inherited into an
+# env, so the vars are repeated here too.
+#
+# The check that matters after any change here is NOT that the config reads
+# correctly. It is that a row visible in one database and not the other shows
+# up on the right site.
+[env.preview]
+
+[[env.preview.d1_databases]]
+binding = "DB"
+database_name = "dddp-migtest"
+database_id = "adf039cd-4cec-4e66-9395-fd4a548cd01c"
+
+[[env.preview.r2_buckets]]
+binding = "PROOFS"
+bucket_name = "dddp-proofs-staging"
+
+[env.preview.vars]
+UPI_VPA = "qr.ddwelfare@sib"
+UPI_PAYEE = "DD Diamond Park RWA"
+PBKDF2_ITERATIONS = "100000"
 GOOGLE_MAPS_KEY = "AIzaSyCpEURTEHHTSKK5SOM2EXuTJkv6WtHvSSY"

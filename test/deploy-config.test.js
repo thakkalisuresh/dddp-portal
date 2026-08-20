@@ -144,10 +144,32 @@ describe('staging points at staging, and nowhere near production', () => {
 });
 
 describe('the site keeps previews off production', () => {
-  it('binds preview traffic to the staging database and bucket', () => {
-    // preview_database_id is what makes a preview deploy safe BY DEFAULT,
-    // rather than safe when somebody remembers. If it ever goes missing,
-    // previews silently fall back to writing to residents' records.
+  // A DEPLOYED preview reads [env.preview] and nothing else. preview_database_id
+  // is a Workers key that Pages ignores at deploy time; a config carrying only
+  // that line looks right and serves production data to the staging site, which
+  // is how it shipped the first time. Both are asserted, for different reasons:
+  // [env.preview] covers deploys, preview_database_id covers `pages dev`.
+  const PROD_DB = '56951152-d3c7-4476-a779-9ef9afe0b4d8';
+
+  it('has an [env.preview] block, which is the part Pages actually reads', () => {
+    expect(pages, 'no [env.preview] -- deployed previews will read PRODUCTION').toContain(
+      '[env.preview]'
+    );
+  });
+
+  it('points deployed previews at the staging database, not production', () => {
+    const block = pages.slice(pages.indexOf('[[env.preview.d1_databases]]'));
+    const id = block.match(/^database_id\s*=\s*"([^"]*)"/m)?.[1];
+    expect(id).toBe('adf039cd-4cec-4e66-9395-fd4a548cd01c');
+    expect(id, 'previews are bound to the PRODUCTION database').not.toBe(PROD_DB);
+  });
+
+  it('points deployed previews at the staging bucket', () => {
+    const block = pages.slice(pages.indexOf('[[env.preview.r2_buckets]]'));
+    expect(block.match(/^bucket_name\s*=\s*"([^"]*)"/m)?.[1]).toBe('dddp-proofs-staging');
+  });
+
+  it('keeps local `pages dev` off production too', () => {
     expect(pages).toMatch(/^preview_database_id\s*=\s*"adf039cd-/m);
     expect(pages).toMatch(/^preview_bucket_name\s*=\s*"dddp-proofs-staging"/m);
   });
