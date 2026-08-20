@@ -71,6 +71,17 @@ export const ERROR_CODES = {
   // dashboard.js matches (owner_id IS NULL OR owner_id = ?). Generation refuses
   // rather than writing one, so the month stops instead of the privacy leaking.
   'DDP-BILL-015': { severity: 'error', message: 'Flat has a reading but nobody to bill — the bill would have no owner' },
+  // Not a fault: somebody reached for the retired path. `warn` because the
+  // interesting number is how often, and by whom — a rising count means a
+  // screen somewhere is still offering an amount box.
+  'DDP-BILL-016': { severity: 'warn',  message: 'Bill amount edit refused — correct the reading or the month’s price instead' },
+  // The month-wide price correction, once bills exist for it. Recorded because
+  // every bill in the month moves and already-paid bills can return to unpaid;
+  // it is the largest single act on the Billing tab.
+  'DDP-BILL-017': { severity: 'warn',  message: 'Published month’s price of gas corrected — every bill recalculated' },
+  // The outbox could not tell somebody their bill exists. One row, not the
+  // month: the drain carries on and the cron sweeps it again.
+  'DDP-BILL-018': { severity: 'warn',  message: 'Bill announcement could not be emailed to the resident' },
 
   // ── MAIL ───────────────────────────────────────────────────────────────
   'DDP-MAIL-001': { severity: 'error', message: 'Reset email could not be sent' },

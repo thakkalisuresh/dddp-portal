@@ -26,7 +26,15 @@
  */
 
 const ASSOCIATION = "DD Diamond Park Residents' Welfare Association";
-const SITE = 'https://diamondpark.pages.dev';
+/**
+ * The portal's public address.
+ *
+ * Exported because a job with no request to read an origin off — the 3am
+ * announcement sweep — still has to put a working link in an email, and a
+ * fourth hand-written copy of this string is a fourth place for it to go stale
+ * the day the domain changes.
+ */
+export const SITE = 'https://diamondpark.pages.dev';
 
 /* Straight from tokens.css. */
 const INK = '#0F172A';
