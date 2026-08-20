@@ -11,10 +11,17 @@ The portal is **built and deployed**. It has never billed a real month.
 
 ## Production right now
 
-**https://diamondpark.pages.dev** · 1160 tests · `npm run doctor` reports
+**https://diamondpark.pages.dev** · 1200 tests · `npm run doctor` reports
 **1 failing** — see *The five flats with nobody on them*, below.
 
 Figures below read from production on 2026-08-20.
+
+> **The Billing tab is merged but not deployed.** Production runs the code as of
+> PR #48. Migration `0033_bill_announcements.sql` is in the repo and **not
+> applied** — it creates the table publishing writes to, so it has to go in
+> BEFORE the code does (`npm run db:remote`, then `npm run deploy:all`). The
+> reverse order gives you a publish that generates 99 bills and then fails
+> trying to queue the announcements.
 
 | | |
 |---|---|
@@ -23,8 +30,8 @@ Figures below read from production on 2026-08-20.
 | Bills | 898 — all demo (0 belong to a real account) |
 | Readings | 990 |
 | Months | 10 — all demo |
-| Migrations applied | 32 |
-| Error codes | 90 |
+| Migrations applied | 32 of the 33 in the repo — `0033` pending |
+| Error codes | 93 |
 
 > ### The demo data is live
 >
