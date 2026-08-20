@@ -67,6 +67,10 @@ export const ERROR_CODES = {
   'DDP-BILL-012': { severity: 'warn',  message: 'Rate change refused — the month is locked' },
   'DDP-BILL-013': { severity: 'warn',  message: 'Rate changed on a month that already has bills — totals recalculated' },
   'DDP-BILL-014': { severity: 'error', message: 'Meter change is not consistent with the readings either side of it' },
+  // A bill with no owner_id is readable by whoever occupies the flat next —
+  // dashboard.js matches (owner_id IS NULL OR owner_id = ?). Generation refuses
+  // rather than writing one, so the month stops instead of the privacy leaking.
+  'DDP-BILL-015': { severity: 'error', message: 'Flat has a reading but nobody to bill — the bill would have no owner' },
 
   // ── MAIL ───────────────────────────────────────────────────────────────
   'DDP-MAIL-001': { severity: 'error', message: 'Reset email could not be sent' },

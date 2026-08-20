@@ -22,6 +22,7 @@ Admin billing: the reading grid, and generation.
 | fn | `nextPeriod` |  |
 | fn | `previousPeriod` |  |
 | fn | `readMonthFor` |  |
+| fn | `occupantsByFlat` | Flat -> the person billed for it, decided ONCE for the whole grid. |
 | fn | `readingGrid` | Every active flat, with last month's reading and this month's if entered. |
 | fn | `generateBills` | Generation. |
 | fn | `openPeriod` | Open a period. |
@@ -588,6 +589,15 @@ Ownership changes: a flat is sold, or the builder hands one to a new buyer.
 | fn | `billAccess` | What one person may see of a flat's bills. |
 | fn | `describeRelationship` |  |
 | fn | `planDeparture` | A tenant is leaving. |
+| const | `OCCUPANCY_STATES` |  |
+| fn | `occupancyOf` | The flat's occupancy, derived — never read from a column. |
+| fn | `occupancyLabel` |  |
+| fn | `monthToISO` |  |
+| fn | `isoToMonth` |  |
+| fn | `isoToMonthInput` |  |
+| fn | `contactClash` | Two people in one flat cannot share a number. |
+| fn | `isBilled` | Does this flat get a bill at all this month? A different question from who. |
+| fn | `planOccupancy` | Turn "this flat is now X" into the rows to write. |
 
 ### `functions/lib/time.js`
 
@@ -812,4 +822,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-434 exports. 219 have no doc comment.
+444 exports. 224 have no doc comment.

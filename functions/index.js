@@ -37,6 +37,7 @@ import {
   planHandover, outstandingFor,
   mergeTimeline, toIST, isRelationship, occupantOf, landlordOf, isTenanted,
   billAccess, describeRelationship, ADMINISTRATOR,
+  planOccupancy, contactClash,
 } from './lib/tenancy.js';
 import {
   validateRequest, requestState, decisionFailure, isStillAChange, requestNotification,
@@ -267,6 +268,9 @@ export default {
         if (route === 'GET /api/admin/flats') return listFlats(env);
         if (request.method === 'PATCH' && /^\/api\/admin\/flats\/[^/]+$/.test(path)) {
           return patchFlat(request, env, session, path);
+        }
+        if (request.method === 'PUT' && /^\/api\/admin\/flats\/[^/]+\/occupancy$/.test(path)) {
+          return putOccupancy(request, env, session, path);
         }
         if (route === 'GET /api/admin/readings')  return getReadings(env, url);
         if (route === 'PUT /api/admin/readings')  return putReadings(request, env, session, url);
@@ -712,7 +716,7 @@ async function listResidents(env, session, url) {
 
   const { results } = await env.DB.prepare(
     `SELECT o.id, o.flat, f.floor, o.name, o.mobile, o.email, o.role,
-            o.relationship, o.active, o.moved_out_at, o.must_change_pw
+            o.relationship, o.active, o.moved_in_at, o.moved_out_at, o.must_change_pw
        FROM owners o JOIN flats f ON f.flat = o.flat
       ${wantsPast ? '' : 'WHERE o.active = 1'}
       ORDER BY f.floor, o.flat, o.active DESC, o.relationship`
@@ -3056,6 +3060,193 @@ async function patchFlat(request, env, session, path) {
   await audit(env, session, 'flat.active', { flat, from: row.active, to: active, reason });
 
   return json({ flat, active: Boolean(active), reason });
+}
+
+/**
+ * One control for the whole occupancy of a flat.
+ *
+ * WHAT IT REPLACES. The Residents tab asked this as two errands that nobody
+ * thinks of as two: `relationship` was picked while adding a person, and
+ * whether the flat is billed at all lived in a separate list further down the
+ * same tab. "12F is unsold" is one fact, and the split is how a flat ends up
+ * with nobody on file, still on the billing roll, refusing to let the month
+ * close for the other 88.
+ *
+ * WHAT IT IS NOT. It adds no column. The three states are derived from which
+ * `owners` rows are active — migration 0011's rule, and the reason is that a
+ * stored copy drifts the first time a tenant leaves and nobody flips the owner
+ * back. `planOccupancy` decides; this only writes what it decided.
+ *
+ * The steps go out as ONE D1 batch. A half-applied change — the old tenant
+ * deactivated, the new one never inserted — is a flat with nobody billed and
+ * no error anywhere.
+ */
+async function putOccupancy(request, env, session, path) {
+  const flat = decodeURIComponent(path.split('/')[4] ?? '').toUpperCase();
+  const b = await readJson(request);
+
+  const row = await env.DB.prepare('SELECT flat, active FROM flats WHERE flat = ?')
+    .bind(flat).first();
+  if (!row) return problem(404, 'DDP-ADMIN-009', 'That flat is not part of this building.');
+
+  const { results: people } = await env.DB.prepare(
+    `SELECT id, flat, name, mobile, email, role, relationship, active, moved_in_at
+       FROM owners WHERE flat = ?`
+  ).bind(flat).all();
+
+  // Whose rows these are to touch at all, asked per person and before anything
+  // is planned. An admin may not deactivate another admin or the superadmin any
+  // more than they may edit them — the flat is not a way round canEditResident.
+  for (const p of (people ?? []).filter((x) => x.active)) {
+    const allowed = canEditResident({ actor: session.actor, target: p });
+    if (!allowed.ok) {
+      await reportError(env, 'DDP-ADMIN-014',
+                        { actor: session.actor.id, target: p.id, targetRole: p.role });
+      return problem(403, 'DDP-ADMIN-014', allowed.message);
+    }
+  }
+
+  const plan = planOccupancy({
+    people: people ?? [],
+    to: b?.to,
+    owner: b?.owner ?? null,
+    tenant: b?.tenant ?? null,
+    tenancyStart: b?.tenancyStart ?? null,
+    billed: Boolean(row.active),
+    billing: b?.billing ?? null,
+    reason: b?.reason ?? null,
+  });
+  if (!plan.ok) {
+    return problem(400, 'DDP-ADMIN-003', plan.message, { field: plan.field ?? null });
+  }
+
+  // Normalised and checked before a single statement is prepared, because the
+  // batch is all-or-nothing and a value the database would reject has to be
+  // caught where the person who typed it is still looking at it.
+  //
+  // mobile is NOT NULL UNIQUE — it is the login id — so a duplicate is not a
+  // constraint to let the database report. `contactClash` already caught the
+  // two parties sharing a number inside this one form; this catches the number
+  // already belonging to somebody in another flat, which the form cannot see.
+  const adds = plan.steps.filter((s) => s.op === 'add');
+  for (const add of adds) {
+    try {
+      add.mobile = normaliseMobile(add.mobile);
+    } catch {
+      return problem(400, 'DDP-ADMIN-009', explainField('mobile', add.mobile),
+                     { field: add.relationship });
+    }
+    if (add.email) {
+      const email = normaliseEmail(add.email);
+      if (!email) {
+        return problem(400, 'DDP-ADMIN-010', explainField('email', add.email),
+                       { field: add.relationship });
+      }
+      add.email = email;
+    }
+    for (const [field, value] of [['mobile', add.mobile], ['email', add.email]]) {
+      if (!value) continue;
+      const clash = await duplicateContact(env, 0, field, value);
+      if (clash) {
+        return problem(409, 'DDP-ADMIN-013',
+          `That ${field} already belongs to ${clash.name} (${clash.flat}).`,
+          { field: add.relationship });
+      }
+    }
+  }
+  // Two people added in one submission cannot be checked against each other by
+  // duplicateContact — neither is in the table yet.
+  if (adds.length > 1) {
+    const clash = contactClash({
+      owner: adds.find((a) => a.relationship === 'owner'),
+      tenant: adds.find((a) => a.relationship === 'tenant'),
+    });
+    if (clash) return problem(409, 'DDP-ADMIN-013', clash.message, { field: clash.field });
+  }
+
+  const now = new Date().toISOString();
+  const statements = [];
+  // Handed back so the console can show them once, the same way adding a
+  // resident does. Never stored, never logged.
+  const issued = [];
+
+  for (const step of plan.steps) {
+    if (step.op === 'deactivate') {
+      statements.push(env.DB.prepare(
+        'UPDATE owners SET active = 0, moved_out_at = ? WHERE id = ?'
+      ).bind(step.moved_out_at, step.id));
+      // Every session that account holds, gone with it. "Once they leave, no
+      // access whatsoever" is not true of a row flipped to 0 while a phone in
+      // somebody's pocket still holds a valid cookie.
+      await destroyAllSessionsFor(env, step.id);
+      continue;
+    }
+
+    if (step.op === 'update') {
+      // name and moved_in_at only. mobile and email are behind approval since
+      // B22 and planOccupancy never emits them — asserted here as well, because
+      // this loop is what would actually write one.
+      const fields = Object.keys(step.fields).filter((f) => ['name', 'moved_in_at'].includes(f));
+      if (!fields.length) continue;
+      statements.push(env.DB.prepare(
+        `UPDATE owners SET ${fields.map((f) => `${f} = ?`).join(', ')} WHERE id = ?`
+      ).bind(...fields.map((f) => step.fields[f]), step.id));
+      continue;
+    }
+
+    if (step.op === 'add') {
+      const otp = generateOneTimePassword();
+      const { hash, salt, iterations } = await hashPassword(otp, ITER(env));
+      statements.push(env.DB.prepare(
+        `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, pw_iterations,
+                             must_change_pw, pw_expires_at, role, relationship,
+                             moved_in_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'owner', ?, ?, ?)`
+      ).bind(flat, step.name, step.mobile, step.email, hash, salt, iterations,
+             tempPasswordExpiry(TEMP_PW_HOURS), step.relationship, step.moved_in_at, now));
+      issued.push({
+        name: step.name, relationship: step.relationship, oneTimePassword: otp,
+        whatsapp: waLink(step.mobile,
+          'Diamond Park portal — your temporary password is ' + otp + '\n'
+          + 'Log in at https://diamondpark.pages.dev and choose your own.'),
+      });
+      continue;
+    }
+
+    if (step.op === 'flat') {
+      // The same rule patchFlat enforces, for the same reason: a reading and an
+      // exclusion contradict each other and the grid stops showing that they do.
+      if (!step.active) {
+        const reading = await env.DB.prepare(
+          `SELECT r.period FROM readings r JOIN periods p ON p.period = r.period
+            WHERE r.flat = ? AND p.status = 'open' LIMIT 1`
+        ).bind(flat).first();
+        if (reading) {
+          return problem(409, 'DDP-BILL-001',
+            `${flat} has a reading entered for ${reading.period}. Clear it first, or `
+            + 'leave the flat billed — the occupancy change itself is fine.',
+            { field: 'billing' });
+        }
+      }
+      statements.push(env.DB.prepare(
+        'UPDATE flats SET active = ?, inactive_reason = ?, inactive_since = ? WHERE flat = ?'
+      ).bind(step.active ? 1 : 0, step.active ? null : step.reason,
+             step.active ? null : now, flat));
+    }
+  }
+
+  await env.DB.batch(statements);
+
+  // What it was and what it is, not merely that somebody touched it. A year
+  // later "who decided 12F was unsold" has to be answerable, and `to` alone
+  // does not answer it.
+  await audit(env, session, 'flat.occupancy', {
+    flat, from: plan.from, to: plan.to,
+    steps: plan.steps.map((s) => s.op === 'add' ? `add ${s.relationship}` : s.op),
+    reason: plan.steps.find((s) => s.op === 'flat')?.reason ?? null,
+  });
+
+  return json({ flat, from: plan.from, to: plan.to, warnings: plan.warnings, issued });
 }
 
 async function getReadings(env, url) {

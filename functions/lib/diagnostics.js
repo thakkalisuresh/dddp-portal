@@ -219,6 +219,38 @@ export function checkIntegrity({ owners, flats, readings }) {
       homeless.map((o) => ({ name: o.name, flat: o.flat }))));
   }
 
+  /**
+   * A flat still on the billing roll with nobody on file.
+   *
+   * THE CONSEQUENCE IS OUT OF ALL PROPORTION TO THE CAUSE, which is why this
+   * had to become a check rather than a thing somebody notices. `occupantOf`
+   * returns null for it, so there is nobody to bill and nobody to send a bill
+   * to — but `flats.active` is still 1, so it stays on the reading grid and
+   * counts towards `expectedFlats`. Generation refuses a partial month by
+   * design (a missing flat means somebody silently never gets billed), so ONE
+   * unsold flat nobody remembered to mark inactive blocks billing for all 89.
+   *
+   * And the screen does not say so. It says "88 of 89 entered", which reads as
+   * a meter walk that is nearly finished rather than a month that cannot close
+   * — the treasurer goes looking for a reading that does not exist, for a flat
+   * with no meter, belonging to nobody.
+   *
+   * The fix is one field on the Residents tab: set the flat to "no owner" and
+   * stop billing it. `fail` rather than `warn` because a month is already
+   * unable to close, today, not eventually.
+   */
+  const occupied = new Set(owners.filter((o) => o.active).map((o) => o.flat));
+  const empty = flats.filter((f) => f.active && !occupied.has(f.flat));
+  if (empty.length) {
+    out.push(finding('fail', 'FLAT-BILLED-NO-OWNER', 'Flats being billed with nobody on file',
+      'Each needs a meter reading before ANY month can be generated — generation '
+      + 'refuses a partial month, so one of these blocks billing for the whole '
+      + 'building while the grid only says how many flats are still to enter. '
+      + 'Set the flat to "no owner" on the Residents tab and stop billing it, or '
+      + 'add the owner.',
+      empty.map((f) => ({ flat: f.flat, floor: f.floor }))));
+  }
+
   // Meters do not run backwards. A lower reading is a typo or a replaced meter.
   const byFlat = new Map();
   for (const r of [...readings].sort((a, b) => a.period.localeCompare(b.period))) {
