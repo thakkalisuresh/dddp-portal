@@ -166,7 +166,43 @@ export const api = {
     changeRate:    (period, ratePerKg, reason, dryRun = false) =>
                                request('PATCH', `/api/admin/periods/${period}`,
                                        { ratePerKg, reason, dryRun }),
+    /**
+     * The two things beside the rate that step 1 of Billing holds. Separate
+     * from changeRate because neither touches a single amount: moving a due
+     * date does not recalculate anything, and there is nothing for an approver
+     * to be shown.
+     */
+    setPeriodTerms: (period, { dueDate, lateFee }) =>
+                               request('PATCH', `/api/admin/periods/${period}`,
+                                       { dueDate, lateFee }),
     generate:      (period) => request('POST', `/api/admin/periods/${period}/generate`),
+    /**
+     * Generate the month's bills AND queue the telling of it, as one act.
+     * Nothing is sent here — see announce below, and announce.js for why.
+     */
+    publish:       (period) => request('POST', `/api/admin/periods/${period}/publish`),
+    /**
+     * Send the next slice of the month's announcements. Called in a LOOP until
+     * `remaining` reaches zero; one call is 20 emails, because 89 will not fit
+     * in one request (docs/COSTS.md). The 3am cron finishes anything left.
+     */
+    announce:      (period) => request('POST', `/api/admin/periods/${period}/announce`),
+    /** Progress, plus the flats nobody could email and the mobile to reach them on. */
+    announcements: (period) => request('GET',  `/api/admin/periods/${period}/announcements`),
+    /**
+     * Correct a published month's price of gas — every bill in it. dryRun
+     * first, always: the consequence is shown before it is agreed to.
+     */
+    correctPrice:  (period, ratePerKg, reason, dryRun = false) =>
+                               request('POST', `/api/admin/periods/${period}/price-correction`,
+                                       { ratePerKg, reason, dryRun }),
+    /**
+     * Correct one flat's meter reading on a published month. The corrected
+     * READING goes for approval, never a total somebody typed.
+     */
+    correctReading: (billId, reading, reason) =>
+                               request('POST', `/api/admin/bills/${billId}/reading-correction`,
+                                       { reading, reason }),
 
     proofs:        ()       => request('GET',  '/api/admin/proofs'),
     approveProof:  (id)     => request('POST', `/api/admin/proofs/${id}/approve`),

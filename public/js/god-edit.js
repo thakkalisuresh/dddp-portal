@@ -293,12 +293,26 @@ function billRow(b) {
       field(b, 'bill', 'other_charges', 'Other', { num: true }),
       field(b, 'bill', 'additional_charges', 'Additional', { num: true }),
       field(b, 'bill', 'late_fee', 'Late fee', { num: true }),
-      field(b, 'bill', 'total', 'Total', { num: true }),
+      // The total is READ ONLY, here as everywhere — decided 2026-08-20, and
+      // the superadmin is not an exception. It is the sum of the components
+      // beside it, and the components are the things that can be wrong. A
+      // typed total is a bill that no longer matches its own working, which is
+      // the DDP-BILL-003 condition arrived at deliberately. `editBill` refuses
+      // the field outright, so offering the box would only be a way to meet
+      // that refusal.
+      readOnly('Total', money(b.total)),
       select(b, 'bill', 'status', 'Status',
              ['unpaid', 'initiated', 'awaiting', 'paid', 'waived'])),
     b.adjust_reason
       ? el('p', { class: 'rec__meta', style: 'margin-top:var(--s-2)' }, `Reason: ${b.adjust_reason}`)
       : null);
+}
+
+/** A value that is shown and cannot be changed, in the shape of a field. */
+function readOnly(label, value) {
+  return el('div', { class: 'cell cell--num' },
+    el('span', { class: 'cell__label' }, label),
+    el('input', { value, readonly: true, disabled: true, 'aria-label': label }));
 }
 
 /* ── one editable value ──────────────────────────────────────────────────── */

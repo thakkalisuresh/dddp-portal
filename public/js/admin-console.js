@@ -16,6 +16,7 @@ import { $, el, esc, renderViewBanner, showError, foldedSection } from './ui.js'
 import { mobileField } from './mobile-field.js';
 import { ADMINISTRATOR } from './contact.js';
 import { money, kg, periodLabel, dayLabel } from './i18n.js';
+import { billingPanel } from './admin-billing.js';
 
 const main = $('#main');
 let me = null;
@@ -59,8 +60,13 @@ let mailConfigured = true;
  */
 const TABS = [
   { id: 'home',      label: 'Home',      render: homePanel },
-  { id: 'periods',   label: 'Rates',     render: periodsPanel },
-  { id: 'readings',  label: 'Readings',  href: '/admin/readings.html' },
+  // Rates and Readings were the same errand split across two screens — the
+  // month has to be open, with its rate set, before a reading can be entered
+  // against it, and nothing on the rate screen said so. Two months were opened
+  // on 2026-08-12 and then abandoned "unsure how to add readings". They are one
+  // tab now, in the order the month actually happens: the price of gas, the
+  // meter walk, then review and publish. Nine tabs became eight.
+  { id: 'billing',   label: 'Billing',   render: billingPanel },
   { id: 'bills',     label: 'Bills',     render: billsPanel },
   { id: 'proofs',    label: 'Proofs',    href: '/admin/proofs.html' },
   { id: 'statement', label: 'Reconcile', href: '/admin/statement.html' },
@@ -124,294 +130,6 @@ async function show(id) {
   } catch (err) {
     showError(main, err);
   }
-}
-
-/* ── rates ─────────────────────────────────────────────────────────────── */
-
-/** '2026-07' -> '2026-08' */
-function nextMonth(period) {
-  const [y, m] = String(period).split('-').map(Number);
-  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
-}
-
-/** The building has always paid by the 10th of the month after the usage month. */
-function defaultDue(period) {
-  return `${nextMonth(period)}-10`;
-}
-
-/**
- * The usage months worth offering: the last twelve that have ended, newest
- * first, minus the ones already open.
- *
- * It starts at LAST month, not this one. A usage month cannot be billed until
- * it has finished, because the meter that closes it is read in the month after
- * — the same off-by-one that made this field confusing as free text, where
- * "2026-08" typed during August meant a month that had not happened yet.
- *
- * Already-open months are dropped because `periods.period` is the primary key:
- * choosing one again is not a warning, it is a failed insert.
- */
-function selectableMonths(periods) {
-  const taken = new Set(periods.map((p) => p.period));
-  const now = new Date();
-  let year = now.getUTCFullYear();
-  let month = now.getUTCMonth();          // 1-indexed previous month; 0 in January
-  const out = [];
-  for (let i = 0; i < 12; i += 1) {
-    if (month === 0) { month = 12; year -= 1; }
-    const period = `${year}-${String(month).padStart(2, '0')}`;
-    if (!taken.has(period)) out.push(period);
-    month -= 1;
-  }
-  return out;
-}
-
-/** How many months from this one the testing list runs. */
-const UNENDED_MONTHS = 5;
-
-/**
- * This month and the next few — months that have NOT ended.
- *
- * Offered only while the demo data is loaded, and that is the whole design.
- * Billing a month that has not finished is meaningless: the meter closing it
- * is read in the month after, so there is nothing to read yet. But a test
- * cannot wait for September to arrive to find out whether September works, and
- * before this the only openable months were ones already full of demo history.
- *
- * The gate is `demoData` rather than a flag or an environment check because it
- * expires by itself. `seed-demo.mjs --remove` must run before the real roster
- * — it is a documented step and doctor reports DEMO-DATA-PRESENT until it
- * happens — and the moment it does, these months stop being offered. Nobody
- * has to remember to turn anything off, which is the only kind of switch that
- * survives a handover.
- *
- * The server does not refuse these independently, and did not refuse them
- * before either: the "months that have ended" rule has always lived in this
- * dropdown alone. So this changes what is easy, not what is possible.
- */
-function unendedMonths(periods) {
-  const taken = new Set(periods.map((p) => p.period));
-  const now = new Date();
-  let year = now.getUTCFullYear();
-  let month = now.getUTCMonth() + 1;      // 1-indexed CURRENT month
-  const out = [];
-  for (let i = 0; i < UNENDED_MONTHS; i += 1) {
-    const period = `${year}-${String(month).padStart(2, '0')}`;
-    if (!taken.has(period)) out.push(period);
-    month += 1;
-    if (month === 13) { month = 1; year += 1; }
-  }
-  return out;
-}
-
-async function periodsPanel() {
-  const { periods, demoData } = await api.admin.periods();
-  const status = el('div');
-  const ended = selectableMonths(periods);
-  const unended = demoData ? unendedMonths(periods) : [];
-  // Ended months first: on any ordinary day that is the one you want, and it
-  // stays the default selection. The unended ones sit below, named as such.
-  const months = [...ended, ...unended];
-
-  const rate = el('input', { class: 'input num', placeholder: '78.00', id: 'p-rate', inputmode: 'decimal' });
-  const fee = el('input', { class: 'input num', value: '50', id: 'p-fee', inputmode: 'numeric' });
-  // type=date gives the platform's own calendar, and yields YYYY-MM-DD —
-  // already the format the API and the periods table expect, so nothing has to
-  // parse a typed date and guess whether 05/08 was May or August.
-  const due = el('input', { class: 'input', type: 'date', id: 'p-due' });
-
-  const period = el('select', {
-    class: 'input', id: 'p-period',
-    // The due date follows the month rather than being typed twice. Still
-    // editable — this sets a sensible default, it does not lock it.
-    onchange: () => { due.value = defaultDue(period.value); },
-  }, ...months.map((p) => el('option', { value: p },
-    // Said on the option itself, not only in a note above it. The note is read
-    // once; the dropdown is read every time, and "December 2026" sitting in a
-    // list of past months is otherwise indistinguishable from a real choice.
-    unended.includes(p) ? `${periodLabel(p)} — not ended yet` : periodLabel(p))));
-
-  if (months.length) due.value = defaultDue(months[0]);
-
-  return el('div', { class: 'panel stack' },
-    el('h2', {}, 'Rate per kg'),
-    el('p', { class: 'muted small' },
-      'Set the rate for every month, even when it has not changed. Nothing is '
-      + 'carried forward: an inherited rate would produce 99 bills that look '
-      + 'normal and are all wrong.'),
-
-    ...(months.length
-      ? [
-          el('div', { class: 'field' }, el('label', { for: 'p-period' }, 'Usage month'), period,
-            el('span', { class: 'field__hint' }, 'The month the gas was used. Meters are read the month after.')),
-          unended.length
-            ? el('div', { class: 'note note--warn' },
-                el('b', {}, 'Months that have not ended are listed, for testing.'),
-                el('p', { style: 'margin:var(--s-2) 0 0' },
-                  'They are there because demo data is still loaded, and they '
-                  + 'stop being offered the moment it is removed. A month that '
-                  + 'has not finished has no meter reading to close it, so '
-                  + 'opening one is only useful for trying the flow — never for '
-                  + 'billing anybody.'))
-            : null,
-          el('div', { class: 'field' }, el('label', { for: 'p-rate' }, 'Rate per kg'), rate),
-          el('div', { class: 'field' }, el('label', { for: 'p-due' }, 'Payment due'), due),
-          el('div', { class: 'field' }, el('label', { for: 'p-fee' }, 'Late fee (whole rupees)'), fee,
-            el('span', { class: 'field__hint' }, 'Whole rupees only. No paise.')),
-          status,
-          el('button', {
-            class: 'btn', type: 'button',
-            // Opening a month and entering its readings are one errand, and
-            // splitting them left the treasurer on a screen that looked
-            // finished. Reported on 2026-08-12: two months were opened and
-            // then "unsure how to add readings" — the Readings tab defaults to
-            // whatever month it likes and nothing said to go there.
-            //
-            // The rate-sanity warning is not lost by leaving: the readings
-            // screen shows it again on the preview, right beside the total it
-            // would produce, which is the more useful place to read it.
-            onclick: async (event) => {
-              const button = event.currentTarget;
-              button.disabled = true;
-              try {
-                const r = await api.admin.openPeriod({
-                  period: period.value, ratePerKg: Number(rate.value),
-                  dueDate: due.value, lateFee: Number(fee.value),
-                });
-                status.replaceChildren(
-                  el('div', { class: 'note note--good' },
-                    `Opened ${periodLabel(r.period)}. Taking you to its readings…`));
-                location.href = `/admin/readings.html?period=${encodeURIComponent(r.period)}`;
-              } catch (err) {
-                showError(status, err);
-                button.disabled = false;
-              }
-            },
-          }, 'Open month and enter readings'),
-        ]
-      : [el('p', { class: 'note' },
-          'Every month of the last year is already open. Nothing to add here.')]),
-
-    el('hr', { class: 'rule' }),
-    el('p', { class: 'label' }, 'Months'),
-    ...periods.map(monthRow)
-  );
-}
-
-function monthRow(p) {
-  const panel = el('div');
-  return el('div', { class: 'stack', style: 'gap:0' },
-    el('div', { class: 'rowitem' },
-      el('div', { class: 'rowitem__main' },
-        el('b', {}, periodLabel(p.period)),
-        el('div', {}, `₹${p.rate_per_kg}/kg · ${p.conversion_factor} kg per unit · due ${p.due_date}`)),
-      el('span', { class: `chip ${p.status === 'locked' ? 'chip--paid' : 'chip--awaiting'}` },
-        p.status === 'locked' ? 'Locked' : 'Open'),
-      el('button', {
-        class: 'btn btn--sm btn--quiet', type: 'button',
-        onclick: () => panel.replaceChildren(
-          p.status === 'locked' ? lockedNotice(p) : rateEditor(p, panel)),
-      }, 'Change rate')),
-    panel);
-}
-
-/**
- * A locked month says who decides, not merely "no".
- *
- * The server refuses this too (DDP-BILL-012) — showing it here is so the
- * treasurer reads the consequence before they go looking for a way around it,
- * not because the interface is the thing enforcing it.
- */
-function lockedNotice(p) {
-  return el('div', { class: 'note note--warn', style: 'margin:var(--s-3) 0' },
-    el('b', {}, `${periodLabel(p.period)} is locked.`),
-    el('p', { style: 'margin:var(--s-2) 0 0' },
-      'Reach out to Sabarish to change this rate. Reopening a locked month recalculates '
-      + 'every bill in it, which means residents who have already paid will need to pay '
-      + 'again, and the month has to be reconciled against the bank statement a second time.'));
-}
-
-/** An open month can be changed here — after the consequence is on screen. */
-function rateEditor(p, panel) {
-  const rate = el('input', {
-    class: 'input num', value: String(p.rate_per_kg), inputmode: 'decimal',
-    id: `edit-rate-${p.period}`,
-  });
-  const reason = el('input', {
-    class: 'input', placeholder: 'Why is the rate changing?', id: `edit-reason-${p.period}`,
-  });
-  const impact = el('div');
-
-  return el('div', { class: 'stack', style: 'margin:var(--s-3) 0' },
-    el('div', { class: 'field' },
-      el('label', { for: `edit-rate-${p.period}` }, `Rate per kg for ${periodLabel(p.period)}`), rate),
-    el('div', { class: 'field' },
-      el('label', { for: `edit-reason-${p.period}` }, 'Reason'), reason,
-      el('span', { class: 'field__hint' }, 'Recorded against your name in the activity log.')),
-    impact,
-    el('div', { class: 'row', style: 'gap:var(--s-2)' },
-      el('button', {
-        class: 'btn btn--sm', type: 'button',
-        // Never straight to the write. The caveat is not a guess — it is the
-        // server's own count of whose bill changes and who ends up owing again.
-        onclick: async () => {
-          try {
-            const plan = await api.admin.changeRate(p.period, Number(rate.value), reason.value, true);
-            impact.replaceChildren(impactNotice(p, plan, rate, reason, panel));
-          } catch (err) { showError(impact, err); }
-        },
-      }, 'Check what this changes'),
-      el('button', {
-        class: 'btn btn--sm btn--quiet', type: 'button',
-        onclick: () => panel.replaceChildren(),
-      }, 'Cancel')));
-}
-
-function impactNotice(p, plan, rate, reason, panel) {
-  const t = plan.totals;
-  const nothing = t.billsAffected === 0 && t.skipped === 0;
-
-  return el('div', { class: `note ${t.owesAgainCount ? 'note--bad' : 'note--warn'}` },
-    el('b', {}, nothing
-      ? `No bills exist for ${periodLabel(p.period)} yet — only the rate changes.`
-      : `${t.billsAffected} bill${t.billsAffected === 1 ? '' : 's'} will be recalculated.`),
-
-    t.owesAgainCount
-      ? el('p', { style: 'margin:var(--s-2) 0 0' },
-          t.owesAgainCount === 1
-            ? `One of them is already paid and gets dearer. That resident will owe `
-              + `${money(t.owesAgainTotal)} more, the bill returns to unpaid, and they will `
-              + 'have to pay again.'
-            : `${t.owesAgainCount} of them are already paid and get dearer. Those residents `
-              + `will owe ${money(t.owesAgainTotal)} more between them, their bills return to `
-              + 'unpaid, and they will have to pay again.')
-      : null,
-    t.inCreditCount
-      ? el('p', { style: 'margin:var(--s-2) 0 0' },
-          `${t.inCreditCount} already-paid bill${t.inCreditCount === 1 ? '' : 's'} get cheaper, `
-          + `leaving ${money(t.inCreditTotal)} in credit. Those stay marked paid.`)
-      : null,
-    t.skipped
-      ? el('p', { style: 'margin:var(--s-2) 0 0' },
-          `${t.skipped} manually adjusted bill${t.skipped === 1 ? '' : 's'} will be left alone.`)
-      : null,
-    plan.sanity?.level === 'notice'
-      ? el('p', { style: 'margin:var(--s-2) 0 0' }, plan.sanity.message)
-      : null,
-
-    el('button', {
-      class: 'btn btn--sm', type: 'button', style: 'margin-top:var(--s-3)',
-      onclick: async (e) => {
-        e.target.disabled = true;
-        try {
-          await api.admin.changeRate(p.period, Number(rate.value), reason.value, false);
-          panel.replaceChildren();
-          await show('periods');
-        } catch (err) { e.target.disabled = false; showError(panel, err); }
-      },
-    }, t.owesAgainCount
-         ? `Change the rate and make ${t.owesAgainCount} bill${t.owesAgainCount === 1 ? '' : 's'} payable again`
-         : 'Change the rate'));
 }
 
 /* ── residents ─────────────────────────────────────────────────────────── */
@@ -545,7 +263,7 @@ async function residentsDirectory() {
     list,
 
     el('hr', { class: 'rule' }),
-    await billingPanel());
+    await flatBillingPanel());
 }
 
 /**
@@ -570,7 +288,7 @@ async function residentsDirectory() {
  * A zero bill is a different thing entirely: a flat somebody LIVES in that
  * happened to burn no gas, which still belongs on the roll.
  */
-async function billingPanel() {
+async function flatBillingPanel() {
   const list = el('div');
   const status = el('div');
 
@@ -1257,7 +975,7 @@ function unavailablePanel() {
   const links = [
     ['Payment proofs', { href: '/admin/proofs.html' }],
     ['Bills', { tab: 'bills' }],
-    ['Readings', { href: '/admin/readings.html' }],
+    ['Billing', { tab: 'billing' }],
     ['Residents', { tab: 'residents' }],
   ];
   return el('div', { class: 'panel stack' },
@@ -1291,7 +1009,7 @@ function standingPanel(s) {
       // The month alone on the button — "Set August 2026's rate" reads like a
       // form field, and the year is already in the heading above it.
       label: `Set ${month.split(' ')[0]}'s rate`,
-      go: () => show('periods'),
+      go: () => show('billing'),
       // The number they are about to reuse. Carried rather than defaulted: the
       // rate editor still asks, this only saves looking it up.
       aside: s.period ? `${periodLabel(s.period.period)} was ₹${s.period.rate_per_kg} per kg` : null,
@@ -1303,16 +1021,17 @@ function standingPanel(s) {
                ['neutral', `Due ${dayLabel(s.period.due_date)}`]);
     action = {
       label: 'Continue readings',
-      href: `/admin/readings.html?period=${encodeURIComponent(s.period.period)}`,
+      go: () => show('billing'),
       aside: `${s.readings.expected - s.readings.saved} flats left`,
     };
   } else if (s.stage === 'ready') {
     heading = `${periodLabel(s.period.period)} · ready to bill`;
     chips.push(['paid', rate], ['paid', `${s.readings.saved} of ${s.readings.expected} read`]);
-    note = 'Every meter is in. Bills are generated from the readings screen, where they can be checked first.';
+    note = 'Every meter is in. The last step shows every flat and what it owes, '
+         + 'and nothing reaches a resident until you publish.';
     action = {
-      label: 'Review and generate',
-      href: `/admin/readings.html?period=${encodeURIComponent(s.period.period)}`,
+      label: 'Review and publish',
+      go: () => show('billing'),
     };
   } else if (s.stage === 'settled') {
     heading = `${periodLabel(s.period.period)} · settled`;
@@ -1546,61 +1265,31 @@ async function billsList() {
     } catch (err) { showError(list, err); }
   };
 
-  const billRow = (b) => {
-    const amount = el('input', {
-      class: 'input num', value: b.total, inputmode: 'decimal',
-      'aria-label': `Total for ${b.flat} ${b.period}`,
-    });
-    const reason = el('input', { class: 'input', placeholder: 'Why is it changing?' });
-    const said = el('div', { class: 'small' });
-
-    return el('div', { class: 'rowitem' },
-      el('div', { class: 'rowitem__main' },
-        el('b', {}, `${b.flat} · ${periodLabel(b.period)}`),
-        el('div', {},
-          `${kg(b.consumption)} at ₹${b.rate_per_kg} · now ${money(b.total)} · ${b.status}`,
-          b.manual_total ? ' · manually set' : '',
-          b.mismatch ? ' · does not match its own components' : ''),
-        el('div', { style: 'display:flex;gap:var(--s-2);flex-wrap:wrap;margin-top:var(--s-2)' },
-          amount, reason,
-          el('button', {
-            class: 'btn btn--sm', type: 'button',
-            onclick: async (event) => {
-              const button = event.currentTarget;
-              button.disabled = true;
-              said.replaceChildren();
-              try {
-                const res = await api.admin.editBill(
-                  b.id, 'total', Number(amount.value), reason.value);
-                trackAction('admin.bill.edit');
-
-                // SAID IN A DIALOG, not only in the margin. "Correct this bill"
-                // reads like a button that corrects the bill; it does not, and
-                // an admin who assumes it did will tell the resident their
-                // amount has changed when it has not yet.
-                if (res.pending) {
-                  alert(
-                    `Not changed yet.\n\n`
-                    + `${b.flat} ${periodLabel(b.period)}: ${money(res.totalBefore)} → `
-                    + `${money(res.totalAfter)}\n\n`
-                    + `${res.note}\n\n`
-                    + `They will find it under Admin → Approvals. You cannot approve `
-                    + `your own request, and the late fee on this bill is frozen until `
-                    + `it is decided.`);
-                }
-                said.replaceChildren(el('span', {
-                  style: `color:var(--${res.pending ? 'awaiting' : 'accent'})`,
-                },
-                  res.pending
-                    ? `Waiting for approval — ${res.note}`
-                    : res.unchanged ? 'That is already the amount.' : 'Changed.'));
-                if (!res.pending) await load();
-              } catch (err) { showError(said, err); }
-              button.disabled = false;
-            },
-          }, 'Correct this bill')),
-        said));
-  };
+  /**
+   * A bill, read only.
+   *
+   * THE AMOUNT BOX IS GONE, decided 2026-08-20. It took a rupee figure and a
+   * reason and set `bills.manual_total` — a total that no longer matched its
+   * own components, which is a bill nobody can check: not the resident against
+   * their meter, not the auditor against the supplier invoice.
+   *
+   * A bill is consumption times rate, so there are exactly two things that can
+   * be wrong with it, and both are corrected as themselves on the Billing tab:
+   * the flat's meter reading, or the month's price of gas. Both still go to two
+   * other admins. What changed is that what they approve is a reading and the
+   * total it produces, rather than a total somebody chose.
+   *
+   * `manual_total` is still shown on the rows that carry it. Those bills are
+   * real history, they no longer follow a rate change, and the doctor counts
+   * them (BILL-OVERRIDE) so the number can go to zero.
+   */
+  const billRow = (b) => el('div', { class: 'rowitem' },
+    el('div', { class: 'rowitem__main' },
+      el('b', {}, `${b.flat} · ${periodLabel(b.period)}`),
+      el('div', {},
+        `${kg(b.consumption)} at ₹${b.rate_per_kg} · ${money(b.total)} · ${b.status}`,
+        b.manual_total ? ' · amount typed in, before corrections were reworked' : '',
+        b.mismatch ? ' · does not match its own components' : '')));
 
   search.addEventListener('change', load);
   await load();
@@ -1608,10 +1297,11 @@ async function billsList() {
   return el('div', { class: 'panel stack' },
     el('h2', {}, 'Bills'),
     el('p', { class: 'small muted' },
-      'A correction does not take effect when you save it. It goes to two other '
-      + 'admins, and applies when they agree — if the bill belongs to an admin, '
-      + 'every other admin has to agree. The late fee on that bill is frozen '
-      + 'while it waits.'),
+      'Amounts are shown here, never edited. A bill is what the meter read '
+      + 'times the price of gas, so a wrong bill means one of those was wrong — '
+      + 'correct whichever it was on ',
+      el('button', { class: 'linkish', type: 'button', onclick: () => show('billing') }, 'Billing'),
+      '. Either way it goes to two other admins, and applies when they agree.'),
     el('div', { class: 'field' }, el('label', { for: 'b-flat' }, 'Flat'), search),
     status,
     list);

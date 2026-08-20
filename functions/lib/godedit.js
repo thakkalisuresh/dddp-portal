@@ -32,7 +32,33 @@ export const OWNER_FIELDS = ['name', 'email', 'mobile', 'role', 'flat', 'active'
  * setting the total directly overrides the derivation.
  */
 export const BILL_COMPONENTS = ['gas_amount', 'other_charges', 'additional_charges', 'late_fee'];
-export const BILL_FIELDS = [...BILL_COMPONENTS, 'total', 'status'];
+
+/**
+ * What `editBill` will accept. NOT `total` — decided 2026-08-20.
+ *
+ * THE AMOUNT IS VISIBLE AND NEVER EDITABLE, for everyone, superadmin included.
+ * A bill's total is consumption times rate, so the two things that can be wrong
+ * with it are the reading and the price of gas, and both are corrected as
+ * themselves on the Billing tab. A rupee figure typed against a bill is a bill
+ * that no longer matches its own components, which is a bill nobody — not the
+ * resident, not the auditor, not the next treasurer — can check.
+ *
+ * `total` is still listed in MONEY_FIELDS below, and `applyBillEdit` still
+ * knows how to apply one. That is not a way back in: it is what keeps the 898
+ * bills already carrying `manual_total` readable, and what `changeRate` needs
+ * to go on skipping them. The doctor counts those rows (BILL-OVERRIDE) so the
+ * number is visible and can go to zero, and when it does the column and its
+ * guards can go in a follow-up that costs nothing.
+ */
+export const BILL_FIELDS = [...BILL_COMPONENTS, 'status'];
+
+/**
+ * Every field that has ever moved money on a bill, which is what "does this
+ * need a reason on the record" asks about. Historical rows were written
+ * through `total`, and a reason was required for them; that stays true of the
+ * record even though the route is closed.
+ */
+export const MONEY_FIELDS = [...BILL_COMPONENTS, 'total', 'status'];
 
 export const BILL_STATUSES = ['unpaid', 'initiated', 'awaiting', 'paid', 'waived'];
 
@@ -47,7 +73,7 @@ export const BILL_STATUSES = ['unpaid', 'initiated', 'awaiting', 'paid', 'waived
  * the system would ever say why 12F stopped being billed.
  */
 export function reasonRequired(field) {
-  return BILL_FIELDS.includes(field) || field === 'flat.active';
+  return MONEY_FIELDS.includes(field) || field === 'flat.active';
 }
 
 export const MAX_REASON = 300;
