@@ -1,8 +1,13 @@
 # Implementation plan — the Billing tab
 
+> **Delivered in PR #50 and deployed on 2026-08-20**, migration
+> `0033_bill_announcements.sql` applied first. Kept as the record of how it was
+> built and what the build had to be careful about — not as outstanding work.
+> "Before starting" below describes a working tree that no longer exists; all of
+> it has landed.
+
 Written 2026-08-20. The design and its reasoning are in
-[BILLING-TAB.md](BILLING-TAB.md); this is how it gets built. Nothing here is
-started.
+[BILLING-TAB.md](BILLING-TAB.md); this is how it got built.
 
 **Shape: one change.** `Rates` and `Readings` are replaced together, in a single
 PR. No deadline was set — the existing screens keep working until this merges,
