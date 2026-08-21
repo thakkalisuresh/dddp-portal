@@ -12,25 +12,23 @@ The portal is **built and deployed**. It has never billed a real month.
 ## Production right now
 
 **https://diamondpark.pages.dev** · 1200 tests · `npm run doctor` reports
-**1 failing** — see *The five flats with nobody on them*, below.
+**0 failing**, 2 warnings.
 
 Figures below read from production on 2026-08-20.
 
-> **The Billing tab is merged but not deployed.** Production runs the code as of
-> PR #48. Migration `0033_bill_announcements.sql` is in the repo and **not
-> applied** — it creates the table publishing writes to, so it has to go in
-> BEFORE the code does (`npm run db:remote`, then `npm run deploy:all`). The
-> reverse order gives you a publish that generates 99 bills and then fails
-> trying to queue the announcements.
+> **The Billing tab is live.** Deployed 2026-08-20 with migration
+> `0033_bill_announcements.sql` applied first, since it creates the table
+> publishing writes to. `/admin/readings.html` now redirects to `/admin/#billing`
+> for anyone who bookmarked the meter walk.
 
 | | |
 |---|---|
-| Flats | 99 |
+| Flats | 99 — **94 billed**, 5 excluded |
 | People | 105 — **100 of them demo** |
 | Bills | 898 — all demo (0 belong to a real account) |
 | Readings | 990 |
 | Months | 10 — all demo |
-| Migrations applied | 32 of the 33 in the repo — `0033` pending |
+| Migrations applied | 33 |
 | Error codes | 93 |
 
 > ### The demo data is live
@@ -51,7 +49,46 @@ Figures below read from production on 2026-08-20.
 > the moment the data is gone, so the database is the source of truth rather
 > than this paragraph.
 
-### The five flats with nobody on them
+### The five flats with nobody on them — CLEARED 2026-08-20
+
+`FLAT-BILLED-NO-OWNER` failed for **8B, 9E, 11D, 14A and 16D** the day the check
+shipped. All five are now set to no owner and stopped being billed, so
+`npm run doctor` reports **0 failing**. Kept here because the finding is not
+finished — it is deferred.
+
+**They were a demo-coverage gap, not a fact about the building.** The register
+holds 99 flats; the demo seed populated 89, and the real committee accounts
+bring it to 94 with people. These five had **zero owner rows, ever** — not
+departed residents. Whether they are unsold, empty, or simply not imported is
+still unknown, which is why the reason stored on each flat says so rather than
+taking the interface's default of "Unsold":
+
+> Not in the demo roster; status unknown until the real roster import
+
+**What has to happen when the roster lands.** Review all five. Each is either a
+real flat that needs its owner, or genuinely unsold and correctly excluded. The
+import will not decide this for you — an excluded flat stays excluded until
+somebody turns it back on.
+
+**How it was done, and why that is worth knowing.** A direct D1 write, not the
+Residents tab, because every flat and resident in this database is demo data.
+The `flat.occupancy` audit row for it has `actor_id` NULL and says as much: no
+session made the change. The endpoint's own guard — it refuses to stop billing a
+flat that holds a reading in an open month — was checked by hand first and none
+of the five did.
+
+**On real data, use the Residents tab.** The audit row is the point there, and
+the occupancy endpoint still has not been exercised against a real session.
+
+**What it would have cost if left.** Generation refuses a partial month, so
+those five would have blocked billing for all 99 flats the moment a month was
+generated — while the readings grid said only "94 of 99 entered", sending
+somebody hunting for meters in empty flats.
+
+**Also learned from this:** the building has floors above 12 — 14A and 16D are
+real. Any fixture or prototype assuming 12 floors is a stand-in.
+
+## The five flats with nobody on them
 
 `npm run doctor` fails on `FLAT-BILLED-NO-OWNER` for **8B, 9E, 11D, 14A and
 16D**. Recorded here on 2026-08-20 so the finding is not investigated from
