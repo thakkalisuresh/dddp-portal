@@ -1,8 +1,13 @@
 # The Billing tab — one flow from the rate to the published bill
 
-Proposed 2026-08-19. **Nothing here is built.** This is the design record for
-merging the `Rates` tab and the `Readings` page into a single `Billing` tab, so
-the decisions survive the session they were made in.
+> **Built and deployed on 2026-08-20** — PR #50, live at
+> `/admin/#billing`. This document is now a record of *why*, not a proposal.
+> Everything below describes decisions that shipped; where it uses the future
+> tense, read it as the state at the time it was written.
+
+Proposed 2026-08-19. This is the design record for merging the `Rates` tab and
+the `Readings` page into a single `Billing` tab, so the decisions survive the
+session they were made in.
 
 Clickable prototype: <https://claude.ai/code/artifact/844e31f7-125c-4056-8b17-f8e317962a50>
 Source: `docs/billing-tab-prototype.html`. Sample readings that match its fixed
