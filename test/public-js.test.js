@@ -265,7 +265,7 @@ describe('managing a thing happens where the thing is', () => {
     expect(broken).toEqual([]);
   });
 
-  it('asks in the page, never through window.confirm', () => {
+  it('asks in the page, never through a browser dialog', () => {
     // window.confirm is not guaranteed to draw anything. A browser that has
     // suppressed dialogs returns false at once, so the universal
     // `if (!confirm(msg)) return;` becomes a click that shows nothing, sends
@@ -273,13 +273,28 @@ describe('managing a thing happens where the thing is', () => {
     // 2026-08-17 — pressed repeatedly, no dialog, no withdrawal — and the same
     // line guarded five other destructive actions, superadmin handover among
     // them. askFirst in ui.js draws the ask in the page instead.
+    //
+    // prompt() AND alert() ARE HERE TOO, because checking only confirm() is how
+    // god-edit.js kept a prompt() until 2026-08-21. Each fails its own way and
+    // all three fail silently:
+    //
+    //   confirm -> false, so the destructive path never runs and nothing is said
+    //   prompt  -> null, which reads as "cancelled", so an edit reverts itself
+    //   alert   -> nothing drawn, so the sentence explaining what happened,
+    //              or that a save failed, is the one that goes missing
+    //
+    // A message belongs in the page, where it can be read, kept, and tested.
     const offenders = [];
     for (const file of modules()) {
       const code = readFileSync(file, 'utf8')
         .split('\n')
         .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
         .join('\n');
-      if (/(?<![\w.$])confirm\s*\(/.test(code)) offenders.push(file);
+      for (const name of ['confirm', 'prompt', 'alert']) {
+        if (new RegExp(`(?<![\\w.$])${name}\\s*\\(`).test(code)) {
+          offenders.push(`${file}: ${name}()`);
+        }
+      }
     }
     expect(offenders).toEqual([]);
   });
