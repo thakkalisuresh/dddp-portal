@@ -20,6 +20,10 @@ import { money, periodLabel } from './i18n.js';
 
 const main = $('#main');
 let tab = 'people';
+// What the server said about the last save. A save reloads and re-renders, so
+// an inline message would be wiped by the thing that produced it; this is held
+// across the render and drawn once.
+let flash = null;
 let data = { people: [], bills: [], edits: [], health: null };
 
 trackPage('/god/edit');
@@ -61,8 +65,62 @@ function render() {
       tabButton('health', healthLabel())),
     el('div', { class: 'panel', style: 'padding:var(--s-3) var(--s-4)' },
       el('p', { class: 'small muted' }, blurb())),
+    takeFlash(),
     ...body()
   );
+}
+
+/** Drawn once, then forgotten, so it does not follow you between tabs. */
+function takeFlash() {
+  if (!flash) return null;
+  const { kind, text } = flash;
+  flash = null;
+  return el('div', { class: `note note--${kind}`, style: 'margin:var(--s-3) 0' }, text);
+}
+
+/**
+ * The reason, asked for IN THE PAGE.
+ *
+ * It was a `prompt()`. A browser with dialogs suppressed returns null from it,
+ * which this code read as "cancelled" — so the value snapped back to what it
+ * was, silently, and the edit looked broken rather than refused. Same family
+ * as the notice-board Withdraw button, and the same answer: ask in the page.
+ *
+ * askFirst() in ui.js is the wrong shape here, because a reason is text rather
+ * than a yes. This is that idiom with a field: the question, an input, the
+ * committing button, and the way out as the quiet one.
+ *
+ * Resolves to the reason, or to null if they backed out.
+ */
+function askReason(wrap, name, original, next) {
+  return new Promise((resolve) => {
+    const input = el('input', {
+      class: 'input', placeholder: 'Why is this changing?',
+      'aria-label': `Reason for changing ${name}`,
+    });
+    const finish = (value) => { panel.remove(); resolve(value); };
+    const commit = () => {
+      if (!input.value.trim()) { input.classList.add('input--error'); input.focus(); return; }
+      finish(input.value.trim());
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); });
+
+    const panel = el('div', {
+      class: 'note note--warn stack', role: 'alertdialog',
+      style: 'gap:var(--s-2); margin-top:var(--s-2)',
+    },
+      el('p', { class: 'small' },
+        `${name}: ${original} \u2192 ${next}. Money always needs a reason, and the `
+        + 'server refuses the edit without one.'),
+      input,
+      el('div', { class: 'row', style: 'gap:var(--s-3); flex-wrap:wrap' },
+        el('button', { class: 'btn btn--sm', type: 'button', onclick: commit }, 'Save the change'),
+        el('button', { class: 'linkish small', type: 'button', onclick: () => finish(null) },
+          'Leave it as it was')));
+
+    wrap.append(panel);
+    input.focus();
+  });
 }
 
 function blurb() {
@@ -359,8 +417,8 @@ async function save(wrap, input, row, entity, name, original) {
   // means the edit is not rejected after the fact.
   let reason = null;
   if (entity === 'bill') {
-    reason = prompt(`Reason for changing ${name} (${original} → ${input.value}):`);
-    if (reason == null || !reason.trim()) { input.value = original; wrap.classList.remove('cell--dirty'); return; }
+    reason = await askReason(wrap, name, original, input.value);
+    if (reason == null) { input.value = original; wrap.classList.remove('cell--dirty'); return; }
   }
 
   try {
@@ -369,8 +427,12 @@ async function save(wrap, input, row, entity, name, original) {
     trackAction(`god:edit:${entity}.${name}`, { id: row.id });
 
     wrap.classList.remove('cell--dirty');
-    if (res.confirm) alert(res.confirm);
-    if (res.note) alert(res.note);
+    // What the server said about the edit, kept for the render that follows.
+    // These were alert()s, which a browser with dialogs suppressed never draws
+    // - so the one sentence explaining what the edit actually did to the bill
+    // was the sentence most likely to go missing.
+    const said = [res.confirm, res.note].filter(Boolean).join(' ');
+    if (said) flash = { kind: 'good', text: said };
     // Reload rather than patch in place: a component edit changes the total
     // and the flags, and a half-updated row is how someone reads a stale
     // number and acts on it.
@@ -378,7 +440,10 @@ async function save(wrap, input, row, entity, name, original) {
   } catch (err) {
     input.value = original;
     wrap.classList.remove('cell--dirty');
-    alert(err instanceof ApiError ? err.message : 'Could not save that.');
+    // A failed save that says nothing is indistinguishable from one that
+    // worked, since the value reverts either way.
+    flash = { kind: 'bad', text: err instanceof ApiError ? err.message : 'Could not save that.' };
+    render();
   }
 }
 
