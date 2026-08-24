@@ -68,7 +68,7 @@ import { sendEmail, mailConfigured } from './lib/mailer.js';
 import { parseRoster, previewRoster, resolveExemptionTargets } from './lib/roster.js';
 import { floorSummary, whyNot } from './lib/building.js';
 import { splitMobile, NATIONAL_LENGTHS } from '../public/js/countries.js';
-import { addFlat } from './lib/flats.js';
+import { addFlatStatement } from './lib/flats.js';
 import { ERROR_CODES } from './lib/error-codes.js';
 import { isCaptureOn, captureWindow, validateBatch } from './lib/clicks.js';
 import { runBackup, backupHealth, driveConfigured, committeeFolderSeparate, isBackupCron, pruneOldRows, dumpTable, dumpAll, bundle, toCsv, TABLES } from './lib/backup.js';
@@ -4949,32 +4949,57 @@ async function rosterImport(request, env, session) {
       `${preview.blocked.length} rows cannot be imported. Fix them and paste again.`);
   }
 
-  const created = [];
+  // ONE TRANSACTION, BECAUSE THE FAILURE THIS GUARDS IS A HALF-BUILT BUILDING.
+  //
+  // This was a loop of awaits: create a flat, insert a person, repeat, ninety
+  // times over. Anything that refused partway — a UNIQUE mobile the preview
+  // did not catch, a request that ran out of time — left the flats before it
+  // created, the people after it missing, and no record of where it stopped.
+  // A superadmin's repair for that is to work out by hand which half landed.
+  //
+  // Password hashing is deliberately slow and cannot go inside a batch, so the
+  // passwords are generated first and the writes are assembled as a list. The
+  // batch then commits all of it or none of it.
   const now = new Date().toISOString();
+  const statements = [];
+  const pending = [];
+
+  // Owner and tenant of a let flat are two rows naming one flat; the insert is
+  // idempotent either way, but there is no reason to send it twice.
+  for (const flat of new Set(preview.create.map((c) => c.flat))) {
+    const row = preview.create.find((c) => c.flat === flat);
+    statements.push(addFlatStatement(env, flat, row.floor));
+  }
 
   for (const row of preview.create) {
-    await addFlat(env, row.flat, row.floor);
     if (row.vacant) continue;
 
     const otp = generateOneTimePassword();
     const { hash, salt, iterations } = await hashPassword(otp, ITER(env));
-    const inserted = await env.DB.prepare(
+    // Where in the batch this row's id will come back.
+    pending.push({ row, otp, at: statements.length });
+    statements.push(env.DB.prepare(
       `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, pw_iterations,
                            must_change_pw, pw_expires_at, role, relationship, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'owner', ?, ?) RETURNING id`
     ).bind(row.flat, row.name, row.mobile, row.email, hash, salt, iterations,
-           tempPasswordExpiry(INVITE_PW_HOURS), row.relationship, now).first();
+           tempPasswordExpiry(INVITE_PW_HOURS), row.relationship, now));
+  }
 
+  const results = await env.DB.batch(statements);
+
+  const created = pending.map(({ row, otp, at }) => {
     const text =
       `Diamond Park gas portal: your login for flat ${row.flat}\n` +
       `Mobile: ${row.mobile}\nTemporary password: ${otp}\n` +
       'Log in at https://diamondpark.pages.dev and choose your own password.';
 
-    created.push({
-      id: inserted.id, flat: row.flat, name: row.name, mobile: row.mobile,
+    return {
+      id: results[at]?.results?.[0]?.id,
+      flat: row.flat, name: row.name, mobile: row.mobile,
       relationship: row.relationship, oneTimePassword: otp, whatsapp: waLink(row.mobile, text),
-    });
-  }
+    };
+  });
 
   await audit(env, session, 'roster.import', {
     flats: preview.counts.flats, people: created.length, vacant: preview.counts.vacant,
