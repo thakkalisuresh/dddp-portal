@@ -89,7 +89,7 @@ function readRelationship(value) {
  * means the questionable rows land silently.
  *
  * @param existingFlats  flats already in the database
- * @param existingPeople active people, so a re-run does not duplicate them
+ * @param existingPeople EVERY owners row, active and not — see below
  */
 export function previewRoster(rows, { existingFlats = [], existingPeople = [] } = {}) {
   const create = [];
@@ -101,9 +101,31 @@ export function previewRoster(rows, { existingFlats = [], existingPeople = [] } 
   const seenPerFlat = new Map();
 
   for (const p of existingPeople) {
-    if (!p.active) continue;
+    // TWO MAPS, TWO DIFFERENT QUESTIONS, AND ONLY ONE OF THEM IS ABOUT WHO
+    // LIVES HERE NOW.
+    //
+    // The household map is about the current building: who shares a flat, who
+    // is the tenant, who would be liable. A departed resident is not part of
+    // that, so it stays filtered to active people.
+    //
+    // The mobile map is about a UNIQUE constraint. owners.mobile is NOT NULL
+    // UNIQUE across every row regardless of `active`, and planDeparture
+    // deactivates people rather than deleting them, deliberately, to keep the
+    // history. So a departed resident's number is still taken. Filtering this
+    // map to active people let a returning tenant — or one moving to another
+    // flat in the same building — pass the preview and fail at the INSERT,
+    // which is the one place the committee cannot see it coming.
     const digits = String(p.mobile ?? '').replace(/\D/g, '').slice(-10);
-    if (digits) seenMobile.set(digits, { flat: p.flat, name: p.name, existing: true });
+    if (digits) {
+      // Last ten digits collide more readily than the full stored strings do,
+      // so where two rows share them the living one is the more useful thing
+      // to name back.
+      const prior = seenMobile.get(digits);
+      if (!prior || (!prior.active && p.active)) {
+        seenMobile.set(digits, { flat: p.flat, name: p.name, existing: true, active: !!p.active });
+      }
+    }
+    if (!p.active) continue;
     seenPerFlat.set(p.flat, [...(seenPerFlat.get(p.flat) ?? []), { ...p, existing: true }]);
   }
 
@@ -115,7 +137,8 @@ export function previewRoster(rows, { existingFlats = [], existingPeople = [] } 
     const mobileIn = String(row.mobile ?? '').trim();
     const email = String(row.email ?? '').trim().toLowerCase() || null;
 
-    const stop = (reason) => blocked.push({ line: row.line, flat: flat || '(blank)', name, reason });
+    const stop = (reason, extra) =>
+      blocked.push({ line: row.line, flat: flat || '(blank)', name, reason, ...extra });
 
     if (!flatIn) { stop('No flat number on this line.'); continue; }
     if (!isFlat(flat)) { stop(whyNot(flat)); continue; }
@@ -147,9 +170,20 @@ export function previewRoster(rows, { existingFlats = [], existingPeople = [] } 
     const digits = mobile.replace(/\D/g, '').slice(-10);
     const clash = seenMobile.get(digits);
     if (clash) {
-      stop(clash.existing
-        ? `That mobile already belongs to ${clash.name} in ${clash.flat}.`
-        : `Same mobile as ${clash.flat} ${clash.name} on this paste.`);
+      if (!clash.existing) {
+        stop(`Same mobile as ${clash.flat} ${clash.name} on this paste.`);
+      } else if (clash.active) {
+        stop(`That mobile already belongs to ${clash.name} in ${clash.flat}.`);
+      } else {
+        // Blocked rather than warned, and the reason is mechanical: warnings do
+        // not stop an import, so warning here would mean the paste sails on and
+        // the UNIQUE constraint refuses it mid-write. The committee's intent is
+        // almost always to bring the old row back, which is an edit, not an
+        // import — `departed` marks the row so the screen can say where.
+        stop(`${clash.name} already has this mobile, from ${clash.flat}, and has left. `
+           + 'The number stays theirs while the record does. Bring them back on Residents '
+           + 'instead of adding them a second time.', { departed: true, from: clash.flat });
+      }
       continue;
     }
     seenMobile.set(digits, { flat, name });

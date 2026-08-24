@@ -136,7 +136,13 @@ function previewPanels() {
         el('span', { class: 'row__flat' }, b.flat),
         el('span', {}, b.name || '—'),
         el('span', { class: 'muted small' }, `line ${b.line}`),
-        el('span', {}),
+        // Every other blocked line is fixed by editing the paste. This one is
+        // not: the row already exists and wants bringing back, which happens
+        // on another screen, so the line says where rather than leaving the
+        // committee to delete the person and wonder where they went.
+        b.departed
+          ? el('a', { class: 'small', href: '/admin/#residents' }, 'Past residents')
+          : el('span', {}),
         el('span', { class: 'row__why' }, b.reason)))));
   }
 

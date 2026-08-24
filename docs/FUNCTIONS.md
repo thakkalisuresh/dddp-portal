@@ -367,6 +367,7 @@ Adding a flat.
 | | Export | What it does |
 |---|---|---|
 | fn | `floorOf` | Floor number from a flat label: '4A' -> 4, '13E' -> 13, '10C' -> 10. |
+| fn | `addFlatStatement` | The insert, unexecuted. |
 | fn | `addFlat` |  |
 
 ### `functions/lib/godedit.js`
@@ -879,4 +880,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-473 exports. 226 have no doc comment.
+474 exports. 226 have no doc comment.

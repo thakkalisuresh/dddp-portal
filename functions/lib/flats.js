@@ -27,9 +27,20 @@ export function floorOf(flat) {
   return Number(m[1]);
 }
 
+/**
+ * The insert, unexecuted.
+ *
+ * Split out from addFlat so the roster import can put ninety-nine of these
+ * into one D1 batch — one transaction — rather than running them one at a
+ * time and leaving a half-built building behind when one of them fails.
+ */
+export function addFlatStatement(env, flat, floor = floorOf(flat)) {
+  return env.DB.prepare(
+    'INSERT INTO flats (flat, floor) VALUES (?, ?) ON CONFLICT(flat) DO NOTHING'
+  ).bind(flat, floor);
+}
+
 /** Insert one flat. Idempotent, so re-importing a roster is safe. */
 export async function addFlat(env, flat, floor = floorOf(flat)) {
-  await env.DB.prepare(
-    'INSERT INTO flats (flat, floor) VALUES (?, ?) ON CONFLICT(flat) DO NOTHING'
-  ).bind(flat, floor).run();
+  await addFlatStatement(env, flat, floor).run();
 }
