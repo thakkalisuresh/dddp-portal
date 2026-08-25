@@ -5,7 +5,6 @@
  */
 import { api } from './api.js';
 import { $, el, showError, withReveal } from './ui.js';
-import { TREASURER } from './contact.js';
 
 const form = $('#form');
 const submit = $('#submit');
@@ -36,21 +35,6 @@ form.addEventListener('submit', async (event) => {
       $('#password').focus();
     }
 });
-
-// Filled in rather than written into login.html, so the treasurer's number
-// lives in exactly one place (js/contact.js) and cannot go stale here.
-const contact = document.getElementById('treasurer');
-if (contact) {
-  contact.replaceChildren(
-    Object.assign(document.createElement('strong'), {
-      textContent: `${TREASURER.name} (${TREASURER.role})`,
-    }),
-    document.createTextNode(', '),
-    Object.assign(document.createElement('span'), {
-      className: 'num', textContent: TREASURER.phone,
-    })
-  );
-}
 
 // Wrap the password field so it can be revealed. Done here rather than in the
 // HTML because the CSP forbids inline script, and the control needs a listener.

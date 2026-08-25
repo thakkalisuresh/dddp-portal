@@ -733,10 +733,7 @@ Who a resident contacts when something is wrong.
 
 | | Export | What it does |
 |---|---|---|
-| const | `TREASURER` | Who a resident contacts when something is wrong. |
 | const | `ADMINISTRATOR` | The one person with full control, by name, for anything shown on screen. |
-| fn | `treasurerLine` |  |
-| fn | `dialable` |  |
 
 ### `public/js/countries.js`
 
@@ -880,4 +877,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-474 exports. 226 have no doc comment.
+471 exports. 224 have no doc comment.

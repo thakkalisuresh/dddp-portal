@@ -12,7 +12,6 @@ import { trackPage } from './track.js';
 import { $, el, esc, statusChip, billBreakdown, renderViewBanner, showError } from './ui.js';
 import { money, kg, periodLabel, dayLabel } from './i18n.js';
 import { drawQr } from './qr.js';
-import { treasurerLine } from './contact.js';
 
 const main = $('#main');
 
@@ -507,6 +506,6 @@ function helpSection() {
   return el('section', { class: 'stack' },
     el('hr', { class: 'rule' }),
     el('p', { class: 'small muted' },
-      `Questions about your bill? Contact ${treasurerLine()}.`)
+      'Questions about your bill? Reach out to the committee.')
   );
 }

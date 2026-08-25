@@ -13,7 +13,6 @@
 
 import { api, ApiError } from './api.js';
 import { $, el, showError, withReveal } from './ui.js';
-import { TREASURER } from './contact.js';
 import { checkPassword, describePolicy } from './password-rules.js';
 
 const ask = $('#ask');
@@ -129,10 +128,6 @@ $('#again').addEventListener('click', async () => {
     showError(alertBox, err);
   }
 });
-
-// Filled in rather than written into the HTML, so the number lives in one place.
-const slot = $('#treasurer');
-if (slot) slot.textContent = `${TREASURER.name} on ${TREASURER.phone}`;
 
 // Wrap the password field so it can be revealed. Done here rather than in the
 // HTML because the CSP forbids inline script, and the control needs a listener.
