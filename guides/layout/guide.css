@@ -1,0 +1,258 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   DD Diamond Park guides — one stylesheet, two renderings.
+
+   Screen  : the portal exactly. Real tokens, dark bar, #0A6B4A accent.
+   Print   : the same markup with the tokens swapped down to hairline rules
+             and black text.
+
+   The print rendering NEVER restyles a component — it only redefines the
+   variables at the top. That constraint is the whole reason the two can be
+   trusted to stay in step: there is no second layout to forget to update.
+
+   Nothing carries meaning by colour alone (WCAG 1.4.1). Step badges are
+   numbered, so they survive greyscale, photocopying and colour-blind readers
+   without a second encoding.
+   ───────────────────────────────────────────────────────────────────────── */
+
+@font-face{
+  font-family:'Lexend';
+  src:url('../../public/fonts/lexend-latin.woff2') format('woff2');
+  font-weight:100 900; font-display:block;
+}
+@font-face{
+  font-family:'Source Sans 3';
+  src:url('../../public/fonts/sourcesans3-latin.woff2') format('woff2');
+  font-weight:200 900; font-display:block;
+}
+
+@page {
+  size: A4;
+  margin: 16mm 15mm 14mm;
+}
+
+:root {
+  --paper:      #FAFAF8;
+  --surface:    #FFFFFF;
+  --ink:        #0F172A;
+  --muted:      #52525B;
+  --line:       #DDDCD6;
+  --line-strong:#C9C6BD;
+  --accent:     #0A6B4A;
+  --accent-ink: #FFFFFF;
+  --wash:       #F1F8F5;
+  --wash-line:  #BEDCD0;
+  --warn:       #A16207;
+  --warn-wash:  #FCF8EC;
+  --warn-line:  #E8D9AE;
+  --bar:        #0F172A;
+  --bar-ink:    #FFFFFF;
+  --badge-bg:   #0A6B4A;
+  --badge-ink:  #FFFFFF;
+  --badge-ring: transparent;
+  --shot-filter: none;
+  --rule: 1px;
+}
+
+@media print {
+  :root {
+    --paper:      #FFFFFF;
+    --surface:    #FFFFFF;
+    --ink:        #000000;
+    --muted:      #333333;
+    --line:       #9C9C9C;
+    --line-strong:#6E6E6E;
+    --accent:     #000000;
+    --accent-ink: #FFFFFF;
+    --wash:       #FFFFFF;
+    --wash-line:  #000000;
+    --warn:       #000000;
+    --warn-wash:  #FFFFFF;
+    --warn-line:  #000000;
+    --bar:        transparent;
+    --bar-ink:    #000000;
+    --badge-bg:   #FFFFFF;
+    --badge-ink:  #000000;
+    --badge-ring: #000000;
+    --shot-filter: grayscale(1) contrast(1.05);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'Source Sans 3', ui-sans-serif, system-ui, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.5;
+}
+
+/* ── the page ─────────────────────────────────────────────────────────── */
+.page {
+  page-break-after: always;
+  break-after: page;
+  display: flex;
+  flex-direction: column;
+  min-height: 251mm;          /* A4 less the @page margins */
+}
+.page:last-child { page-break-after: auto; break-after: auto; }
+
+.runhead {
+  display: flex; justify-content: space-between; align-items: baseline;
+  border-bottom: var(--rule) solid var(--line);
+  padding-bottom: 5pt; margin-bottom: 14pt;
+  font-family: 'Lexend', sans-serif; font-size: 7pt;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+}
+.runfoot {
+  margin-top: auto; padding-top: 6pt;
+  border-top: var(--rule) solid var(--line);
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-family: 'Lexend', sans-serif; font-size: 7pt; color: var(--muted);
+}
+.runfoot .pg { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.body { display: flex; flex-direction: column; gap: 11pt; }
+
+/* ── type ─────────────────────────────────────────────────────────────── */
+.eyebrow {
+  font-family: 'Lexend', sans-serif; font-size: 7.5pt; font-weight: 600;
+  letter-spacing: .17em; text-transform: uppercase; color: var(--accent);
+  margin: 0 0 3pt;
+}
+h1 {
+  font-family: 'Lexend', sans-serif; font-size: 21pt; font-weight: 600;
+  line-height: 1.05; letter-spacing: -.02em; margin: 0; text-wrap: balance;
+}
+h2 {
+  font-family: 'Lexend', sans-serif; font-size: 14pt; font-weight: 600;
+  line-height: 1.15; margin: 0; text-wrap: balance;
+}
+h3 {
+  font-family: 'Lexend', sans-serif; font-size: 8pt; font-weight: 600;
+  letter-spacing: .13em; text-transform: uppercase; color: var(--muted);
+  margin: 0 0 6pt; padding-bottom: 4pt;
+  border-bottom: var(--rule) solid var(--line);
+}
+p { margin: 0; max-width: 66ch; }
+p + p { margin-top: 6pt; }
+.dek { color: var(--muted); margin-top: 5pt; }
+.small { font-size: 9pt; color: var(--muted); }
+a { color: var(--accent); text-decoration: underline; }
+
+/* ── callout boxes ────────────────────────────────────────────────────── */
+.box {
+  background: var(--wash);
+  border: var(--rule) solid var(--wash-line);
+  border-left: 3pt solid var(--wash-line);
+  border-radius: 3pt; padding: 8pt 10pt;
+  break-inside: avoid;
+}
+.box .lab {
+  display: block; margin-bottom: 3pt;
+  font-family: 'Lexend', sans-serif; font-size: 7.5pt; font-weight: 700;
+  letter-spacing: .13em; text-transform: uppercase; color: var(--accent);
+}
+.box--warn { background: var(--warn-wash); border-color: var(--warn-line); }
+.box--warn .lab { color: var(--warn); }
+
+/* ── numbered steps ───────────────────────────────────────────────────── */
+ol.steps { list-style: none; margin: 0; padding: 0; counter-reset: s; display: flex; flex-direction: column; gap: 7pt; }
+ol.steps > li {
+  display: grid; grid-template-columns: 15pt 1fr; gap: 7pt; align-items: start;
+  break-inside: avoid;
+}
+ol.steps > li::before {
+  counter-increment: s; content: counter(s);
+  width: 15pt; height: 15pt; border-radius: 50%;
+  background: var(--badge-bg); color: var(--badge-ink);
+  box-shadow: inset 0 0 0 1pt var(--badge-ring);
+  font-family: 'Lexend', sans-serif; font-size: 8.5pt; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+ol.steps .note { display: block; color: var(--muted); font-size: 9pt; margin-top: 2pt; }
+
+/* ── prerequisites ────────────────────────────────────────────────────── */
+ul.pre { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5pt; }
+ul.pre li { position: relative; padding-left: 14pt; break-inside: avoid; }
+ul.pre li::before {
+  content: ""; position: absolute; left: 0; top: 4.5pt;
+  width: 7pt; height: 7pt; border: 1pt solid var(--line-strong); border-radius: 1pt;
+}
+
+ul.plain { margin: 0; padding-left: 14pt; display: flex; flex-direction: column; gap: 4pt; }
+
+/* ── figures: screenshot + badges drawn in CSS ────────────────────────── */
+figure { margin: 0; break-inside: avoid; }
+.shot {
+  position: relative;
+  border: var(--rule) solid var(--line-strong);
+  border-radius: 3pt;
+  filter: var(--shot-filter);
+}
+.shot img { display: block; width: 100%; height: auto; border-radius: 2pt; }
+.shot--mobile { margin: 0 auto; }
+
+/* Badge sits centred on the left edge of the element it points at, half
+   outside the frame so it never covers the control being described. */
+.badge {
+  position: absolute;
+  width: 13pt; height: 13pt; border-radius: 50%;
+  background: var(--badge-bg); color: var(--badge-ink);
+  box-shadow: inset 0 0 0 1pt var(--badge-ring), 0 0 0 1.5pt var(--paper);
+  font-family: 'Lexend', sans-serif; font-size: 8pt; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums;
+  transform: translate(-50%, -50%);
+}
+figcaption { font-size: 8.5pt; color: var(--muted); margin-top: 4pt; font-style: italic; }
+
+/* ── two-column split for a figure beside its steps ───────────────────── */
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 12pt; align-items: start; }
+.split--narrow { grid-template-columns: 62mm 1fr; }
+
+/* ── tables ───────────────────────────────────────────────────────────── */
+table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+th {
+  text-align: left; font-family: 'Lexend', sans-serif; font-size: 7.5pt;
+  font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); border-bottom: var(--rule) solid var(--line-strong);
+  padding: 0 6pt 4pt 0;
+}
+td { padding: 5pt 6pt 5pt 0; border-bottom: var(--rule) solid var(--line); vertical-align: top; }
+td:last-child, th:last-child { padding-right: 0; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* ── cover ────────────────────────────────────────────────────────────── */
+.cover { justify-content: center; text-align: left; }
+.cover .mark {
+  font-family: 'Lexend', sans-serif; font-size: 9pt; font-weight: 600;
+  letter-spacing: .2em; text-transform: uppercase; color: var(--accent);
+  margin: 0 0 10mm;
+}
+.cover h1 { font-size: 30pt; }
+.cover .sub { font-size: 12pt; color: var(--muted); margin-top: 6mm; max-width: 46ch; }
+.cover .stamp {
+  margin-top: 18mm; padding-top: 5mm;
+  border-top: var(--rule) solid var(--line);
+  font-family: 'Lexend', sans-serif; font-size: 8.5pt; color: var(--muted);
+  display: flex; flex-direction: column; gap: 2pt;
+}
+
+/* ── contents ─────────────────────────────────────────────────────────── */
+.toc { display: flex; flex-direction: column; gap: 0; }
+.toc a {
+  display: flex; align-items: baseline; gap: 6pt;
+  padding: 6pt 0; border-bottom: var(--rule) solid var(--line);
+  text-decoration: none; color: var(--ink);
+}
+.toc .n {
+  font-family: 'Lexend', sans-serif; font-weight: 700; color: var(--accent);
+  min-width: 16pt; font-variant-numeric: tabular-nums;
+}
+.toc .t { font-family: 'Lexend', sans-serif; font-weight: 500; }
+.toc .d { color: var(--muted); font-size: 9pt; margin-left: auto; text-align: right; max-width: 42%; }

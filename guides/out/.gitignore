@@ -1,0 +1,4 @@
+# Build output — regenerate with `npm run guides`.
+# The props are generated too, and pair fictional payments to demo flats.
+*
+!.gitignore
