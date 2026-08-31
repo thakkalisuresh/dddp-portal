@@ -265,6 +265,12 @@ doctor warn has meant since `/forgot` shipped — and it becomes unbounded only 
 email also becomes a login, which is the question this entry is still parked on. **Do not add the index ahead of the roster to close
 it.** The doctor warn is the interim control and is correctly a warn.
 
+**The onboarding half is B26** (added 2026-08-24). This entry is about email as
+a thing you can *type into the login box*; B26 is about whether the welcome
+screen may refuse to continue without one. They interact in a way neither shows
+alone — a unique index plus a required field means a couple sharing one address
+cannot both get in — so weigh them together, not in sequence.
+
 **Email becomes a mandatory roster column** (C1, B10). Two things follow that are
 not free:
 
@@ -292,6 +298,87 @@ The login field was `type="tel" inputmode="numeric"` — a digit keypad with no
 phone. It is now `inputmode="tel"` (`public/login.html`), which `/forgot` had
 right all along. Nothing else in B18 is affected: this was always the one part
 that did not need the list of old usernames to proceed.
+
+## B26 — Email required at onboarding
+
+Raised 2026-08-24, out of the same session that mocked up B18's login half.
+**Parked deliberately, with a named trigger: the roster arrives and every
+household on it has an address.** Until then the field stays optional, which is
+what production does today and what the prototype's "Today" mode shows.
+
+The decision is not "should we ask harder". Onboarding is a hard gate —
+`must_change_pw` blocks every other screen until it is finished — so a required
+field there does not mean *we would like your email*. It means **no email, no
+portal**. That is why the trigger is the roster and not an opinion: the cost of
+requiring it is paid entirely by the households who cannot comply, and their
+number is currently unknown.
+
+**Where the number comes from, and where it does not.** Not `npm run doctor`.
+Production still carries the demo seed, so both `EMAIL-DUPLICATE` and
+`NO-EMAIL-ON-FILE` describe the seed generator rather than the building — a
+real-looking answer to a fake question, which is worse than no answer. The count
+has to be read off the committee's own sheet before it is pasted, which puts
+this decision *before* C1's import rather than after it.
+
+### What has to change
+
+The resident-facing edit is genuinely small. Everything expensive is behind it.
+
+* `public/js/password.js` — drop `(optional)` from the label, drop the
+  "Without one you will have to ask …" paragraph (there is no longer a "without
+  one" to describe), and add the empty check beside the existing
+  `if (!name.value.trim())`. Same shape, same wording pattern: *"Please give
+  your email address."*
+* `functions/index.js`, `onboard()` — the server check that actually decides.
+  Today `email` falls to `null` when blank; it becomes a `400` alongside the
+  existing name check. **Do not rely on the client check alone** — it exists to
+  save a round trip, not to enforce.
+* `functions/index.js`, `patchProfile()` — a resident must not be able to clear
+  the address afterwards, or the requirement lasts exactly as long as the
+  welcome screen. This is the one that gets forgotten.
+* **Both of those paths still skip `normaliseEmail`** (see B18). Fold them in at
+  the same time; a required field storing mixed case is the 0009 bug with a
+  bigger blast radius.
+* `roster.js` — B18's open decision about a missing address in the paste stops
+  being open. If onboarding requires an address, the import cannot quietly
+  accept a row without one, or the two halves disagree about the same rule.
+* The invite copy (`rosterImport`'s WhatsApp text) should say an address will be
+  asked for, so the first a resident hears of it is not the screen refusing to
+  let them past.
+
+### The two dead ends, and why they are the whole decision
+
+**A resident with no address cannot onboard at all.** They hold a temporary
+password, reach the welcome screen, and stop — with no account yet from which to
+ask anyone for help, and a 72-hour expiry running (B10). That population is
+**B5**, and B5's own instruction is to build nothing until the roster says how
+many they are. Same gate, same reason.
+
+**Required and unique together are a dead end for a shared address.** Either
+one alone is survivable: unique-but-optional leaves "leave it blank" as the
+escape, and required-but-not-unique lets a couple use one Gmail. Together they
+mean one of the two can never complete setup. This is the interaction to
+remember, because the two changes will feel independent when they are proposed
+separately — B18 for the index, this entry for the field — and neither is
+obviously the one that caused the problem.
+
+If it is built anyway, the refusal has to end somewhere real. "Leave it blank"
+is gone as an out, so the message names the holder and points at the one person
+who can resolve it, rather than restating the rule.
+
+### What would make this cheap
+
+Requiring the address is what makes B18 worth building — a second identity that
+only part of the building possesses is barely worth the schema change. So the
+honest ordering is: **get the roster, count the households with no address and
+the households sharing one, and if both counts are zero this and B18 become one
+small change instead of two risky ones.** If either count is not zero, the work
+is not the code — it is the phone calls, and that is a committee errand rather
+than a deploy.
+
+A clickable mock-up of both states exists from the 2026-08-24 session
+(artifact "Two Ways In"): the required field, the empty-field refusal, and the
+already-taken-address refusal, against the real tokens.
 
 ## B23 — The app row sends people to install apps they already have
 
@@ -413,6 +500,10 @@ Self-service reset is built, so anyone with an address can recover unaided.
 What remains is the people with none. `npm run doctor` reports the count as
 NO-EMAIL-ON-FILE, and onboarding now explains why an address is worth giving,
 so coverage should grow on its own.
+
+**B26 is this entry's other half** (added 2026-08-24): it asks what happens to
+exactly this population if the onboarding field becomes required. Same gate,
+same number, and neither can be answered before the other.
 
 **Do not build anything here until the roster is in and the number is known.**
 If it turns out to be two households, a reset by hand is the right answer and
