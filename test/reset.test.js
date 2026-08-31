@@ -318,6 +318,31 @@ describe('an issued temporary password stops working', () => {
     expect(m).toMatch(/forgotten your password/i);
     expect(m).not.toMatch(/incorrect|wrong/i);
   });
+
+  it('does NOT send an account with no address to /forgot', () => {
+    // The closed loop this exists to end: /forgot emails a code, so with no
+    // address on file it answers with the same neutral reply an unknown number
+    // gets. The resident waits for a code nobody sent, and the only trace is a
+    // DDP-AUTH-011 alert. Expired roster invites are mostly this case — the
+    // invite is the one temporary password issued in bulk, and B5 is the count
+    // of residents with no address at all.
+    const m = expiredPasswordMessage(false);
+    expect(m).toMatch(/expired/i);
+    expect(m).not.toMatch(/forgotten your password/i);
+    expect(m).toMatch(/committee/i);
+    expect(m).not.toMatch(/incorrect|wrong/i);
+  });
+
+  it('still says the password expired first, whichever way out it offers', () => {
+    // The opener is the part that stops them retyping it, so it must not vary.
+    for (const m of [expiredPasswordMessage(true), expiredPasswordMessage(false)]) {
+      expect(m.startsWith('That temporary password has expired.')).toBe(true);
+    }
+  });
+
+  it('defaults to the /forgot wording, so an un-updated caller stays correct', () => {
+    expect(expiredPasswordMessage()).toBe(expiredPasswordMessage(true));
+  });
 });
 
 describe('the email carrying a temporary password', () => {

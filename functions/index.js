@@ -554,7 +554,10 @@ async function login(request, env, ctx) {
   }
 
   const owner = await env.DB.prepare(
-    `SELECT id, name, flat, role, pw_hash, pw_salt, pw_iterations, must_change_pw, pw_expires_at
+    // `email` is here for the expiry branch below, which has to know whether
+    // /forgot could actually help this account before it points them at it.
+    `SELECT id, name, flat, role, email, pw_hash, pw_salt, pw_iterations,
+            must_change_pw, pw_expires_at
        FROM owners WHERE mobile = ? AND active = 1`
   ).bind(mobile).first();
 
@@ -591,9 +594,14 @@ async function login(request, env, ctx) {
   // genuinely mistyped would be sent to /forgot instead of trying again.
   const temp = tempPasswordState(owner);
   if (temp.expired) {
+    // `hasEmail` is reported as well as read: an expired invite on an account
+    // with no address is a resident who cannot help themselves, and that is a
+    // different call on the committee's time from one who can.
+    const hasEmail = Boolean(owner.email);
     await reportError(env, 'DDP-AUTH-012',
-                      { flat: owner.flat, ownerId: owner.id, expiredAt: owner.pw_expires_at }, ctx);
-    return problem(401, 'DDP-AUTH-012', expiredPasswordMessage());
+                      { flat: owner.flat, ownerId: owner.id, expiredAt: owner.pw_expires_at,
+                        hasEmail }, ctx);
+    return problem(401, 'DDP-AUTH-012', expiredPasswordMessage(hasEmail));
   }
 
   await clearRateLimit(env, mobile);
