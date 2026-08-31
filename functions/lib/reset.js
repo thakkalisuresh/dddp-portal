@@ -158,10 +158,30 @@ export function tempPasswordState(owner, now = new Date()) {
  * What an expired temporary password says. It must not read as "wrong
  * password": the resident typed exactly what they were sent, and telling them
  * otherwise sends them back to the person who sent it instead of to `/forgot`.
+ *
+ * WHY IT ASKS WHETHER THERE IS AN ADDRESS. `/forgot` emails a code, so it can
+ * only help somebody who has an address on file. The unconditional version of
+ * this message sent everyone there, and for an account with no email that is a
+ * closed loop: `/forgot` answers with the same neutral reply it gives an
+ * unknown number, the resident waits for a code that was never sent, and the
+ * only signal is a DDP-AUTH-011 nobody is watching for.
+ *
+ * That loop caught the population it could least afford to. A roster invite is
+ * the one temporary password issued in bulk, `parseRoster` only picks up an
+ * address when the paste carries a header naming the column, and B5 is the
+ * count of residents who have none at all — so "expired invite, no address on
+ * file" is the ordinary case here, not the edge one.
+ *
+ * The committee rather than a name, matching the line already under the login
+ * form: committee members change at every AGM, and the published list on the
+ * home page is the one copy that has to be right.
  */
-export function expiredPasswordMessage() {
-  return 'That temporary password has expired. Use "Forgotten your password?" '
-       + 'below to email yourself a new code.';
+export function expiredPasswordMessage(hasEmail = true) {
+  const opener = 'That temporary password has expired. ';
+  return hasEmail
+    ? opener + 'Use "Forgotten your password?" below to email yourself a new code.'
+    : opener + 'There is no email address on your account, so a code cannot be sent to you — '
+             + 'reach out to the committee for a new password.';
 }
 
 /**

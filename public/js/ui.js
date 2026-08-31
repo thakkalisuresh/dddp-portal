@@ -214,11 +214,34 @@ export function askFirst(slot, message, confirmLabel = 'Yes', cancelLabel = 'Kee
   });
 }
 
-/** Errors say what went wrong and what to do about it. */
+/**
+ * Errors say what went wrong and what to do about it — and are on screen when
+ * they say it.
+ *
+ * Every caller puts its error slot at the TOP of a form and its submit button
+ * at the bottom, which is right: the message belongs with the thing it is about,
+ * and a resident re-reading the form finds it first. But onboarding's form is
+ * 869px tall, so on a phone the button and the slot are never both visible.
+ * Pressing "Finish setting up" with a weak password rendered the refusal 202px
+ * above an iPhone SE's viewport and moved nothing — a dead button, with the
+ * reason it was dead sitting off screen. `role="alert"` meant a screen reader
+ * announced it while a sighted resident got no feedback at all.
+ *
+ * `block: 'nearest'` rather than 'center' or 'start': it scrolls the minimum
+ * needed and does NOTHING when the message is already visible, which is the
+ * common case on login and every admin screen. So this changes only the screens
+ * that were broken.
+ */
 export function showError(container, error) {
   const node = el('div', { class: 'note note--bad', role: 'alert' },
     error?.message ?? 'Something went wrong. Please try again.');
   container.replaceChildren(node);
+
+  // Guarded because this also runs under vitest, where jsdom has no layout and
+  // no scrollIntoView — a test asserting on the message must not die here.
+  if (typeof node.scrollIntoView !== 'function') return;
+  const still = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  node.scrollIntoView({ block: 'nearest', behavior: still ? 'auto' : 'smooth' });
 }
 
 /**

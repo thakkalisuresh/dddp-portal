@@ -842,7 +842,7 @@ Small render helpers shared by every screen.
 | fn | `renderViewBanner` | The viewing-as banner. |
 | fn | `billBreakdown` |  |
 | fn | `askFirst` | Ask before something destructive, in the page rather than in a dialog. |
-| fn | `showError` |  |
+| fn | `showError` | Errors say what went wrong and what to do about it — and are on screen when they say it. |
 | fn | `withReveal` | A show/hide control for a password field. |
 | fn | `foldedSection` | A folded-in section: closed, and not loaded until it is opened. |
 
@@ -877,4 +877,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-471 exports. 224 have no doc comment.
+471 exports. 223 have no doc comment.
