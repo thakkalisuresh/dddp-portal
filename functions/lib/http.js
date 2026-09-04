@@ -125,6 +125,9 @@ const EXPECTED = {
   'DDP-AUTH-013': [400, 'Include a number or a symbol.'],
   'DDP-AUTH-014': [400, 'Admin accounts need at least one capital letter.'],
   'DDP-AUTH-015': [400, 'That password contains something easy to guess.'],
+  // Wording varies by whether the account is on a temporary password; see
+  // refuseCurrentPassword. This is the fallback.
+  'DDP-AUTH-017': [400, 'That is already your password. Choose a different one.'],
   'DDP-AUTH-009': [400, 'That code is not right, or it has expired.'],
   'DDP-AUTH-010': [429, 'Too many codes requested. Try again in an hour.'],
   'DDP-ADMIN-001': [400, 'That flat or resident is not on the register.'],

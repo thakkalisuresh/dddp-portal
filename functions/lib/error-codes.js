@@ -37,6 +37,11 @@ export const ERROR_CODES = {
   // seeing, because every login failing to upgrade is a silently stalled
   // migration.
   'DDP-AUTH-016': { severity: 'warn',  message: 'Password re-hash at the new iteration count failed' },
+  // Worth seeing rather than merely refusing. A burst of these on the forced
+  // first-login change means residents are being told to pick a new password
+  // and reaching for the one in the message — which is a signal about the
+  // screen's wording, not about any one resident.
+  'DDP-AUTH-017': { severity: 'warn',  message: 'New password rejected — same as the password already on the account' },
 
   // ── BILL ───────────────────────────────────────────────────────────────
   'DDP-BILL-001': { severity: 'error', message: 'Bill generation found no reading for an active flat' },
