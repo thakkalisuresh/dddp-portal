@@ -116,15 +116,45 @@ export function renderNav(me, current = location.pathname) {
       // The count goes in the accessible name too. A coloured dot says nothing
       // to a screen reader, and "Notices" alone would hide the whole point.
       'aria-label': unread ? `${item.label}, ${unread} new` : null,
-    }, icon(item.icon), el('span', {}, item.label),
-       unread
-         ? el('span', { class: 'bottomnav__badge', 'aria-hidden': 'true' },
-             unread > 9 ? '9+' : String(unread))
-         : null);
+    }, icon(item.icon),
+       // Label and count are ONE row. Left as siblings of the icon, the badge
+       // became a third line in the phone bar's column layout — "Notices" over
+       // its own number — which pushed the bar taller than the space the page
+       // reserves for it and squeezed the label against the screen edge.
+       el('span', { class: 'bottomnav__label' },
+          el('span', {}, item.label),
+          unread
+            ? el('span', { class: 'bottomnav__badge', 'aria-hidden': 'true' },
+                unread > 9 ? '9+' : String(unread))
+            : null));
   }));
 
   // The bar is fixed, so content needs room or the last row hides behind it.
   document.body.classList.add('has-bottomnav');
+  measureBar(bar);
+}
+
+/**
+ * Publishes the bar's real height for the page to reserve.
+ *
+ * Three CSS rules used to hard-code 56px — the height the bar was drawn to
+ * have. It actually measures around 65, so the last row of every screen sat
+ * nine pixels behind it: close enough to look like a design choice and far
+ * enough to clip a line of text. A constant cannot be right anyway, because
+ * the height moves with the interface font, the phone's text-size setting and
+ * the safe-area inset.
+ *
+ * Measured once and republished whenever the bar changes size, so the padding
+ * is right after a font swap, a rotation or a resize rather than only on load.
+ */
+function measureBar(bar) {
+  const publish = () => document.documentElement.style.setProperty(
+    '--bottomnav-h', `${Math.round(bar.getBoundingClientRect().height)}px`);
+  publish();
+  // Guarded: renderNav runs again on every page, and one observer is enough.
+  if (bar.dataset.measured || typeof ResizeObserver === 'undefined') return;
+  bar.dataset.measured = '1';
+  new ResizeObserver(publish).observe(bar);
 }
 
 /** A quiet "Log out" for the header, since the bar has no room for it. */

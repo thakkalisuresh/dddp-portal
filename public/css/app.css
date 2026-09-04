@@ -355,9 +355,19 @@ a { color: var(--accent); }
 }
 .bottomnav__item:hover { color: var(--ink); }
 
-/* Flows with the label in the item's own direction — under it on a phone,
-   beside it on a desktop — rather than floating over the icon. The bar is only
-   as tall as a touch target, so an absolutely positioned bubble clips. */
+/* The count rides BESIDE the label, in both layouts. It used to flow in the
+   item's own direction, which on a phone stacks — so the number landed on a
+   line of its own below "Notices", made the bar taller than the 56px the page
+   reserves for it, and pressed the labels into the home indicator. Pairing the
+   two in their own row keeps the bar two lines tall whether or not there is
+   anything unread. Not absolutely positioned: the bar is only as tall as a
+   touch target, so a floating bubble clips. */
+.bottomnav__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
 .bottomnav__badge {
   min-width: 1.25rem;
   padding: 0 var(--s-1);
@@ -397,13 +407,26 @@ a { color: var(--accent); }
     border-top: 2px solid transparent;
   }
   .bottomnav__item.is-current { border-top-color: var(--accent); border-bottom-color: transparent; }
+  /* Tighter next to a 12px label, so the pair reads as one word-and-count
+     rather than a label with a coin next to it. */
+  .bottomnav__label { gap: 4px; }
+  .bottomnav__badge { min-width: 1rem; line-height: 1rem; }
 
-  /* A fixed bar hides content unless the page reserves room for it. */
-  .has-bottomnav .page { padding-bottom: calc(var(--s-8) + 56px); }
-  .has-bottomnav .footbar { bottom: calc(56px + env(safe-area-inset-bottom, 0)); }
+  /* A fixed bar hides content unless the page reserves room for it.
+
+     --bottomnav-h is the bar's MEASURED height, published by renderNav. These
+     rules used to say 56px, which the bar has never actually been; the
+     fallback here is only for the moment before the script runs. It already
+     includes the safe-area inset the bar pads itself with, so nothing below
+     should add that a second time.
+
+     A third rule lifted a `.footbar` by the same amount. No stylesheet gave
+     that class a position to lift, no page ever carried one, and nothing in
+     the repository mentioned it but the rule itself — so it is gone. */
+  .has-bottomnav .page { padding-bottom: calc(var(--s-8) + var(--bottomnav-h, 64px)); }
   /* The support line is the last thing on the page, so on a phone it is the
      thing the fixed bar would sit on top of. */
-  .has-bottomnav .supportfoot { margin-bottom: 56px; }
+  .has-bottomnav .supportfoot { margin-bottom: var(--bottomnav-h, 64px); }
 }
 
 /* ── support footer ───────────────────────────────────────────────────────
