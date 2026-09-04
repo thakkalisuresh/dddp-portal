@@ -28,6 +28,7 @@ Ask the bot a code and it will explain it.
 | `DDP-AUTH-014` | warn | live | New password rejected — admin policy needs a capital letter |
 | `DDP-AUTH-015` | warn | live | New password rejected — contains personal or predictable text |
 | `DDP-AUTH-016` | warn | live | Password re-hash at the new iteration count failed |
+| `DDP-AUTH-017` | warn | live | New password rejected — same as the password already on the account |
 
 ## MAIL
 
@@ -153,7 +154,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-93 codes across 10 domains — 12 fatal, 3 awaiting their call site, 3 retired.
+94 codes across 10 domains — 12 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

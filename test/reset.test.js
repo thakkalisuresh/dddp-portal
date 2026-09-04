@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   generateCode, normaliseCode, canIssue, resetState, failureMessage,
-  validateNewPassword, resetEmail, neutralReply,
+  validateNewPassword, resetEmail, neutralReply, refuseCurrentPassword,
   CODE_LENGTH, MAX_ATTEMPTS, MAX_PER_HOUR, EXPIRY_MINUTES,
   tempPasswordState, tempPasswordExpiry, expiredPasswordMessage, tempPasswordEmail,
   TEMP_PW_HOURS, INVITE_PW_HOURS,
 } from '../functions/lib/reset.js';
 import { buildRawMessage } from '../functions/lib/mailer.js';
+import { hashPassword, generateOneTimePassword } from '../functions/lib/crypto.js';
 
 const iso = (minsAgo, now = Date.now()) => new Date(now - minsAgo * 60_000).toISOString();
 
@@ -384,5 +385,92 @@ describe('the email carrying a temporary password', () => {
 
   it('says the next step is choosing their own', () => {
     expect(mail.text).toMatch(/choose your own/i);
+  });
+});
+
+/* ── reusing the password you already have ───────────────────────────────── */
+
+describe('refuseCurrentPassword', () => {
+  // Low, so the suite is not paying the production cost thirty times over.
+  const ITER = 1000;
+  const rowFor = async (password, extra = {}) => {
+    const { hash, salt, iterations } = await hashPassword(password, ITER);
+    return { pw_hash: hash, pw_salt: salt, pw_iterations: iterations, ...extra };
+  };
+  const refusal = async (pw, row) => {
+    try {
+      await refuseCurrentPassword(pw, row);
+    } catch (err) {
+      return err;
+    }
+    return null;
+  };
+
+  it('allows a genuinely different password', async () => {
+    const row = await rowFor('harbour-lime-9182');
+    await expect(refuseCurrentPassword('quiet-otter-4471', row)).resolves.toBeUndefined();
+  });
+
+  it('refuses the temporary password being kept as the permanent one', async () => {
+    // The bug this closes: the forced first-login change accepted the very
+    // password that was read out over the phone, and cleared must_change_pw
+    // as though something had happened.
+    const temp = 'pine-4417';
+    const row = await rowFor(temp, { must_change_pw: 1 });
+
+    const err = await refusal(temp, row);
+    expect(err?.code).toBe('DDP-AUTH-017');
+    expect(err.detail.publicMessage).toMatch(/temporary password/i);
+    expect(err.detail.temporary).toBe(true);
+  });
+
+  it('refuses an admin keeping the strong temporary form', async () => {
+    const temp = generateOneTimePassword({ strong: true });
+    const row = await rowFor(temp, { must_change_pw: 1, role: 'admin' });
+    expect((await refusal(temp, row))?.code).toBe('DDP-AUTH-017');
+  });
+
+  it('refuses re-setting the password you chose, with different wording', async () => {
+    // Same refusal, different next step: nothing to look up, nothing to do.
+    const row = await rowFor('harbour-lime-9182', { must_change_pw: 0 });
+    const err = await refusal('harbour-lime-9182', row);
+    expect(err?.code).toBe('DDP-AUTH-017');
+    expect(err.detail.publicMessage).toMatch(/already your password/i);
+    expect(err.detail.publicMessage).not.toMatch(/temporary/i);
+  });
+
+  it('is case- and whitespace-sensitive, like the login it mirrors', async () => {
+    // Not a normalising check: `Pine-4417` really is a different password, and
+    // refusing it would refuse something that logging in would not accept.
+    const row = await rowFor('pine-4417', { must_change_pw: 1 });
+    await expect(refuseCurrentPassword('Pine-4417', row)).resolves.toBeUndefined();
+    await expect(refuseCurrentPassword('pine-4417 ', row)).resolves.toBeUndefined();
+  });
+
+  it('compares at the count that made the hash, not the current target', async () => {
+    // Same trap as migration 0025. Verifying at the wrong count returns false,
+    // which here means silently ALLOWING the reuse rather than locking anyone
+    // out — a guard that fails open is worse than one that fails loudly.
+    const { hash, salt } = await hashPassword('pine-4417', ITER);
+    const row = { pw_hash: hash, pw_salt: salt, pw_iterations: ITER, must_change_pw: 1 };
+    expect((await refusal('pine-4417', row))?.code).toBe('DDP-AUTH-017');
+  });
+
+  it('throws loudly when the caller did not SELECT the hash columns', async () => {
+    // The silently-inert failure: a handler that forgets these columns would
+    // otherwise approve every password on that path and never say so.
+    // Fatal rather than a warn: it alerts, and the resident's old password
+    // keeps working. A guard that cannot run must not fail open.
+    for (const row of [{ role: 'owner' }, {}]) {
+      const err = await refusal('anything', row);
+      expect(err?.code).toBe('DDP-SYS-001');
+      expect(err.detail).toMatch(/pw_hash/);
+    }
+  });
+
+  it('does not put the password in the error detail', async () => {
+    const row = await rowFor('pine-4417', { must_change_pw: 1 });
+    const err = await refusal('pine-4417', row);
+    expect(JSON.stringify(err.detail)).not.toContain('pine-4417');
   });
 });

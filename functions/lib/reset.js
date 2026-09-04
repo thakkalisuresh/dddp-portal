@@ -15,10 +15,12 @@
  * particular is what makes six digits defensible at all: without it, an
  * automated guesser walks the space in minutes.
  *
- * Pure. All of it is decision logic over rows, so all of it is testable.
+ * Pure, with one exception: `refuseCurrentPassword` has to hash to do its
+ * job. Everything else is decision logic over rows, so all of it is testable.
  */
 
 import { fail } from './errors.js';
+import { verifyPassword, DEFAULT_ITERATIONS } from './crypto.js';
 import { checkPassword } from '../../public/js/password-rules.js';
 
 export const CODE_LENGTH = 6;
@@ -209,6 +211,57 @@ export function validateNewPassword(pw, user = {}) {
     });
   }
   return password;
+}
+
+/**
+ * Refuses a new password that is the one the account already holds.
+ *
+ * THE HOLE THIS CLOSES. A temporary password is issued, the resident logs in
+ * with it, and `must_change_pw` sends them to the forced-change screen — which
+ * then accepted the temporary password back as their permanent one. Nothing
+ * compared the candidate against the stored hash, so the forced change could
+ * be satisfied by retyping what had just been read out over the phone. The
+ * credential the system deliberately sends in the clear became the credential
+ * the account keeps, and `must_change_pw` went to 0 recording that a change
+ * had happened.
+ *
+ * WHY IT IS A HASH COMPARISON AND NOT A STRING ONE. On the forced path the
+ * old plaintext is never submitted — the screen does not ask for it, precisely
+ * because the resident just typed it at login. The stored hash is the only
+ * copy of the old password in reach, so the check costs one PBKDF2 derive.
+ * That is why it runs AFTER validateNewPassword: a candidate that fails a
+ * cheap composition rule should not pay for a derive first.
+ *
+ * WHY IT LEAKS NOTHING. Every caller has already proved it holds this
+ * credential — a live session, or a verified reset code. Telling them the
+ * password is the one they already have tells them what they just typed.
+ *
+ * The wording splits on `must_change_pw` because the two cases send the
+ * resident somewhere different: "that is the temporary one" means look at the
+ * message again, "that is already yours" means you have nothing to do.
+ *
+ * Throws rather than passing when the hash columns are absent. A guard whose
+ * inputs a caller forgot to SELECT would silently approve every password on
+ * that path, which is the exact failure this function exists to end.
+ */
+export async function refuseCurrentPassword(candidate, owner = {}) {
+  if (!owner.pw_hash || !owner.pw_salt) {
+    // Fatal, so it alerts. The resident gets a 500 and their old password
+    // still works, which is the safe side of a guard that cannot run.
+    fail('DDP-SYS-001', 'refuseCurrentPassword: caller did not SELECT pw_hash/pw_salt');
+  }
+
+  const same = await verifyPassword(String(candidate ?? ''), owner.pw_hash, owner.pw_salt,
+                                    owner.pw_iterations ?? DEFAULT_ITERATIONS);
+  if (!same) return;
+
+  fail('DDP-AUTH-017', {
+    publicMessage: owner.must_change_pw
+      ? 'That is the temporary password you were sent. Choose a different one.'
+      : 'That is already your password. Choose a different one.',
+    temporary: Boolean(owner.must_change_pw),
+    role: owner.role ?? 'owner',
+  });
 }
 
 /**

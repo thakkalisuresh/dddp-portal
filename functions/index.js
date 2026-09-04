@@ -66,7 +66,7 @@ import {
   generateCode, normaliseCode, expiryFrom, canIssue, resetState, failureMessage,
   validateNewPassword, resetEmail, neutralReply,
   tempPasswordState, expiredPasswordMessage, tempPasswordExpiry, tempPasswordEmail,
-  TEMP_PW_HOURS, INVITE_PW_HOURS,
+  TEMP_PW_HOURS, INVITE_PW_HOURS, refuseCurrentPassword,
 } from './lib/reset.js';
 import { sendEmail, mailConfigured } from './lib/mailer.js';
 import { parseRoster, previewRoster, resolveExemptionTargets } from './lib/roster.js';
@@ -795,7 +795,11 @@ async function changePassword(request, env, session) {
 
   // After the current-password check, so a stranger holding the session but
   // not the password learns nothing about the policy or the account.
-  validateNewPassword(next, row);   // throws DDP-AUTH-008/012/013/014
+  validateNewPassword(next, row);   // throws DDP-AUTH-008/013/014/015
+  // The forced first-login change lands here having skipped the block above,
+  // so this is the only thing standing between a temporary password and a
+  // permanent one. DDP-AUTH-017.
+  await refuseCurrentPassword(next, row);
 
   const { hash, salt, iterations } = await hashPassword(next, ITER(env));
   await env.DB.prepare(
@@ -1106,9 +1110,15 @@ async function onboard(request, env, session) {
   // account's own details are set in the same breath as the password, and
   // reading the stored row here would let someone type their name into both
   // fields and sail through.
-  const account = await env.DB.prepare('SELECT mobile, flat, role FROM owners WHERE id = ?')
-    .bind(session.actor.id).first();
+  //
+  // The pw_* columns are not for the policy — they are for the reuse check
+  // below, which is the one that stops the temporary password being kept.
+  const account = await env.DB.prepare(
+    `SELECT mobile, flat, role, pw_hash, pw_salt, pw_iterations, must_change_pw
+       FROM owners WHERE id = ?`
+  ).bind(session.actor.id).first();
   validateNewPassword(password, { ...account, name, email });
+  await refuseCurrentPassword(password, account);
 
   const { hash, salt, iterations } = await hashPassword(password, ITER(env));
   await env.DB.prepare(
@@ -4921,7 +4931,11 @@ async function resetWithCode(request, env, ctx) {
   const password = String(body?.password ?? '');
 
   const owner = await env.DB.prepare(
-    'SELECT id, flat, name, mobile, email, role FROM owners WHERE mobile = ? AND active = 1'
+    // pw_* is read for the reuse check after the code verifies, not before:
+    // nothing about this row may influence a reply until then.
+    `SELECT id, flat, name, mobile, email, role,
+            pw_hash, pw_salt, pw_iterations, must_change_pw
+       FROM owners WHERE mobile = ? AND active = 1`
   ).bind(mobile).first();
 
   // Same reply as a wrong code. An unknown number must not be distinguishable
@@ -4963,7 +4977,10 @@ async function resetWithCode(request, env, ctx) {
   // DDP-AUTH-009. That is precisely the directory the neutral replies above
   // exist to deny. Behind a verified code there is nothing left to leak —
   // whoever got this far already holds the account.
-  validateNewPassword(password, owner);   // throws DDP-AUTH-008/012/013/014
+  validateNewPassword(password, owner);   // throws DDP-AUTH-008/013/014/015
+  // Behind the verified code, so this cannot be used to probe an account's
+  // current password from outside. DDP-AUTH-017.
+  await refuseCurrentPassword(password, owner);
 
   const { hash, salt, iterations } = await hashPassword(password, ITER(env));
   const now = new Date().toISOString();

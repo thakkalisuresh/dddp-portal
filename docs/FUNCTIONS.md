@@ -549,6 +549,7 @@ Self-service password reset by emailed code.
 | fn | `tempPasswordState` | Has this account's temporary password run out? Two guards, and both are the point rather than defensiveness: `must_change_pw` gates the whole check, so this can never expire a password the resident chose. |
 | fn | `expiredPasswordMessage` | What an expired temporary password says. |
 | fn | `validateNewPassword` | The single gate every new password passes through — onboarding, the profile change, and the reset-with-code path all end up here. |
+| fn | `refuseCurrentPassword` | Refuses a new password that is the one the account already holds. |
 | fn | `resetEmail` | The email a resident receives. |
 | fn | `tempPasswordEmail` | The email carrying a temporary password the superadmin has just issued. |
 | fn | `neutralReply` | The reply to "I forgot my password". |
@@ -896,4 +897,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-476 exports. 223 have no doc comment.
+477 exports. 223 have no doc comment.
