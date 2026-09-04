@@ -42,6 +42,11 @@ export const ERROR_CODES = {
   // and reaching for the one in the message — which is a signal about the
   // screen's wording, not about any one resident.
   'DDP-AUTH-017': { severity: 'warn',  message: 'New password rejected — same as the password already on the account' },
+  // Distinct from 017 on purpose. 017 means they typed what they are holding
+  // right now — usually the temporary password, and usually a misread of the
+  // screen. 018 means they reached back for one they had abandoned, which is
+  // a different habit and worth being able to count separately.
+  'DDP-AUTH-018': { severity: 'warn',  message: 'New password rejected — used before, still within the history depth' },
 
   // ── BILL ───────────────────────────────────────────────────────────────
   'DDP-BILL-001': { severity: 'error', message: 'Bill generation found no reading for an active flat' },

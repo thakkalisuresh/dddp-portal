@@ -6,7 +6,8 @@
 
 import { json, problem, readJson, audit, rateLimit, clearRateLimit, guard, withSecurityHeaders } from './lib/http.js';
 import { reportError, assertAlerting, postToTelegram } from './lib/errors.js';
-import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex, derive } from './lib/crypto.js';
+import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex, derive,
+         DEFAULT_ITERATIONS } from './lib/crypto.js';
 import { dashboardPayload } from './lib/dashboard.js';
 import { billPdf, istSlashDate } from './lib/bill-pdf.js';
 // The Worker's own date label — the browser's lives in js/i18n.js.
@@ -66,7 +67,8 @@ import {
   generateCode, normaliseCode, expiryFrom, canIssue, resetState, failureMessage,
   validateNewPassword, resetEmail, neutralReply,
   tempPasswordState, expiredPasswordMessage, tempPasswordExpiry, tempPasswordEmail,
-  TEMP_PW_HOURS, INVITE_PW_HOURS, refuseCurrentPassword,
+  TEMP_PW_HOURS, INVITE_PW_HOURS, refuseCurrentPassword, refusePastPassword,
+  HISTORY_DEPTH,
 } from './lib/reset.js';
 import { sendEmail, mailConfigured } from './lib/mailer.js';
 import { parseRoster, previewRoster, resolveExemptionTargets } from './lib/roster.js';
@@ -770,6 +772,60 @@ async function supportContact(env) {
   };
 }
 
+/**
+ * The whole reuse gate: what the account holds now, then what it used to.
+ *
+ * Ordered by cost. `refuseCurrentPassword` needs no query and one derive;
+ * the history read is a round trip and up to HISTORY_DEPTH more. A password
+ * that is simply the current one — by far the common case, since that is the
+ * temporary-password mistake — never reaches the table at all.
+ *
+ * `owner` must carry the pw_* columns; `ownerId` is separate because two of
+ * the three callers identify the account from the session rather than the row.
+ */
+async function refuseReusedPassword(env, ownerId, candidate, owner) {
+  await refuseCurrentPassword(candidate, owner);
+
+  const { results } = await env.DB.prepare(
+    `SELECT pw_hash, pw_salt, pw_iterations FROM password_history
+      WHERE owner_id = ? ORDER BY set_at DESC, id DESC LIMIT ?`
+  ).bind(ownerId, HISTORY_DEPTH).all();
+
+  await refusePastPassword(candidate, results ?? []);
+}
+
+/**
+ * Archive the credential being replaced, and forget the ones past the depth.
+ *
+ * Called with the row's OLD hash, immediately before the UPDATE that
+ * overwrites it — see migration 0034 for why the outgoing password is the one
+ * recorded. An account being given its first password has nothing to archive
+ * and passes through.
+ *
+ * The prune is in the same batch as the insert. Apart means a failure between
+ * them grows the table without bound, and this is the one table whose size is
+ * also its CPU cost.
+ */
+async function archivePassword(env, ownerId, old) {
+  if (!old?.pw_hash || !old?.pw_salt) return;
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO password_history (owner_id, pw_hash, pw_salt, pw_iterations, set_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).bind(ownerId, old.pw_hash, old.pw_salt, old.pw_iterations ?? DEFAULT_ITERATIONS,
+           new Date().toISOString()),
+    // Keep the newest HISTORY_DEPTH. Anything older can never refuse anything
+    // again, and is a password sitting in a database for no reason.
+    env.DB.prepare(
+      `DELETE FROM password_history
+        WHERE owner_id = ?
+          AND id NOT IN (SELECT id FROM password_history WHERE owner_id = ?
+                          ORDER BY set_at DESC, id DESC LIMIT ?)`
+    ).bind(ownerId, ownerId, HISTORY_DEPTH),
+  ]);
+}
+
 async function changePassword(request, env, session) {
   if (session.impersonating) {
     await reportError(env, 'DDP-AUTH-007', { actor: session.actor.id, subject: session.subject.id });
@@ -798,9 +854,10 @@ async function changePassword(request, env, session) {
   validateNewPassword(next, row);   // throws DDP-AUTH-008/013/014/015
   // The forced first-login change lands here having skipped the block above,
   // so this is the only thing standing between a temporary password and a
-  // permanent one. DDP-AUTH-017.
-  await refuseCurrentPassword(next, row);
+  // permanent one. DDP-AUTH-017, then DDP-AUTH-018 for the ones before it.
+  await refuseReusedPassword(env, session.actor.id, next, row);
 
+  await archivePassword(env, session.actor.id, row);
   const { hash, salt, iterations } = await hashPassword(next, ITER(env));
   await env.DB.prepare(
     `UPDATE owners SET pw_hash = ?, pw_salt = ?, pw_iterations = ?, must_change_pw = 0,
@@ -875,6 +932,10 @@ async function resetPassword(request, env, session, path) {
   // bounds how long that matters; the extra entropy bounds how guessable it is
   // while it lasts.
   const otp = generateOneTimePassword({ strong: target.role !== 'owner' });
+  // The password being displaced was chosen by the resident, and after this
+  // they will be asked to choose again — archived, or the obvious thing to
+  // type at that prompt is the password they had before the reset.
+  await archivePassword(env, ownerId, target);
   const { hash, salt, iterations } = await hashPassword(otp, ITER(env));
   await env.DB.prepare(
     `UPDATE owners SET pw_hash = ?, pw_salt = ?, pw_iterations = ?, must_change_pw = 1,
@@ -928,7 +989,10 @@ async function emailTempPassword(request, env, session, path) {
   const offered = String(body?.oneTimePassword ?? '');
 
   const target = await env.DB.prepare(
-    `SELECT id, name, flat, email, role, pw_hash, pw_salt, must_change_pw, pw_expires_at
+    // pw_iterations travels with the hash: the archive below is worthless if
+    // the count that made it is guessed rather than recorded. See 0025.
+    `SELECT id, name, flat, email, role, pw_hash, pw_salt, pw_iterations,
+            must_change_pw, pw_expires_at
        FROM owners WHERE id = ?`
   ).bind(ownerId).first();
   if (!target) return problem(404, 'DDP-AUTH-006', 'No such resident.');
@@ -1118,8 +1182,9 @@ async function onboard(request, env, session) {
        FROM owners WHERE id = ?`
   ).bind(session.actor.id).first();
   validateNewPassword(password, { ...account, name, email });
-  await refuseCurrentPassword(password, account);
+  await refuseReusedPassword(env, session.actor.id, password, account);
 
+  await archivePassword(env, session.actor.id, account);
   const { hash, salt, iterations } = await hashPassword(password, ITER(env));
   await env.DB.prepare(
     `UPDATE owners SET name = ?, email = ?, pw_hash = ?, pw_salt = ?, pw_iterations = ?,
@@ -4979,9 +5044,12 @@ async function resetWithCode(request, env, ctx) {
   // whoever got this far already holds the account.
   validateNewPassword(password, owner);   // throws DDP-AUTH-008/013/014/015
   // Behind the verified code, so this cannot be used to probe an account's
-  // current password from outside. DDP-AUTH-017.
-  await refuseCurrentPassword(password, owner);
+  // current password from outside. DDP-AUTH-017, and 018 for the ones before.
+  // This is the path the history table was most wanted for: a forgotten
+  // password is often forgotten because it was recently changed away from.
+  await refuseReusedPassword(env, owner.id, password, owner);
 
+  await archivePassword(env, owner.id, owner);
   const { hash, salt, iterations } = await hashPassword(password, ITER(env));
   const now = new Date().toISOString();
 

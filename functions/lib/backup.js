@@ -62,7 +62,12 @@ export const TABLES = [
  * it is named here anyway so the reader does not wonder.
  */
 export const NEVER_BACKUP = new Set([
-  'sessions', 'password_resets',
+  // password_history is the same call as password_resets, and slightly
+  // sharper: it is a table of nothing BUT credentials, and the export header
+  // promises passwords never leave. Losing it in a restore costs a resident
+  // the ability to be refused an old password for a while — the mildest
+  // failure any table here has.
+  'sessions', 'password_resets', 'password_history',
   'activity', 'click_log', 'error_log', 'login_attempts', 'message_attempts',
   'd1_migrations',
 ]);

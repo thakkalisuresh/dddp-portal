@@ -155,6 +155,10 @@ describe('the bundle a committee member opens', () => {
     expect(TABLES).not.toContain('password_resets');
     expect(NEVER_BACKUP.has('sessions')).toBe(true);
     expect(NEVER_BACKUP.has('password_resets')).toBe(true);
+    // A table of nothing but old credentials. Exporting it would break the
+    // bundle's own header more thoroughly than any other table could.
+    expect(NEVER_BACKUP.has('password_history')).toBe(true);
+    expect(TABLES).not.toContain('password_history');
   });
 
   it('backs up the records a dispute turns on', () => {
