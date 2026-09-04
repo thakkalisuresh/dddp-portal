@@ -90,12 +90,18 @@ export const aside = (text) => ({ type: 'aside', text });
  * list and the line at the top of the message cannot drift apart.
  * `preview` is the grey line the inbox shows after the subject; skip it and
  * clients scrape the first words of the body, which is usually "Hello,".
+ *
+ * The sign-off is not a caller's to pass. Every message is from the same
+ * association, so both bodies end with the ASSOCIATION constant and nothing
+ * else — a caller that supplied its own signed the message twice, in two
+ * spellings of the name, which is what a `footer` option got us the one time
+ * it existed.
  */
-export function renderEmail({ title, preview = '', blocks = [], footer = '' }) {
+export function renderEmail({ title, preview = '', blocks = [] }) {
   return {
     subject: subjectFor(title),
-    html: renderHtml({ title, preview, blocks, footer }),
-    text: renderText({ title, blocks, footer }),
+    html: renderHtml({ title, preview, blocks }),
+    text: renderText({ title, blocks }),
   };
 }
 
@@ -161,7 +167,7 @@ export function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
-function renderHtml({ title, preview, blocks, footer }) {
+function renderHtml({ title, preview, blocks }) {
   const body = blocks.map(htmlBlock).join('\n');
 
   // The preheader is shown by the inbox and hidden in the open message. The
@@ -192,7 +198,6 @@ ${preheader}
 ${body}
 </td></tr>
 <tr><td style="padding:16px 32px 20px;border-top:1px solid ${BORDER};font-family:${FONT};font-size:13px;line-height:1.5;color:${MUTED};">
-${footer ? `<div style="padding-bottom:8px;">${escapeHtml(footer)}</div>` : ''}
 <div>${escapeHtml(ASSOCIATION)}<br><a href="${SITE}" style="color:${ACCENT};text-decoration:underline;">${SITE.replace(/^https:\/\//, '')}</a></div>
 </td></tr>
 </table>
@@ -257,7 +262,7 @@ function htmlBlock(block) {
  * so a link has to arrive as a URL they can copy and a table as labels that
  * still line up.
  */
-function renderText({ title, blocks, footer }) {
+function renderText({ title, blocks }) {
   const out = [title, '='.repeat(Math.min(title.length, 72)), ''];
 
   for (const block of blocks) {
@@ -290,7 +295,6 @@ function renderText({ title, blocks, footer }) {
     }
   }
 
-  if (footer) out.push(wrap(footer), '');
   out.push('--', ASSOCIATION, SITE);
   return out.join('\n');
 }

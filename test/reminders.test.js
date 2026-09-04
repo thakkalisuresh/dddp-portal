@@ -97,24 +97,58 @@ describe('the letters', () => {
     total: 1254.03, dueDate: '2026-09-10T00:00:00Z', daysOver: 12,
   };
 
-  it('states the amount with paise, because the paise identify the flat', () => {
+  it('states the amount, and no longer explains the paise', () => {
+    // The paise sentence was removed on 2026-09-04. Bill totals are whole
+    // rupees — toWholeRupees, plus a CHECK on `periods` and `bills` — so the
+    // amount always ends .00 and the care the line asked for matched nothing.
+    // Asserted as an absence in every letter so it cannot come back quietly.
     const { text } = reminderEmail({ ...base, ordinal: 1 });
     expect(text).toContain('₹1,254.03');
-    expect(text).toContain('The paise are how the');
+    for (const ordinal of [1, 2, 3]) {
+      const m = reminderEmail({ ...base, ordinal, previous: [at(20), at(22)] });
+      for (const body of [m.text, m.html]) {
+        expect(body, `${ordinal}`).not.toMatch(/paise/i);
+        expect(body, `${ordinal}`).not.toMatch(/exact amount/i);
+      }
+    }
   });
 
-  it('says which reminder it is, from the second on', () => {
-    expect(reminderEmail({ ...base, ordinal: 2, previous: [at(20)] }).text)
-      .toContain('This is the second reminder. The first was sent on 20 September.');
+  it('lets the subject say which reminder it is, not the body', () => {
+    // The letters used to open by announcing their own ordinal. The subject
+    // already carries it, and so does the figure's caption; a third telling
+    // read as process rather than as a message to a neighbour.
+    const second = reminderEmail({ ...base, ordinal: 2, previous: [at(20)] });
+    expect(second.subject).toContain('Second reminder');
+    expect(second.text).toContain('The gas bill for flat 3B for August 2026 is still unpaid.');
+    for (const body of [second.text, second.html]) {
+      expect(body).not.toMatch(/This is the second reminder/);
+    }
+
+    const third = reminderEmail({ ...base, ordinal: 3, previous: [at(20), at(22)] });
+    expect(third.subject).toContain('Final reminder');
+    for (const body of [third.text, third.html]) {
+      expect(body).not.toMatch(/This is the last reminder/);
+    }
   });
 
   it('says four words and stops, on the last one', () => {
     // Trimmed on 2026-08-19: "the portal will send for this bill" was the
     // software narrating itself to somebody who does not care it exists.
     const { text } = reminderEmail({ ...base, ordinal: 3, previous: [at(20), at(22), at(25)] });
-    expect(text).toContain('This is the last reminder.');
     expect(text).not.toMatch(/portal will send/);
     expect(text).toContain('Reminders were sent on 20, 22 and 25 September.');
+  });
+
+  it('always leaves a way to reply, the last letter included', () => {
+    // The final reminder is the one most likely to reach somebody who cannot
+    // pay. A letter that escalates and then offers no exit is the one thing
+    // these three must never do.
+    for (const ordinal of [1, 2, 3]) {
+      const m = reminderEmail({ ...base, ordinal, previous: [at(20), at(22)] });
+      for (const body of [m.text, m.html]) {
+        expect(body, `${ordinal}`).toMatch(/upload the screenshot|reach out to the committee/);
+      }
+    }
   });
 
   it('carries none of the flourishes the first drafts had', () => {
@@ -126,10 +160,16 @@ describe('the letters', () => {
     }
   });
 
-  it('signs as the association, like every other email the portal sends', () => {
+  it('signs as the association exactly once, in both bodies', () => {
+    // The template appends the sign-off itself, so nothing here may add one:
+    // a letter carrying its own name printed it twice, which is the bug the
+    // bill announcement shipped with.
     for (const ordinal of [1, 2, 3]) {
-      expect(reminderEmail({ ...base, ordinal, previous: [at(20), at(22)] }).text)
-        .toMatch(/DD Diamond Park Residents' Welfare Association$/);
+      const m = reminderEmail({ ...base, ordinal, previous: [at(20), at(22)] });
+      for (const body of [m.text, m.html]) {
+        expect(body.match(/Association/g), `${ordinal}`).toHaveLength(1);
+        expect(body, `${ordinal}`).toContain("DD Diamond Park Residents' Welfare Association");
+      }
     }
   });
 
@@ -141,6 +181,49 @@ describe('the letters', () => {
   });
 
   it('greets a resident whose name nobody recorded without a dangling space', () => {
-    expect(reminderEmail({ ...base, ordinal: 1, name: null }).text.split('\n')[0]).toBe('Hello,');
+    // The greeting opens the letter under the headline renderEmail puts first.
+    expect(reminderEmail({ ...base, ordinal: 1, name: null }).text)
+      .toContain('\nHello,\n');
+    expect(reminderEmail({ ...base, ordinal: 1 }).text).toContain('\nHello Priya,\n');
+  });
+
+  it('carries both bodies, so a client that will not render HTML still shows one', () => {
+    for (const ordinal of [1, 2, 3]) {
+      const m = reminderEmail({ ...base, ordinal, previous: [at(20), at(22)] });
+      expect(m.html, `${ordinal}`).toContain('<!DOCTYPE html>');
+      expect(m.text, `${ordinal}`).not.toContain('<');
+    }
+  });
+
+  it('says the same thing in both bodies', () => {
+    // The reason the block list exists. An amount corrected in one body and
+    // not the other is a resident told they owe something they do not.
+    const m = reminderEmail({ ...base, ordinal: 2, previous: [at(20)] });
+    for (const value of ['₹1,254.03', '3B', 'August 2026', 'Hello Priya,',
+                         'is still unpaid.']) {
+      expect(m.html, `html: ${value}`).toContain(value);
+      expect(m.text, `text: ${value}`).toContain(value);
+    }
+  });
+
+  it('puts the portal in the HTML as a button and in the text as a URL', () => {
+    const m = reminderEmail({ ...base, ordinal: 1 });
+    expect(m.html).toContain('href="https://diamondpark.pages.dev"');
+    expect(m.html).toContain('Pay on the portal');
+    expect(m.text).toContain('  https://diamondpark.pages.dev');
+  });
+
+  it('carries no payment link — an unsolicited request for money is a fraud shape', () => {
+    for (const ordinal of [1, 2, 3]) {
+      const m = reminderEmail({ ...base, ordinal, previous: [at(20), at(22)] });
+      expect(m.html, `${ordinal}`).not.toContain('upi://');
+      expect(m.text, `${ordinal}`).not.toContain('upi://');
+    }
+  });
+
+  it('escapes a resident whose name is markup rather than rendering it', () => {
+    const m = reminderEmail({ ...base, ordinal: 1, name: '<script>alert(1)</script>' });
+    expect(m.html).not.toContain('<script>');
+    expect(m.html).toContain('&lt;script&gt;');
   });
 });

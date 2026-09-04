@@ -542,6 +542,18 @@ describe('the announcement email', () => {
     expect(mail().html).toContain('https://staging.example.test/dashboard');
   });
 
+  it('signs off once, in the template’s spelling of the name', () => {
+    // The email used to pass a `footer:` of its own carrying a second,
+    // differently spelled name, which renderEmail printed directly above the
+    // ASSOCIATION constant — so both bodies signed off twice and disagreed
+    // with themselves about whether the association is a Welfare one.
+    const m = mail();
+    for (const body of [m.text, m.html]) {
+      expect(body.match(/Association/g)).toHaveLength(1);
+      expect(body).toContain("DD Diamond Park Residents' Welfare Association");
+    }
+  });
+
   it('falls back to the portal when there is no request — the 3am sweep', () => {
     const m = announcementEmail({
       flat: '4A', period: '2026-08', total: 1261, dueDate: '2026-09-10',
