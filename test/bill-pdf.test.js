@@ -14,7 +14,7 @@ import { billPdf, rupees, istSlashDate } from '../functions/lib/bill-pdf.js';
 
 const ASSOCIATION = {
   name: 'DD Diamond Park',
-  address: 'Caico Road, Kukriachira P.O., Thrissur-680 006',
+  address: 'Caico Road, Kuriachira P.O., Thrissur-680 006',
   registration: 'Reg.No.:TSR/TC247/2025',
   footer: 'Thank you for your cooperation',
 };

@@ -9,13 +9,13 @@
  * Not in the database: nothing else needs it, and a settings table holding one
  * immutable address is a table nobody remembers to look in.
  *
- * NOTE: the rest of the portal writes the locality as "Kuriachira"
- * (public/index.html, public/js/home.js). This follows the letterhead it was
- * drawn from. One of the two spellings is wrong and it should be settled.
+ * The locality is "Kuriachira" — confirmed 2026-09-04, after the letterhead
+ * this was drawn from spelled it "Kukriachira" and shipped that on a day's
+ * worth of bills. It now agrees with public/index.html and js/home.js.
  */
 export const ASSOCIATION = {
   name: 'DD Diamond Park',
-  address: 'Caico Road, Kukriachira P.O., Thrissur-680 006',
+  address: 'Caico Road, Kuriachira P.O., Thrissur-680 006',
   registration: 'Reg.No.:TSR/TC247/2025',
   footer: 'Thank you for your cooperation',
 };
