@@ -75,3 +75,4 @@ describe('stampLabel', () => {
     expect(stampLabel('2025-12-30T10:30:00.000Z', now)).toBe('30 December 2025, 4:00 PM');
   });
 });
+

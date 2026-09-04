@@ -6,7 +6,7 @@ const period = { due_date: '2026-08-10', late_fee: 50, status: 'open' };
 const bill = (over = {}) => ({
   id: 1, period: '2026-07', consumption: 4.38, rate_per_kg: 75, gas_amount: 328.5,
   other_charges: 0, additional_charges: 0, late_fee: 0, late_fee_at: null,
-  total: 329.04, status: 'unpaid', paid_at: null, ...over,
+  total: 329.04, status: 'unpaid', paid_at: null, created_at: '2026-08-01T04:30:00.000Z', ...over,
 });
 
 describe('display status', () => {
@@ -160,5 +160,21 @@ describe('missing data', () => {
     const shaped = shapeBill(bill(), null, '2026-12-01');
     expect(shaped.dueDate).toBe(null);
     expect(shaped.displayStatus).toBe('unpaid'); // can't be overdue without a due date
+  });
+});
+
+
+/**
+ * The printed slip states the day the bill was RAISED. Without this the slip
+ * would have to stamp itself with the day it was printed, and the same bill
+ * printed twice would carry two different dates.
+ */
+describe('the bill carries its own date', () => {
+  it('passes created_at through to the client', () => {
+    expect(shapeBill(bill(), period).createdAt).toBe('2026-08-01T04:30:00.000Z');
+  });
+
+  it('survives a row that has none rather than inventing one', () => {
+    expect(shapeBill(bill({ created_at: undefined }), period).createdAt).toBeUndefined();
   });
 });

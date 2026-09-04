@@ -62,7 +62,9 @@ function render(me) {
 
   main.replaceChildren(
     ...(landlordBanner ? [landlordBanner] : []),
-    ...(me.bill ? [billSection(me), paySection(me), breakdownSection(me.bill)] : [noBill()]),
+    ...(me.bill
+      ? [billSection(me), paySection(me), breakdownSection(me.bill), downloadSection()]
+      : [noBill()]),
     ...(me.readings.length ? [consumptionSection(me.readings, me.bills)] : []),
     ...(me.bills.length ? [billHistorySection(me.bills)] : []),
     helpSection()
@@ -284,6 +286,40 @@ function paySection(me) {
 
 
 /* ── breakdown, history ───────────────────────────────────────────────── */
+
+/**
+ * "Download bill" — a link to a real PDF, not a print dialog.
+ *
+ * A LINK, DELIBERATELY, not a button running script. The browser's own
+ * handling of a PDF response is the thing a resident wants: Android Chrome
+ * offers the app chooser, iOS Safari opens its viewer with a share sheet, and
+ * a desktop opens a tab. Every one of those is better than what a page can
+ * build, and all of them come free from an anchor pointing at bytes.
+ *
+ * `target="_blank"` so the dashboard survives the trip. Without it, a phone
+ * that hands the PDF to another app leaves the resident's portal tab sitting
+ * on a document they have navigated away from, and Back does not always
+ * return them.
+ *
+ * The file is drawn by the Worker (functions/lib/bill-pdf.js), which is also
+ * what the announcement email attaches — one document, one implementation,
+ * whichever way a resident comes to it.
+ */
+function downloadSection() {
+  return el('section', { class: 'stack' },
+    el('a', {
+      class: 'btn btn--ghost btn--block',
+      href: '/api/me/bill.pdf',
+      target: '_blank',
+      rel: 'noopener',
+      // Click capture records id and classes, never text, so an id is what
+      // makes this identifiable in the log when it is on (js/track.js).
+      id: 'download-bill',
+    }, 'Download bill'));
+}
+
+
+
 
 function breakdownSection(bill) {
   return el('section', { class: 'stack' },

@@ -8,6 +8,10 @@ import { json, problem, readJson, audit, rateLimit, clearRateLimit, guard, withS
 import { reportError, assertAlerting, postToTelegram } from './lib/errors.js';
 import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex, derive } from './lib/crypto.js';
 import { dashboardPayload } from './lib/dashboard.js';
+import { billPdf, istSlashDate } from './lib/bill-pdf.js';
+// The Worker's own date label — the browser's lives in js/i18n.js.
+import { dayAndMonth } from './lib/reminders.js';
+import { ASSOCIATION, billFileName } from '../public/js/association.js';
 import {
   readingGrid, saveReadings, generateBills, openPeriod, parseReadings,
   previousPeriod, jumpWarning, changeRate, planRateChange, normaliseFlat,
@@ -150,6 +154,7 @@ export default {
 
       if (route === 'POST /api/logout') return logout(env, session);
       if (route === 'GET /api/me') return me(env, session, request);
+      if (route === 'GET /api/me/bill.pdf') return myBillPdf(env, session, request);
       if (route === 'POST /api/password') return changePassword(request, env, session);
       if (route === 'POST /api/onboard') return onboard(request, env, session);
       if (route === 'PATCH /api/me') return patchProfile(request, env, session);
@@ -671,6 +676,76 @@ async function me(env, session, request) {
     impersonation: session.impersonating
       ? { active: true, by: session.actor.name, canWrite: session.canWrite }
       : { active: false },
+  });
+}
+
+/**
+ * The resident's current bill, as a PDF file.
+ *
+ * WHY A ROUTE AND NOT THE PRINT DIALOG. `window.print()` cannot hand anybody a
+ * file — it opens a dialog and hopes. A resident who taps "Download bill"
+ * wants a .pdf: something their phone opens in a viewer, offers to a chooser,
+ * and keeps. That has to be bytes over the wire, which means the Worker draws
+ * it (lib/bill-pdf.js).
+ *
+ * ACCESS IS NOT REIMPLEMENTED HERE, and that is the whole reason this is built
+ * on dashboardPayload rather than a query of its own. The rules about who may
+ * read whose bill are genuinely intricate — bills follow the PERSON, an absent
+ * owner reads their TENANT's amounts, a landlord never sees proofs — and they
+ * are already written, tested and applied on the dashboard this file serves.
+ * A second SELECT here would be a second place for them to be wrong, and the
+ * failure would be a resident handed a neighbour's bill.
+ *
+ * `inline`, so it opens in the phone's PDF viewer rather than landing silently
+ * in Downloads; the filename is still what every browser offers when saving
+ * from that viewer.
+ */
+async function myBillPdf(env, session, request) {
+  const payload = await dashboardPayload(
+    env, session.subject,
+    request.headers.get('user-agent') ?? '',
+    new URL(request.url).origin
+  );
+
+  const bill = payload.bill;
+  if (!bill) return problem(404, 'DDP-BILL-005', 'You have no bill to download yet.');
+
+  // A landlord downloading this is downloading their TENANT's bill — the same
+  // relaxation dashboardPayload already made in choosing which bill to show.
+  // Naming the viewer on it would put the wrong person on the document.
+  const name = payload.tenancy?.viewing === 'landlord'
+    ? (payload.tenancy.occupantName ?? 'Occupant')
+    : payload.name;
+
+  const settled = bill.settled;
+  const bytes = billPdf({
+    association: ASSOCIATION,
+    flat: payload.flat,
+    name,
+    period: periodName(bill.period),
+    billDate: bill.createdAt ? istSlashDate(bill.createdAt) : null,
+    consumption: bill.consumption,
+    ratePerKg: bill.ratePerKg,
+    gasAmount: bill.gasAmount,
+    otherCharges: bill.otherCharges,
+    additionalCharges: bill.additionalCharges,
+    lateFee: bill.lateFee,
+    total: bill.total,
+    status: settled
+      ? (bill.paidAt ? `Paid on ${dayAndMonth(bill.paidAt)}` : 'Settled')
+      : (bill.dueDate ? `Payable before ${dayAndMonth(bill.dueDate)}` : null),
+  });
+
+  await audit(env, session, 'bill.download', { period: bill.period, flat: payload.flat });
+
+  return new Response(bytes, {
+    headers: {
+      'content-type': 'application/pdf',
+      'content-disposition': `inline; filename="${billFileName(payload.flat, bill.period)}.pdf"`,
+      // Somebody's bill, behind a login. A shared cache must never keep it.
+      'cache-control': 'private, no-store',
+      'x-content-type-options': 'nosniff',
+    },
   });
 }
 
@@ -2585,7 +2660,7 @@ async function remindOne(env, session, billId, batchId = null) {
     return problem(409, 'DDP-ADMIN-019', 'That reminder has just been sent by somebody else.');
   }
 
-  const { subject, text } = reminderEmail({
+  const { subject, text, html } = reminderEmail({
     ordinal: decision.ordinal,
     name: bill.name,
     flat: bill.flat,
@@ -2597,7 +2672,7 @@ async function remindOne(env, session, billId, batchId = null) {
     previous: sent,
   });
 
-  const result = await sendEmail(env, { to: bill.email, subject, text });
+  const result = await sendEmail(env, { to: bill.email, subject, text, html });
   if (!result.sent) {
     await env.DB.prepare(
       'DELETE FROM bill_reminders WHERE bill_id = ? AND ordinal = ?'
