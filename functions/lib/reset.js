@@ -132,6 +132,16 @@ export function failureMessage(reason, remaining) {
 export const TEMP_PW_HOURS = 24;
 export const INVITE_PW_HOURS = 72;
 
+/**
+ * How many previous passwords an account may not return to.
+ *
+ * Each one costs a PBKDF2 derive to check and they cannot be batched — every
+ * row carries its own salt — so this number is a CPU budget as much as a
+ * policy. Five is ~135 ms on the edge, spent only when somebody SETS a
+ * password. The login path never reads this table. See migration 0034.
+ */
+export const HISTORY_DEPTH = 5;
+
 export function tempPasswordExpiry(hours = TEMP_PW_HOURS, now = new Date()) {
   return new Date(now.getTime() + hours * 3600_000).toISOString();
 }
@@ -262,6 +272,47 @@ export async function refuseCurrentPassword(candidate, owner = {}) {
     temporary: Boolean(owner.must_change_pw),
     role: owner.role ?? 'owner',
   });
+}
+
+/**
+ * Refuses a password the account has used before.
+ *
+ * The companion to `refuseCurrentPassword`, and deliberately a separate
+ * function rather than a widened one: that check knows about the credential on
+ * the row and needs no query, this one is about rows that may not exist yet.
+ * Splitting them keeps the cheap, always-available check ahead of the one that
+ * costs a read and up to HISTORY_DEPTH derives.
+ *
+ * `history` is the newest rows first, already limited by the caller. Order
+ * matters only for cost — a match anywhere is the same refusal — but newest
+ * first is the order a returning password is most likely to be found in, and
+ * every row skipped is a derive not paid for.
+ *
+ * Each row is verified at ITS OWN iteration count. A row written before a
+ * change to PBKDF2_ITERATIONS is only reproducible at the count that made it,
+ * and verifying at the current target would return false — which here means
+ * silently allowing the reuse rather than locking anyone out. That is the
+ * quiet direction of failure, so it is the one worth being explicit about.
+ *
+ * Says how far back it looked. Refusing without that reads as arbitrary, and
+ * the resident cannot tell whether to try a small variation or start again.
+ */
+export async function refusePastPassword(candidate, history = []) {
+  const pw = String(candidate ?? '');
+
+  for (const row of history) {
+    if (!row?.pw_hash || !row?.pw_salt) continue;   // a malformed row is not a match
+    const used = await verifyPassword(pw, row.pw_hash, row.pw_salt,
+                                      row.pw_iterations ?? DEFAULT_ITERATIONS);
+    if (used) {
+      fail('DDP-AUTH-018', {
+        publicMessage: `You have used that password before. Your last ${HISTORY_DEPTH} `
+                     + 'passwords cannot be reused — please choose a new one.',
+        depth: HISTORY_DEPTH,
+        checked: history.length,
+      });
+    }
+  }
 }
 
 /**

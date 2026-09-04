@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   generateCode, normaliseCode, canIssue, resetState, failureMessage,
   validateNewPassword, resetEmail, neutralReply, refuseCurrentPassword,
+  refusePastPassword, HISTORY_DEPTH,
   CODE_LENGTH, MAX_ATTEMPTS, MAX_PER_HOUR, EXPIRY_MINUTES,
   tempPasswordState, tempPasswordExpiry, expiredPasswordMessage, tempPasswordEmail,
   TEMP_PW_HOURS, INVITE_PW_HOURS,
@@ -472,5 +473,97 @@ describe('refuseCurrentPassword', () => {
     const row = await rowFor('pine-4417', { must_change_pw: 1 });
     const err = await refusal('pine-4417', row);
     expect(JSON.stringify(err.detail)).not.toContain('pine-4417');
+  });
+});
+
+/* ── going back to a password you abandoned ──────────────────────────────── */
+
+describe('refusePastPassword', () => {
+  const ITER = 1000;
+  const entry = async (password) => {
+    const { hash, salt, iterations } = await hashPassword(password, ITER);
+    return { pw_hash: hash, pw_salt: salt, pw_iterations: iterations };
+  };
+  const refusal = async (pw, history) => {
+    try {
+      await refusePastPassword(pw, history);
+    } catch (err) {
+      return err;
+    }
+    return null;
+  };
+
+  it('allows a password the account has never held', async () => {
+    const history = [await entry('Harbour-lime-9182'), await entry('Quiet-otter-4471')];
+    await expect(refusePastPassword('Third-thing-5567', history)).resolves.toBeUndefined();
+  });
+
+  it('refuses the password from one change ago', async () => {
+    const history = [await entry('Harbour-lime-9182')];
+    const err = await refusal('Harbour-lime-9182', history);
+    expect(err?.code).toBe('DDP-AUTH-018');
+  });
+
+  it('refuses one from the far end of the window, not just the most recent', async () => {
+    // The off-by-one that would make the depth a lie: checking only the newest
+    // row and calling it history.
+    const history = [];
+    for (let i = 0; i < HISTORY_DEPTH; i++) history.push(await entry(`Password-number-${i}`));
+    const err = await refusal(`Password-number-${HISTORY_DEPTH - 1}`, history);
+    expect(err?.code).toBe('DDP-AUTH-018');
+  });
+
+  it('says how far back it looked, so the refusal is not arbitrary', async () => {
+    const history = [await entry('Harbour-lime-9182')];
+    const err = await refusal('Harbour-lime-9182', history);
+    expect(err.detail.publicMessage).toMatch(new RegExp(`last ${HISTORY_DEPTH}`));
+    expect(err.detail.depth).toBe(HISTORY_DEPTH);
+  });
+
+  it('verifies each row at ITS OWN iteration count', async () => {
+    // The quiet direction of failure. A row written before an iteration change
+    // verifies false at the current target, and false here means ALLOWING the
+    // reuse — the guard would go silent rather than loud. Same trap as 0025.
+    const low = await hashPassword('Harbour-lime-9182', ITER);
+    const high = await hashPassword('Quiet-otter-4471', ITER * 3);
+    const history = [
+      { pw_hash: low.hash,  pw_salt: low.salt,  pw_iterations: low.iterations },
+      { pw_hash: high.hash, pw_salt: high.salt, pw_iterations: high.iterations },
+    ];
+    expect((await refusal('Harbour-lime-9182', history))?.code).toBe('DDP-AUTH-018');
+    expect((await refusal('Quiet-otter-4471', history))?.code).toBe('DDP-AUTH-018');
+  });
+
+  it('is not fooled by a row whose count is missing', async () => {
+    // Falls back to DEFAULT_ITERATIONS, which is what every pre-0025 row was
+    // written at — the same assumption migration 0025 backfilled with.
+    const { hash, salt } = await hashPassword('Harbour-lime-9182');
+    expect((await refusal('Harbour-lime-9182', [{ pw_hash: hash, pw_salt: salt }]))?.code)
+      .toBe('DDP-AUTH-018');
+  });
+
+  it('treats an empty or absent history as nothing to refuse', async () => {
+    await expect(refusePastPassword('Harbour-lime-9182', [])).resolves.toBeUndefined();
+    await expect(refusePastPassword('Harbour-lime-9182')).resolves.toBeUndefined();
+  });
+
+  it('skips a malformed row instead of matching or throwing on it', async () => {
+    const history = [{ pw_hash: null, pw_salt: null }, {}, await entry('Harbour-lime-9182')];
+    // The good row at the end is still reached.
+    expect((await refusal('Harbour-lime-9182', history))?.code).toBe('DDP-AUTH-018');
+    await expect(refusePastPassword('Something-else-11', history)).resolves.toBeUndefined();
+  });
+
+  it('does not put the password in the error detail', async () => {
+    const history = [await entry('Harbour-lime-9182')];
+    const err = await refusal('Harbour-lime-9182', history);
+    expect(JSON.stringify(err.detail)).not.toContain('Harbour-lime-9182');
+  });
+
+  it('keeps the depth small enough to be affordable', async () => {
+    // Not style. Each entry is a PBKDF2 derive that cannot be batched, and
+    // this number is what stops a password change becoming a CPU event. If it
+    // is ever raised, it should be raised against a measurement.
+    expect(HISTORY_DEPTH).toBeLessThanOrEqual(5);
   });
 });
