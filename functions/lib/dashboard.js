@@ -45,6 +45,10 @@ export function shapeBill(bill, period, today = istToday()) {
     status: bill.status,
     paidAt: bill.paid_at,
     dueDate: period?.due_date ?? null,
+    // The date the bill was raised. Carried only so the printed slip can
+    // state one: a printout stamped with the day it came out of the printer
+    // would say something different every time the same bill is printed.
+    createdAt: bill.created_at,
 
     // Display status is not the same as the DB status: an unpaid bill past its
     // due date reads as "overdue" to a resident even though nothing changed.

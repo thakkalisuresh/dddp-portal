@@ -24,6 +24,9 @@
 
 import { mailToken, sendEmail, mailConfigured } from './mailer.js';
 import { renderEmail, para, figure, details, action, aside, SITE } from './email-template.js';
+import { billPdf, istSlashDate } from './bill-pdf.js';
+// The letterhead, shared with the download route. See js/association.js.
+import { ASSOCIATION, billFileName } from '../../public/js/association.js';
 import { generateBills } from './admin.js';
 // The Worker's own labels, not the browser's. `dayAndMonth` is the one that
 // takes a due date, which is a calendar day rather than an instant — see its
@@ -170,7 +173,6 @@ export function announcementEmail({ flat, period, total, dueDate, consumption, r
       aside('Paying is done on the portal too. Nobody from the association will '
         + 'ever send you a payment link in a message.'),
     ],
-    footer: 'DD Diamond Park Residents’ Association',
   });
 }
 
@@ -200,8 +202,13 @@ export async function drainAnnouncements(env, period, { limit = DRAIN_SIZE, orig
   const rows = await env.DB.prepare(
     // Everything a message needs, in one query. A second query per row would
     // be 20 more round trips for values the join already has.
+    // The extra columns past `o.email` are the attached PDF's, and they are
+    // free: the join was already being made, and a second query per row would
+    // be 20 more round trips for values this one already has.
     `SELECT a.bill_id, a.attempts, b.flat, b.period, b.total, b.consumption,
-            b.rate_per_kg, p.due_date, o.email
+            b.rate_per_kg, p.due_date, o.email, o.name,
+            b.gas_amount, b.other_charges, b.additional_charges, b.late_fee,
+            b.created_at, b.status, b.paid_at
        FROM bill_announcements a
        JOIN bills b ON b.id = a.bill_id
        JOIN periods p ON p.period = b.period
@@ -245,6 +252,7 @@ export async function drainAnnouncements(env, period, { limit = DRAIN_SIZE, orig
 
     const res = await sendEmail(env, {
       to: row.email, subject: mail.subject, text: mail.text, html: mail.html,
+      attachment: billAttachment(row),
     }, auth.token);
 
     if (res.sent) {
@@ -263,6 +271,48 @@ export async function drainAnnouncements(env, period, { limit = DRAIN_SIZE, orig
 
   const counts = await announcementCounts(env, period);
   return { sent, failed, remaining: counts.remaining };
+}
+
+/**
+ * The bill as an attached PDF, or nothing at all.
+ *
+ * NEVER THROWS. A malformed name or an unexpected null must not cost a
+ * resident their announcement: the email carries every figure in its own body,
+ * so a missing attachment is a smaller failure than a bill nobody was told
+ * about — and a deterministic throw here would burn all three attempts and
+ * park the row as permanently failed.
+ *
+ * The rupee sign is deliberately absent. See lib/bill-pdf.js for what it would
+ * have cost to keep it, and note that the email BODY still carries it: HTML
+ * has no such limitation, and neither does the portal.
+ */
+function billAttachment(row) {
+  try {
+    const settled = row.status === 'paid' || row.status === 'waived';
+    return {
+      filename: `${billFileName(row.flat, row.period)}.pdf`,
+      type: 'application/pdf',
+      bytes: billPdf({
+        association: ASSOCIATION,
+        flat: row.flat,
+        name: row.name ?? '',
+        period: periodLabel(row.period),
+        billDate: row.created_at ? istSlashDate(row.created_at) : null,
+        consumption: row.consumption,
+        ratePerKg: row.rate_per_kg,
+        gasAmount: row.gas_amount,
+        otherCharges: row.other_charges,
+        additionalCharges: row.additional_charges,
+        lateFee: row.late_fee,
+        total: row.total,
+        status: settled
+          ? (row.paid_at ? `Paid on ${dayAndMonth(row.paid_at)}` : 'Settled')
+          : (row.due_date ? `Payable before ${dayAndMonth(row.due_date)}` : null),
+      }),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function mark(env, billId, status, attempts, lastError) {

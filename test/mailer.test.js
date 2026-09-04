@@ -429,3 +429,61 @@ describe('mailToken', () => {
     expect(typeof result.reason).toBe('string');
   });
 });
+
+/**
+ * A file on the message.
+ *
+ * The announcement carries the bill as a PDF (lib/bill-pdf.js), which means
+ * the message grows a third layer: `multipart/mixed` holding the
+ * `multipart/alternative` pair AND the file. The failure this guards is
+ * corruption rather than absence — a PDF pushed through the same UTF-8 round
+ * trip the text bodies use comes out re-encoded and unopenable, and no
+ * assertion about the text halves would notice.
+ */
+describe('an attached file', () => {
+  /** Bytes that a UTF-8 round trip would mangle: a real PDF is full of them. */
+  const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0xff, 0xfe, 0x00, 0x80, 0x41]);
+  const attachment = { filename: '4A Gas 08 2026.pdf', type: 'application/pdf', bytes };
+
+  const decode = (raw) =>
+    decodeURIComponent(escape(atob(raw.replace(/-/g, '+').replace(/_/g, '/'))));
+
+  const message = (extra = {}) => decode(buildRawMessage({
+    to: 'resident@example.com', from: 'rwa@example.com',
+    subject: 'Your August 2026 gas bill', text: 'plain', ...extra,
+  }));
+
+  it('nests the alternative pair inside mixed, rather than flattening them', () => {
+    // Flattened, a client treats the two bodies as attachments too, and the
+    // usual result is the plain-text version shown with the HTML one hanging
+    // off it as a stray .html file.
+    const msg = message({ html: '<p>hi</p>', attachment });
+    expect(msg).toMatch(/Content-Type: multipart\/mixed/);
+    expect(msg).toMatch(/Content-Type: multipart\/alternative/);
+    expect(msg.indexOf('multipart/mixed')).toBeLessThan(msg.indexOf('multipart/alternative'));
+  });
+
+  it('delivers the bytes intact', () => {
+    const msg = message({ html: '<p>hi</p>', attachment });
+    expect(msg).toContain(btoa(String.fromCharCode(...bytes)));
+  });
+
+  it('names the file so it arrives as one', () => {
+    const msg = message({ html: '<p>hi</p>', attachment });
+    expect(msg).toMatch(/Content-Disposition: attachment; filename="4A Gas 08 2026\.pdf"/);
+  });
+
+  it('keeps the inner body its own encoding when there is no HTML half', () => {
+    // The text-only path declares base64 on itself. Losing that header on the
+    // way inside would deliver a screenful of base64 instead of a message.
+    const msg = message({ attachment });
+    expect(msg).toMatch(/Content-Type: text\/plain[\s\S]*Content-Transfer-Encoding: base64/);
+  });
+
+  it('changes nothing when there is no attachment', () => {
+    const withOut = buildRawMessage({
+      to: 'a@b.com', from: 'c@d.com', subject: 's', text: 't', html: '<p>h</p>',
+    });
+    expect(decode(withOut)).not.toMatch(/multipart\/mixed/);
+  });
+});

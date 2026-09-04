@@ -147,6 +147,16 @@ Nightly backup, and retention.
 | fn | `runBackup` |  |
 | fn | `backupHealth` | Confirms the backup path still works WITHOUT writing a file. |
 
+### `functions/lib/bill-pdf.js`
+
+The bill as a PDF, built by hand — what a resident downloads, and what the announcement email attaches.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `istSlashDate` | '2026-09-03T20:30:00Z' -> '04/09/2026', read in Kerala. |
+| fn | `rupees` | `Rs.274`, `Rs.273.60` — the same rounding rule as money() in js/i18n.js. |
+| fn | `billPdf` | One bill, one A4 page. |
+
 ### `functions/lib/billing.js`
 
 Pure billing arithmetic.
@@ -711,6 +721,15 @@ Thin fetch wrapper.
 |---|---|---|
 | const | `api` |  |
 
+### `public/js/association.js`
+
+The association, as it appears on paper.
+
+| | Export | What it does |
+|---|---|---|
+| const | `ASSOCIATION` | The association, as it appears on paper. |
+| fn | `billFileName` | What the downloaded bill is called: `6G Gas 08 2026`, no extension. |
+
 ### `public/js/compress.js`
 
 Client-side image compression.
@@ -877,4 +896,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-471 exports. 223 have no doc comment.
+476 exports. 223 have no doc comment.

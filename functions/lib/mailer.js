@@ -43,8 +43,16 @@ export function mailConfigured(env) {
  * With no `html` the output is byte-for-byte what it was before this function
  * learned about HTML at all: same headers, same order, same single base64
  * body. Every existing caller is on that path.
+ *
+ * Pass `attachment` — `{ filename, type, bytes }` — and the whole message is
+ * wrapped one level further, in `multipart/mixed`: the alternative pair
+ * becomes the FIRST part and the file the second. That nesting is not
+ * decoration. A flat `mixed` holding text, html and a file makes a client
+ * choose between the two bodies as though they were attachments too, and the
+ * commonest result is a reader shown the plain-text version with the HTML one
+ * hanging off it as a stray .html file.
  */
-export function buildRawMessage({ to, from, subject, text, html }) {
+export function buildRawMessage({ to, from, subject, text, html, attachment = null }) {
   const encodedSubject = /^[\x20-\x7E]*$/.test(subject)
     ? subject
     : `=?UTF-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`;
@@ -85,8 +93,67 @@ export function buildRawMessage({ to, from, subject, text, html }) {
     raw = `${headers.join('\r\n')}\r\n\r\n${base64(text)}`;
   }
 
+  if (attachment) raw = wrapWithAttachment(headers, raw, attachment);
+
   return btoa(unescape(encodeURIComponent(raw)))
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Re-wrap a finished message as `multipart/mixed` carrying one file.
+ *
+ * The body that came in keeps its own Content-Type, which is why this takes
+ * the built string and the headers separately: the inner part has to declare
+ * whatever it already was — `multipart/alternative` with its own boundary, or
+ * a lone `text/plain` — and only the OUTER headers change.
+ *
+ * `bytes` is binary, so it is base64'd from a byte array rather than through
+ * the UTF-8 round trip the text parts use: pushing PDF bytes through
+ * encodeURIComponent would re-encode every byte above 127 and corrupt the
+ * file in a way no test of the text bodies would catch.
+ */
+function wrapWithAttachment(headers, inner, { filename, type, bytes }) {
+  const boundary = `=_dddp_mixed_${crypto.randomUUID()}`;
+
+  // The inner part keeps every header that describes its BODY — its own
+  // Content-Type, and the Content-Transfer-Encoding the plain-text-only path
+  // sets. Dropping the latter would leave a base64 body declared as 7bit,
+  // which arrives as a screenful of base64 rather than as a message.
+  const describesBody = (h) =>
+    h.startsWith('Content-Type:') || h.startsWith('Content-Transfer-Encoding:');
+
+  const innerHeaders = headers.filter(describesBody).join('\r\n');
+  const innerBody = inner.slice(inner.indexOf('\r\n\r\n') + 4);
+
+  // Everything else is the envelope and belongs on the outside, unchanged.
+  const outer = headers.filter((h) => !describesBody(h))
+    .concat(`Content-Type: multipart/mixed; boundary="${boundary}"`)
+    .join('\r\n');
+
+  return [
+    outer,
+    '',
+    `--${boundary}`,
+    innerHeaders,
+    '',
+    innerBody,
+    `--${boundary}`,
+    `Content-Type: ${type}; name="${filename}"`,
+    'Content-Transfer-Encoding: base64',
+    `Content-Disposition: attachment; filename="${filename}"`,
+    '',
+    wrap76(base64Bytes(bytes)),
+    `--${boundary}--`,
+  ].join('\r\n');
+}
+
+
+
+/** Raw bytes to base64, one byte per character — no text encoding anywhere. */
+function base64Bytes(bytes) {
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
 }
 
 /** UTF-8 in, base64 out. `btoa` rejects non-ASCII without the round trip. */
@@ -159,7 +226,7 @@ export async function mailToken(env) {
  * A token that has expired mid-batch comes back as `gmail-401`, not as a
  * silent failure: mint a fresh one and retry that message.
  */
-export async function sendEmail(env, { to, subject, text, html }, token = null) {
+export async function sendEmail(env, { to, subject, text, html, attachment = null }, token = null) {
   if (!mailConfigured(env)) return { sent: false, reason: 'not-configured' };
 
   try {
@@ -173,7 +240,7 @@ export async function sendEmail(env, { to, subject, text, html }, token = null) 
           'content-type': 'application/json',
         },
         body: JSON.stringify({
-          raw: buildRawMessage({ to, from: env.MAIL_FROM, subject, text, html }),
+          raw: buildRawMessage({ to, from: env.MAIL_FROM, subject, text, html, attachment }),
         }),
       }
     );
