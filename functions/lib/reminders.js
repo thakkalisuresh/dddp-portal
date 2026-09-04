@@ -17,6 +17,8 @@
  * arithmetic instead of a second implementation that drifts.
  */
 
+import { renderEmail, para, figure, action, aside, SITE } from './email-template.js';
+
 /** Hours to wait after the 1st, 2nd and 3rd reminder. The third never lifts. */
 export const SPACING_HOURS = [24, 48, 72];
 
@@ -132,8 +134,6 @@ const money = (n) => `₹${Number(n).toLocaleString('en-IN', {
   minimumFractionDigits: 2, maximumFractionDigits: 2,
 })}`;
 
-const SITE = 'https://diamondpark.pages.dev';
-const SIGNATURE = "DD Diamond Park Residents' Welfare Association";
 
 /**
  * The three letters.
@@ -146,57 +146,73 @@ const SIGNATURE = "DD Diamond Park Residents' Welfare Association";
  * promising that someone would follow up in person, which nothing in the portal
  * makes true.
  *
- * Plain text only, matching resetEmail and approvalMessage — buildRawMessage
- * writes a single text/plain part, and nothing this association sends has ever
- * carried a button.
+ * Described as blocks and rendered by renderEmail(), so the resident gets the
+ * amount as a figure and the portal as a button where their client draws HTML,
+ * and a readable plain-text letter where it does not. BOTH bodies come from
+ * this one description: written by hand twice, the two drift, and the one a
+ * resident happens to read decides what they were told they owe.
+ *
+ * The sign-off is the template's. Nothing here appends the association's name
+ * — a letter that says it twice was the bug the bill announcement shipped with.
  */
 export function reminderEmail({
   ordinal, name, flat, period, periodLabel, total, dueDate, daysOver, previous = [],
 }) {
-  const hello = `Hello${name ? ` ${name}` : ''},`;
-  const lines = [hello, ''];
+  const blocks = [para(`Hello${name ? ` ${name}` : ''},`)];
 
+  // No "this is the second/last reminder" opener. The subject already says
+  // which one this is, and the figure's caption carries the count — a letter
+  // that announces its own ordinal before saying what it is about reads as
+  // process rather than as a message to a neighbour.
   if (ordinal === 2) {
-    lines.push(`This is the second reminder. The first was sent on ${dayAndMonth(previous[0])}.`, '');
-    lines.push(`The gas bill for flat ${flat} for ${periodLabel} is still unpaid.`);
+    blocks.push(para(`The gas bill for flat ${flat} for ${periodLabel} is still unpaid.`));
   } else if (ordinal === 3) {
-    lines.push('This is the last reminder.', '');
-    lines.push(`The gas bill for flat ${flat} for ${periodLabel} is unpaid, `
-      + `${daysOver} days after it was due.`);
+    blocks.push(para(`The gas bill for flat ${flat} for ${periodLabel} is unpaid, `
+      + `${daysOver} days after it was due.`));
   } else {
-    lines.push(`The gas bill for flat ${flat} for ${periodLabel} has not been paid.`);
+    blocks.push(para(`The gas bill for flat ${flat} for ${periodLabel} has not been paid.`));
   }
 
-  lines.push('', `    ${money(total)}`, '');
+  // The line that used to follow the amount, now the figure's caption — same
+  // sentence, same place in the letter, and on the third it is the dates
+  // rather than the due date, because by then the count is the point.
+  blocks.push(figure(money(total),
+    ordinal === 1 ? `It was due on ${dayAndMonth(dueDate)}.`
+      : ordinal === 2 ? `It was due on ${dayAndMonth(dueDate)}, ${daysOver} days ago.`
+        : `Reminders were sent on ${listDates([...previous])}.`));
 
+  // A button here and a bare URL in the text body, both to the portal itself.
+  // No `upi://` and no amount in the link, matching the announcement: an
+  // unsolicited message carrying a payment link is the shape of a fraud.
+  blocks.push(action('Pay on the portal', SITE));
+
+  // NO PAISE SENTENCE. It used to stand here telling the resident to pay the
+  // exact amount "including the paise, the paise are how the payment is
+  // matched to your flat" — which stopped being true when the paise tag was
+  // retired. Bill totals are whole rupees (toWholeRupees in billing.js, and a
+  // CHECK on both `periods` and `bills`), so the amount always ends .00 and
+  // the care it asked for matched nothing. An instruction a resident cannot
+  // follow correctly teaches them the rest of the letter is decorative too.
   if (ordinal === 1) {
-    lines.push(`It was due on ${dayAndMonth(dueDate)}.`);
+    blocks.push(aside('If you have already paid, please upload the screenshot on the portal.'));
   } else if (ordinal === 2) {
-    lines.push(`It was due on ${dayAndMonth(dueDate)}, ${daysOver} days ago.`);
+    blocks.push(aside('If the bill is wrong, please reach out to the committee.'));
   } else {
-    lines.push(`Reminders were sent on ${listDates([...previous])}.`);
+    blocks.push(aside('If the bill is wrong, reach out to the committee.'));
   }
 
-  lines.push('', `Pay at ${SITE}`, '');
-
-  if (ordinal === 1) {
-    lines.push('Pay the exact amount, including the paise. The paise are how the',
-      'payment is matched to your flat.', '',
-      'If you have already paid, upload the screenshot on the portal.');
-  } else if (ordinal === 2) {
-    lines.push('If the bill is wrong, reply to this email or send a message from the',
-      'portal. A correction can be raised.');
-  } else {
-    lines.push('If the bill is wrong, or paying it is a difficulty, tell the committee.');
-  }
-
-  lines.push('', SIGNATURE);
-
-  const subject = ordinal === 1
-    ? `Diamond Park — gas bill for ${periodLabel} is unpaid`
+  // `title` is the subject and the headline both, which is why it is written
+  // to read as either. The count leads on the second and third: it is what
+  // the resident needs from the inbox list without opening anything.
+  const title = ordinal === 1
+    ? `Gas bill for ${periodLabel} is unpaid`
     : ordinal === 2
-      ? `Diamond Park — second reminder, gas bill for ${periodLabel}`
-      : `Diamond Park — final reminder, gas bill for ${periodLabel}`;
+      ? `Second reminder, gas bill for ${periodLabel}`
+      : `Final reminder, gas bill for ${periodLabel}`;
 
-  return { subject, text: lines.join('\n') };
+  return renderEmail({
+    title,
+    preview: `${money(total)} for flat ${flat}, unpaid.`,
+    blocks,
+  });
 }
