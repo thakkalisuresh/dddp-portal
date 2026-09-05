@@ -406,6 +406,34 @@ function chartReadout() {
 }
 
 /**
+ * A Copy button for one piece of text the resident has to reproduce exactly.
+ *
+ * `field` is the element holding that text, because the fallback needs it:
+ * clipboard writes are blocked in some in-app browsers, and selecting the
+ * text is then the only way left to hand it over.
+ */
+function copyButton(text, field, onCopy = () => {}) {
+  const btn = el('button', { class: 'btn btn--ghost btn--sm', type: 'button' }, 'Copy');
+  btn.addEventListener('click', async () => {
+    onCopy();
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+    } catch {
+      // Clipboard is blocked in some in-app browsers. Selecting the text is
+      // then the fallback to the fallback, so make that possible.
+      const r = document.createRange();
+      r.selectNodeContents(field);
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+      btn.textContent = 'Select and copy';
+    }
+  });
+  return btn;
+}
+
+/**
  * The way out when no app opens.
  *
  * Always visible, never behind a "did it fail?" question. Someone whose app
@@ -414,27 +442,18 @@ function chartReadout() {
  */
 function manualBlock(m, record = () => {}) {
   const idField = el('code', { class: 'vpa' }, m.vpa);
-  const copy = el('button', { class: 'btn btn--ghost btn--sm', type: 'button' }, 'Copy');
-  copy.addEventListener('click', async () => {
-    // Copying the UPI ID is the same declaration as tapping Pay: this person is
-    // about to send money. It reaches the treasurer's shortlist by the same
-    // route, and it starts the same late-fee hold — otherwise the residents who
-    // pay from their own app are precisely the ones who get charged the fee.
-    record();
-    try {
-      await navigator.clipboard.writeText(m.vpa);
-      copy.textContent = 'Copied';
-      setTimeout(() => { copy.textContent = 'Copy'; }, 2000);
-    } catch {
-      // Clipboard is blocked in some in-app browsers. Selecting the text is
-      // then the fallback to the fallback, so make that possible.
-      const r = document.createRange();
-      r.selectNodeContents(idField);
-      getSelection().removeAllRanges();
-      getSelection().addRange(r);
-      copy.textContent = 'Select and copy';
-    }
-  });
+  // Copying the UPI ID is the same declaration as tapping Pay: this person is
+  // about to send money. It reaches the treasurer's shortlist by the same
+  // route, and it starts the same late-fee hold — otherwise the residents who
+  // pay from their own app are precisely the ones who get charged the fee.
+  const copy = copyButton(m.vpa, idField, record);
+
+  // The reference deliberately does not record(). You cannot pay from this
+  // block without the UPI ID, so the ID copy is already the reliable signal of
+  // intent; the note is optional to copy and is just as often copied *after*
+  // paying, by someone checking what they typed. Recording here would either
+  // repeat a hold already taken or take one for a payment nobody made.
+  const noteField = m.note ? el('code', { class: 'ref' }, m.note) : null;
 
   return el('details', { class: 'manual' },
     el('summary', {}, 'Pay another way'),
@@ -445,9 +464,10 @@ function manualBlock(m, record = () => {}) {
         el('span', { class: 'label' }, 'Amount'),
         el('strong', { class: 'num' }, money(m.amount))),
       m.note
-        ? el('div', {},
+        ? el('div', { class: 'manual__ref' },
             el('span', { class: 'label' }, 'Add this note'),
-            el('code', {}, m.note))
+            el('div', { class: 'manual__row' },
+              noteField, copyButton(m.note, noteField)))
         : null),
     m.note
       ? el('p', { class: 'small', style: 'color:var(--awaiting)' },
