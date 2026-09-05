@@ -23,6 +23,8 @@ import { fail } from './errors.js';
 import { verifyPassword, DEFAULT_ITERATIONS } from './crypto.js';
 import { checkPassword } from '../../public/js/password-rules.js';
 
+import { renderEmail, para, figure, action, aside, SITE } from './email-template.js';
+
 export const CODE_LENGTH = 6;
 export const EXPIRY_MINUTES = 15;
 export const MAX_ATTEMPTS = 5;
@@ -47,6 +49,54 @@ export function generateCode(random = crypto) {
     }
   }
   return out;
+}
+
+/**
+ * The opaque token that goes in a reset link.
+ *
+ * 32 bytes, hex. Deliberately NOT the six-digit code: the code is a credential
+ * a person types, and a credential in a URL is a credential in browser
+ * history, in the Referer sent to anything the landing page loads, and in
+ * every proxy log on the way. This is a separate secret that means only "the
+ * holder of this link opened the mailbox we sent it to".
+ *
+ * 256 bits because it is never typed, so length costs nothing. That is what
+ * lets `linkHash` below be a bare SHA-256 instead of a slow hash.
+ */
+export function generateLinkToken(random = crypto) {
+  const bytes = new Uint8Array(32);
+  random.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * What is stored for a token, and the key a link is looked up by.
+ *
+ * A bare digest, unlike `code_hash`, which is PBKDF2. The reasoning is in
+ * migration 0035: a six-digit code is brute-forceable and needs a slow hash to
+ * make guessing expensive; a 256-bit token is not, and a per-row salt would
+ * make the row unfindable from the token without scanning the table.
+ *
+ * Wrong-length or non-hex input is rejected rather than hashed. A lookup key
+ * derived from garbage would simply miss, but failing here means a malformed
+ * `?t=` never reaches the database at all.
+ */
+export async function linkHash(token) {
+  const t = String(token ?? '');
+  if (!/^[0-9a-f]{64}$/.test(t)) return null;
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Where a reset link points.
+ *
+ * The token rides in the query string of the ordinary /forgot page rather than
+ * a path of its own, so a resident who lands there with a dead token sees the
+ * page they would have gone to anyway and can ask for a fresh code from it.
+ */
+export function resetLinkUrl(token, origin = 'https://diamondpark.pages.dev') {
+  return `${origin}/forgot?t=${token}`;
 }
 
 /** Codes are compared digit-for-digit, so normalise what people paste. */
@@ -323,26 +373,25 @@ export async function refusePastPassword(candidate, history = []) {
  * would consume the reset. A typed code cannot be spent by a machine that
  * merely reads the message.
  */
-export function resetEmail({ code, name, flat }) {
-  return {
-    subject: `Diamond Park — your password reset code is ${code}`,
-    text: [
-      `Hello${name ? ` ${name}` : ''},`,
-      '',
-      `Your password reset code for flat ${flat} is:`,
-      '',
-      `    ${code}`,
-      '',
-      `It expires in ${EXPIRY_MINUTES} minutes and can be used once.`,
-      '',
-      'Enter it at https://diamondpark.pages.dev/forgot',
-      '',
-      'If you did not ask for this, you can ignore it. Your password has not',
-      'changed, and nobody can use this code without your email.',
-      '',
-      'DD Diamond Park Residents\' Welfare Association',
-    ].join('\n'),
-  };
+export function resetEmail({ code, name, flat, link = '' }) {
+  return renderEmail({
+    title: `Your password reset code is ${code}`,
+    preview: `Code ${code} — expires in ${EXPIRY_MINUTES} minutes, usable once.`,
+    blocks: [
+      para(`Hello${name ? ` ${name}` : ''},`),
+      para(`Your password reset code for flat ${flat} is:`),
+      figure(code, `It expires in ${EXPIRY_MINUTES} minutes and can be used once.`),
+      // The button carries the opaque token, never the code — see
+      // generateLinkToken(). Both routes end at the same reset and spend it
+      // once; the code stays here for anyone whose client eats the link.
+      ...(link ? [action('Reset my password', link)] : []),
+      para(link
+        ? `Or enter the code yourself at ${SITE}/forgot`
+        : `Enter it at ${SITE}/forgot`),
+      aside('If you did not ask for this, you can ignore it. Your password has '
+        + 'not changed, and nobody can use this code without your email.'),
+    ],
+  });
 }
 
 /**
@@ -354,46 +403,32 @@ export function resetEmail({ code, name, flat }) {
  * to be single-use, because it is not — it is an ordinary password that happens
  * to expire.
  *
- * No link, for the same reason as `resetEmail`: mail scanners follow links, and
- * a link that carries a working password is worse than one that carries a code.
+ * The link is the same opaque-token mechanism as the reset code's, and for the
+ * same reason it is not the password: a live 24-hour credential in a URL
+ * outlives the click in browser history and proxy logs for as long as it is
+ * valid. Following it lands on the choose-your-own-password step directly,
+ * which is the whole point — the temporary password below is the fallback for
+ * a client that will not follow links, not the main route.
  */
-export function tempPasswordEmail({ password, name, flat, hours = TEMP_PW_HOURS }) {
-  return {
-    subject: 'Diamond Park — a temporary password for your account',
-    text: [
-      `Hello${name ? ` ${name}` : ''},`,
-      '',
-      `A temporary password has been set for flat ${flat}:`,
-      '',
-      `    ${password}`,
-      '',
-      `It expires in ${hours} hours. Log in at https://diamondpark.pages.dev`,
-      'and you will be asked to choose your own password straight away.',
-      '',
-      'If you did not ask for this, tell the committee — somebody has reset',
-      'your account. Your old password no longer works either way.',
-      '',
-      'DD Diamond Park Residents\' Welfare Association',
-    ].join('\n'),
-  };
+export function tempPasswordEmail({ password, name, flat, hours = TEMP_PW_HOURS, link = '' }) {
+  return renderEmail({
+    title: 'A temporary password for your account',
+    preview: `Expires in ${hours} hours. You will choose your own when you log in.`,
+    blocks: [
+      para(`Hello${name ? ` ${name}` : ''},`),
+      para(`A temporary password has been set for flat ${flat}:`),
+      figure(password, `It expires in ${hours} hours.`),
+      ...(link ? [action('Choose my password', link)] : []),
+      para(link
+        ? `Or log in with it at ${SITE} and you will be asked to choose your own.`
+        : `Log in at ${SITE} and you will be asked to choose your own password `
+          + 'straight away.'),
+      aside('If you did not ask for this, tell the committee — somebody has reset '
+        + 'your account. Your old password no longer works.'),
+    ],
+  });
 }
 
-/**
- * The reply to "I forgot my password". One string, always.
- *
- * TAKES NO ARGUMENTS ON PURPOSE. The first version accepted a masked address
- * so the page could say "a code is on its way to pr***@example.com" — which
- * meant the reply differed for a real account and turned the endpoint into a
- * resident directory: try a mobile number, read whether somebody lives here.
- *
- * A parameter-less function cannot leak what it is never given. The unit test
- * that was supposed to catch this compared neutralReply(null) with
- * neutralReply(null) and passed while the endpoint leaked.
- *
- * The cost is real: someone with several addresses is not told which inbox to
- * open. That is a worse experience for a handful of people, against
- * enumeration of every flat in the building by anyone with a phone.
- */
 export function neutralReply() {
   return {
     ok: true,

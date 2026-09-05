@@ -538,6 +538,9 @@ Self-service password reset by emailed code.
 | const | `MAX_ATTEMPTS` |  |
 | const | `MAX_PER_HOUR` |  |
 | fn | `generateCode` | A uniformly random numeric code. |
+| fn | `generateLinkToken` | The opaque token that goes in a reset link. |
+| fn | `linkHash` | What is stored for a token, and the key a link is looked up by. |
+| fn | `resetLinkUrl` | Where a reset link points. |
 | fn | `normaliseCode` |  |
 | fn | `expiryFrom` |  |
 | fn | `canIssue` | May this account be sent another code? Counts recent issues rather than recent failures: the thing being limited is mail to a resident's inbox, which an attacker who knows a mobile number could otherwise trigger endlessly. |
@@ -554,7 +557,7 @@ Self-service password reset by emailed code.
 | fn | `refusePastPassword` | Refuses a password the account has used before. |
 | fn | `resetEmail` | The email a resident receives. |
 | fn | `tempPasswordEmail` | The email carrying a temporary password the superadmin has just issued. |
-| fn | `neutralReply` | The reply to "I forgot my password". |
+| fn | `neutralReply` |  |
 
 ### `functions/lib/roster.js`
 
@@ -899,4 +902,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-479 exports. 223 have no doc comment.
+482 exports. 224 have no doc comment.
