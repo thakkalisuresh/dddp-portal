@@ -494,6 +494,14 @@ a { color: var(--accent); }
 .manual__grid { display: flex; gap: var(--s-5); flex-wrap: wrap; margin-bottom: var(--s-2); }
 .manual__grid .label { display: block; }
 .manual__grid .num { font-size: var(--text-lg); font-variant-numeric: tabular-nums; }
+.manual__ref { min-width: 0; }
+/* The reference gets the same copy affordance as the UPI ID, so it gets the
+   same treatment: a field that reads as copyable, with the button beside it.
+   The row's own vertical margin would double the grid's gap, so drop it. */
+.manual__ref .manual__row { margin: var(--s-1) 0 0; }
+.manual .ref { font-family: var(--font-ui); font-size: var(--text-base);
+               background: var(--accent-wash); border-radius: var(--radius);
+               padding: var(--s-2) var(--s-3); word-break: break-all; }
 .btn--sm { padding: var(--s-2) var(--s-3); font-size: var(--text-sm); }
 
 /* ── password reveal ─────────────────────────────────────────────────────── */
