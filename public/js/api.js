@@ -77,6 +77,11 @@ export const api = {
   updateProfile: (name, email) => request('PATCH', '/api/me', { name, email }),
   forgot: (mobile) => request('POST', '/api/forgot', { mobile }),
   reset:  (mobile, code, password) => request('POST', '/api/reset', { mobile, code, password }),
+  // The link's way through. No mobile and no code: the token is the proof.
+  resetByLink: (token, password) => request('POST', '/api/reset', { token, password }),
+  // Deliberately a GET that spends nothing, so a mail scanner fetching the
+  // link out of the inbox cannot consume the reset before the resident clicks.
+  resetLink: (token) => request('GET', `/api/reset/link?t=${encodeURIComponent(token)}`),
   trackActivity: (body)      => request('POST', '/api/activity', body),
   captureState:  ()          => request('GET',  '/api/capture'),
   sendClicks:    (clicks)    => request('POST', '/api/clicks', { clicks }),

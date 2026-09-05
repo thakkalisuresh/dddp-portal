@@ -68,7 +68,7 @@ import {
   validateNewPassword, resetEmail, neutralReply,
   tempPasswordState, expiredPasswordMessage, tempPasswordExpiry, tempPasswordEmail,
   TEMP_PW_HOURS, INVITE_PW_HOURS, refuseCurrentPassword, refusePastPassword,
-  HISTORY_DEPTH,
+  HISTORY_DEPTH, generateLinkToken, linkHash, resetLinkUrl,
 } from './lib/reset.js';
 import { sendEmail, mailConfigured } from './lib/mailer.js';
 import { parseRoster, previewRoster, resolveExemptionTargets } from './lib/roster.js';
@@ -121,6 +121,9 @@ export default {
       if (route === 'POST /api/login') return login(request, env, ctx);
       if (route === 'POST /api/forgot') return forgotPassword(request, env, ctx);
       if (route === 'POST /api/reset') return resetWithCode(request, env, ctx);
+      // GET, and it spends nothing — see resetLinkState. A scanner that
+      // fetches the link out of the inbox must not consume the reset.
+      if (route === 'GET /api/reset/link') return resetLinkState(request, env, ctx);
       if (route === 'GET /api/health') return json({ ok: true });
 
       // ── public: no session required ───────────────────────────────────
@@ -1024,10 +1027,28 @@ async function emailTempPassword(request, env, session, path) {
       + 'Issue a fresh one and send that instead.');
   }
 
-  const { subject, text } = tempPasswordEmail({
+  // The link rides the same password_resets mechanism as a self-service reset.
+  // It is NOT the temporary password in a URL: following it lands on the
+  // choose-your-own step, and the credential below stays the typed fallback.
+  // Its life is the code expiry, not the password's 24 hours — a link is
+  // clicked in the minutes after it arrives or not at all.
+  const linkToken = generateLinkToken();
+  const issuedAt = new Date();
+  const placeholder = await hashPassword(generateCode(), ITER(env));
+  await env.DB.prepare(
+    `INSERT INTO password_resets
+       (owner_id, code_hash, code_salt, code_iterations, sent_to, expires_at,
+        created_at, link_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(target.id, placeholder.hash, placeholder.salt, placeholder.iterations,
+         target.email, expiryFrom(issuedAt), issuedAt.toISOString(),
+         await linkHash(linkToken)).run();
+
+  const { subject, text, html } = tempPasswordEmail({
     password: offered, name: target.name, flat: target.flat, hours: TEMP_PW_HOURS,
+    link: resetLinkUrl(linkToken, new URL(request.url).origin),
   });
-  const result = await sendEmail(env, { to: target.email, subject, text });
+  const result = await sendEmail(env, { to: target.email, subject, text, html });
 
   if (!result.sent) {
     await reportError(env, 'DDP-MAIL-001', { flat: target.flat, reason: result.reason });
@@ -4918,6 +4939,45 @@ async function godStats(env, url) {
  * Every branch below therefore returns the SAME shape. The differences are
  * recorded in error_log, where only the committee can see them.
  */
+/**
+ * "Is this link still good?" — the GET behind a reset link.
+ *
+ * READS AND SPENDS NOTHING, which is the entire point of splitting it from the
+ * POST below. Mail scanners, link previewers and corporate proxies fetch URLs
+ * out of inboxes automatically, and they issue GET. If following the link were
+ * what completed the reset, the resident would arrive at a link something else
+ * had already used. So this only reports what the token points at; the reset
+ * happens when a person presses the button and the browser POSTs.
+ *
+ * Returns the flat so the page can say which account is being reset. That is
+ * not a leak: whoever holds a 256-bit token that maps to a live row already
+ * opened the mailbox it was sent to. Nothing here distinguishes a token that
+ * never existed from one that expired or was spent — all three are `usable:
+ * false` with the same reason vocabulary the code path uses.
+ */
+async function resetLinkState(request, env, ctx) {
+  const token = new URL(request.url).searchParams.get('t');
+  const hash = await linkHash(token);
+  if (!hash) return json({ usable: false, reason: 'none' });
+
+  const row = await env.DB.prepare(
+    'SELECT * FROM password_resets WHERE link_hash = ?'
+  ).bind(hash).first();
+
+  const state = resetState(row);
+  if (!state.usable) {
+    await reportError(env, 'DDP-AUTH-006', { reason: `link-${state.reason}` }, ctx);
+    return json({ usable: false, reason: state.reason });
+  }
+
+  const owner = await env.DB.prepare(
+    'SELECT flat FROM owners WHERE id = ? AND active = 1'
+  ).bind(row.owner_id).first();
+  if (!owner) return json({ usable: false, reason: 'none' });
+
+  return json({ usable: true, flat: owner.flat });
+}
+
 async function forgotPassword(request, env, ctx) {
   const body = await readJson(request);
 
@@ -4958,15 +5018,23 @@ async function forgotPassword(request, env, ctx) {
   const { hash, salt, iterations } = await hashPassword(code, ITER(env));
   const now = new Date();
 
+  // Two ways through one reset: the typed code, and an opaque link token. Only
+  // the token's HASH is stored, so the row cannot hand back a working link —
+  // the same reasoning as the code beside it, for the same reason.
+  const token = generateLinkToken();
   await env.DB.prepare(
     `INSERT INTO password_resets
-       (owner_id, code_hash, code_salt, code_iterations, sent_to, expires_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+       (owner_id, code_hash, code_salt, code_iterations, sent_to, expires_at,
+        created_at, link_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(owner.id, hash, salt, iterations, owner.email,
-         expiryFrom(now), now.toISOString()).run();
+         expiryFrom(now), now.toISOString(), await linkHash(token)).run();
 
-  const { subject, text } = resetEmail({ code, name: owner.name, flat: owner.flat });
-  const result = await sendEmail(env, { to: owner.email, subject, text });
+  const { subject, text, html } = resetEmail({
+    code, name: owner.name, flat: owner.flat,
+    link: resetLinkUrl(token, new URL(request.url).origin),
+  });
+  const result = await sendEmail(env, { to: owner.email, subject, text, html });
 
   if (!result.sent) {
     // The resident is told the same thing either way, so this row is the only
@@ -4987,15 +5055,56 @@ async function resetWithCode(request, env, ctx) {
   const body = await readJson(request);
 
   let mobile;
+  const password = String(body?.password ?? '');
+
+  // Two proofs, one reset. A `token` is the link's; anything else is the typed
+  // code, which additionally needs the mobile the code was sent for.
+  //
+  // The token replaces BOTH the mobile and the code, and the enumeration
+  // reasoning that shapes the code path below does not apply to it: there is
+  // no supplied identity to confirm or deny, so a bad token is simply a bad
+  // token. It is verified by lookup — holding a 256-bit secret that matches a
+  // live row IS the proof, so there is nothing here to compare and no attempt
+  // to count against a limit designed for six guessable digits.
+  const linkToken = String(body?.token ?? '');
+  let owner; let row;
+
+  if (linkToken) {
+    const hash = await linkHash(linkToken);
+    row = hash && await env.DB.prepare(
+      'SELECT * FROM password_resets WHERE link_hash = ?'
+    ).bind(hash).first();
+
+    const state = resetState(row);
+    if (!state.usable) {
+      await reportError(env, 'DDP-AUTH-009', { reason: `link-${state.reason}` }, ctx);
+      // Not failureMessage(): that vocabulary is the code's, and every one of
+      // its sentences talks about a number the resident typed and a code they
+      // entered. Somebody who followed a link did neither.
+      return problem(400, 'DDP-AUTH-009',
+        'That link has expired or has already been used. Ask for a new code.');
+    }
+    owner = await env.DB.prepare(
+      `SELECT id, flat, name, mobile, email, role,
+              pw_hash, pw_salt, pw_iterations, must_change_pw
+         FROM owners WHERE id = ? AND active = 1`
+    ).bind(row.owner_id).first();
+    if (!owner) {
+      await reportError(env, 'DDP-AUTH-009', { reason: 'link-no-account' }, ctx);
+      return problem(400, 'DDP-AUTH-009',
+        'That link has expired or has already been used. Ask for a new code.');
+    }
+    return finishReset(env, ctx, owner, row, password);
+  }
+
   try {
     mobile = normaliseMobile(body?.mobile);
   } catch {
     return problem(400, 'DDP-AUTH-009', 'That code is not right, or it has expired.');
   }
   const code = normaliseCode(body?.code);
-  const password = String(body?.password ?? '');
 
-  const owner = await env.DB.prepare(
+  owner = await env.DB.prepare(
     // pw_* is read for the reuse check after the code verifies, not before:
     // nothing about this row may influence a reply until then.
     `SELECT id, flat, name, mobile, email, role,
@@ -5010,7 +5119,7 @@ async function resetWithCode(request, env, ctx) {
     return problem(400, 'DDP-AUTH-009', failureMessage('none'));
   }
 
-  const row = await env.DB.prepare(
+  row = await env.DB.prepare(
     `SELECT * FROM password_resets WHERE owner_id = ?
       ORDER BY created_at DESC LIMIT 1`
   ).bind(owner.id).first();
@@ -5042,8 +5151,26 @@ async function resetWithCode(request, env, ctx) {
   // DDP-AUTH-009. That is precisely the directory the neutral replies above
   // exist to deny. Behind a verified code there is nothing left to leak —
   // whoever got this far already holds the account.
+  return finishReset(env, ctx, owner, row, password);
+}
+
+/**
+ * Everything a reset does once its proof has been accepted.
+ *
+ * Shared by the typed code and the link token deliberately, rather than
+ * duplicated per path. The single-use marking, the killing of every other
+ * outstanding reset, and the session teardown are the parts that must not
+ * differ between the two ways in — a link that reset a password but left the
+ * code live, or left old sessions running, would be a quieter bug than a
+ * broken one, because it would work.
+ *
+ * `row` is the reset being spent; `owner` the account it belongs to. Both are
+ * already verified by the time this is called, which is why nothing here is
+ * neutral about failure: past the proof there is no identity left to protect.
+ */
+async function finishReset(env, ctx, owner, row, password) {
   validateNewPassword(password, owner);   // throws DDP-AUTH-008/013/014/015
-  // Behind the verified code, so this cannot be used to probe an account's
+  // Behind the verified proof, so this cannot be used to probe an account's
   // current password from outside. DDP-AUTH-017, and 018 for the ones before.
   // This is the path the history table was most wanted for: a forgotten
   // password is often forgotten because it was recently changed away from.
@@ -5062,7 +5189,9 @@ async function resetWithCode(request, env, ctx) {
     // Single use, marked in the same batch as the password change so the two
     // cannot come apart and leave a spent code still live.
     env.DB.prepare('UPDATE password_resets SET used_at = ? WHERE id = ?').bind(now, row.id),
-    // Any other code outstanding for this account dies with it.
+    // Any other code OR LINK outstanding for this account dies with it. One
+    // resident asking twice leaves two rows; completing either must not leave
+    // the other standing, whichever kind it is.
     env.DB.prepare('UPDATE password_resets SET used_at = ? WHERE owner_id = ? AND used_at IS NULL')
       .bind(now, owner.id),
   ]);

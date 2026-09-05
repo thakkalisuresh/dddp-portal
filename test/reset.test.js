@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   generateCode, normaliseCode, canIssue, resetState, failureMessage,
   validateNewPassword, resetEmail, neutralReply, refuseCurrentPassword,
@@ -6,6 +7,7 @@ import {
   CODE_LENGTH, MAX_ATTEMPTS, MAX_PER_HOUR, EXPIRY_MINUTES,
   tempPasswordState, tempPasswordExpiry, expiredPasswordMessage, tempPasswordEmail,
   TEMP_PW_HOURS, INVITE_PW_HOURS,
+  generateLinkToken, linkHash, resetLinkUrl,
 } from '../functions/lib/reset.js';
 import { buildRawMessage } from '../functions/lib/mailer.js';
 import { hashPassword, generateOneTimePassword } from '../functions/lib/crypto.js';
@@ -204,14 +206,31 @@ describe('the email', () => {
     expect(mail.subject).toContain('123456');
   });
 
-  it('contains NO reset link', () => {
-    // A link in an email is a bearer token that survives in inboxes and
-    // forwards, and some scanners follow links automatically — which would
-    // consume the reset before the resident ever saw it.
-    const body = mail.text;
-    const links = body.match(/https?:\/\/\S+/g) ?? [];
-    expect(links).toEqual(['https://diamondpark.pages.dev/forgot']);
-    expect(body).not.toMatch(/token|\?code=|reset\/[A-Za-z0-9]/);
+  it('NEVER carries the code in a URL, with or without a link', () => {
+    // Revised 2026-09-04. This used to assert no link at all. A link is now
+    // deliberate — see generateLinkToken() — but the rule it was protecting
+    // survives intact and is what is asserted here: the thing a resident types
+    // must never be the thing in the query string. A code in a URL is a code
+    // in browser history, in the Referer sent to anything the landing page
+    // loads, and in every proxy log between the resident and Cloudflare.
+    const withLink = resetEmail({ code: '481902', name: 'Priya', flat: '3B',
+                                  link: resetLinkUrl('a'.repeat(64)) });
+    for (const body of [mail.text, mail.html, withLink.text, withLink.html]) {
+      for (const url of body.match(/https?:\/\/\S+/g) ?? []) {
+        expect(url).not.toContain('481902');
+        expect(url).not.toMatch(/[?&](code|pw|password)=/);
+      }
+    }
+  });
+
+  it('offers the link and the typed code as two ways through the same reset', () => {
+    const m = resetEmail({ code: '481902', name: 'Priya', flat: '3B',
+                           link: resetLinkUrl('b'.repeat(64)) });
+    expect(m.html).toContain('Reset my password');
+    expect(m.text).toContain(`forgot?t=${'b'.repeat(64)}`);
+    // The code is still in the letter for a client that eats the link.
+    expect(m.text).toContain('481902');
+    expect(m.html).toContain('481902');
   });
 
   it('says how long it lasts and that it is single use', () => {
@@ -372,9 +391,18 @@ describe('the email carrying a temporary password', () => {
     expect(mail.subject).not.toContain('tiger-lamp-42');
   });
 
-  it('carries no link that could be followed by a mail scanner', () => {
-    const links = mail.text.match(/https?:\/\/\S+/g) ?? [];
-    expect(links).toEqual(['https://diamondpark.pages.dev']);
+  it('NEVER carries the temporary password in a URL', () => {
+    // The sharper half of the same rule. The reset code dies in 15 minutes;
+    // this is a live credential good for 24 hours, so a copy left in browser
+    // history or a proxy log stays useful for as long as the password does.
+    const withLink = tempPasswordEmail({ password: 'tuck-amber-91', name: 'Priya',
+                                         flat: '3B', link: resetLinkUrl('c'.repeat(64)) });
+    for (const body of [mail.text, mail.html, withLink.text, withLink.html]) {
+      for (const url of body.match(/https?:\/\/\S+/g) ?? []) {
+        expect(url).not.toContain('tuck-amber-91');
+        expect(url).not.toMatch(/[?&](code|pw|password)=/);
+      }
+    }
   });
 
   it('tells somebody who did not ask that their account was reset', () => {
@@ -385,7 +413,15 @@ describe('the email carrying a temporary password', () => {
   });
 
   it('says the next step is choosing their own', () => {
-    expect(mail.text).toMatch(/choose your own/i);
+    // Whitespace collapsed before matching. renderText wraps at 72 columns, so
+    // a phrase asserted verbatim against the plain-text body passes or fails
+    // on where the wrap happens to fall — which is layout, not meaning.
+    const flat = (t) => t.replace(/\s+/g, ' ');
+    expect(flat(mail.text)).toMatch(/choose your own/i);
+    // And says it on the button too, when there is a link to put it on.
+    expect(tempPasswordEmail({ password: 'x', name: 'Priya', flat: '3B',
+                               link: resetLinkUrl('d'.repeat(64)) }).html)
+      .toContain('Choose my password');
   });
 });
 
@@ -565,5 +601,90 @@ describe('refusePastPassword', () => {
     // this number is what stops a password change becoming a CPU event. If it
     // is ever raised, it should be raised against a measurement.
     expect(HISTORY_DEPTH).toBeLessThanOrEqual(5);
+  });
+});
+
+/* ── the link token ───────────────────────────────────────────────────────── */
+
+describe('the reset link token', () => {
+  it('is 256 bits of hex, because it is never typed', () => {
+    const t = generateLinkToken();
+    expect(t).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('does not repeat', () => {
+    const seen = new Set(Array.from({ length: 200 }, () => generateLinkToken()));
+    expect(seen.size).toBe(200);
+  });
+
+  it('hashes to a stable lookup key, and refuses anything malformed', async () => {
+    const t = generateLinkToken();
+    expect(await linkHash(t)).toBe(await linkHash(t));
+    expect(await linkHash(t)).toMatch(/^[0-9a-f]{64}$/);
+    // A hash that is not the token: the row must not hand back a working link.
+    expect(await linkHash(t)).not.toBe(t);
+    for (const bad of ['', null, undefined, 'nope', t.toUpperCase(), `${t}0`, t.slice(1)]) {
+      expect(await linkHash(bad), String(bad)).toBeNull();
+    }
+  });
+
+  it('two different tokens never collide', async () => {
+    expect(await linkHash(generateLinkToken()))
+      .not.toBe(await linkHash(generateLinkToken()));
+  });
+
+  it('puts the token in the query string of the ordinary /forgot page', () => {
+    const t = generateLinkToken();
+    const url = new URL(resetLinkUrl(t));
+    expect(url.pathname).toBe('/forgot');
+    expect(url.searchParams.get('t')).toBe(t);
+  });
+
+  it('honours the origin it is given, so a staging link stays on staging', () => {
+    const t = 'a'.repeat(64);
+    expect(resetLinkUrl(t, 'https://staging.example.test'))
+      .toBe(`https://staging.example.test/forgot?t=${t}`);
+    // And the production portal when nothing is passed — the 3am path.
+    expect(resetLinkUrl(t)).toBe(`https://diamondpark.pages.dev/forgot?t=${t}`);
+  });
+});
+
+/* ── the GET behind a link must not spend it ─────────────────────────────── */
+
+describe('following a reset link consumes nothing', () => {
+  // Asserted against the SOURCE, not by calling the handler.
+  //
+  // No test in this repo drives a request handler — the logic lives in lib/
+  // and is tested there — so there is nowhere to observe this from the
+  // outside. It is still the single security property the whole GET/POST
+  // split exists for: mail scanners, link previewers and corporate proxies
+  // fetch URLs out of inboxes automatically and they issue GET, so if the GET
+  // completed the reset the resident would arrive at a link something else had
+  // already used. A structural check is a poor substitute for exercising it,
+  // and it is what can be had here; it fails loudly if anybody adds a write.
+  const source = readFileSync(new URL('../functions/index.js', import.meta.url), 'utf8');
+  const body = source.slice(source.indexOf('async function resetLinkState'),
+                            source.indexOf('async function forgotPassword'));
+
+  it('is wired as a GET', () => {
+    expect(source).toContain("route === 'GET /api/reset/link'");
+  });
+
+  it('was found, so the rest of this describe is not vacuously true', () => {
+    expect(body).toContain('resetLinkState');
+    expect(body.length).toBeGreaterThan(200);
+  });
+
+  it('contains no write of any kind', () => {
+    for (const write of [/\bUPDATE\b/, /\bINSERT\b/, /\bDELETE\b/, /\.batch\(/, /\.run\(/]) {
+      expect(body, String(write)).not.toMatch(write);
+    }
+  });
+
+  it('never returns anything a resident would type', () => {
+    // The flat, yes — the page has to say which account. Not the code, and
+    // not the token it was handed.
+    expect(body).not.toMatch(/code_hash|link_hash\s*[,}]/);
+    expect(body).toContain('flat');
   });
 });
