@@ -427,14 +427,61 @@ export async function changeRate(env, { period, ratePerKg, reason, actorId,
 export async function saveReadings(env, period, entries, actorId) {
   const periodRow = await env.DB.prepare('SELECT status FROM periods WHERE period = ?')
     .bind(period).first();
-  if (!periodRow) fail('DDP-BILL-005', { period });
+  // DDP-BILL-020, not DDP-BILL-005: saving a reading into a month nobody has
+  // opened used to answer "set this month's rate before generating bills",
+  // which names a step the treasurer was not taking and a fix that would not
+  // have helped. The month is what is missing.
+  if (!periodRow) fail('DDP-BILL-020', { period });
   if (periodRow.status === 'locked') fail('DDP-BILL-007', { period });
 
   const now = new Date().toISOString();
   const readOn = `${readMonthFor(period)}-02`;
-  const valid = entries.filter((e) => e.flat && Number.isFinite(Number(e.reading)));
 
-  if (!valid.length) return { saved: 0, skipped: entries.length };
+  /**
+   * WHAT MAY BE WRITTEN, decided here rather than trusted from the caller.
+   *
+   * The only guard used to be `Number.isFinite`, and everything else was taken
+   * on faith — which held exactly as long as the grid was the only caller.
+   * Probed directly on 2026-09-05 it accepted three things it should not:
+   *
+   *   an unknown flat   the INSERT hit its foreign key and surfaced as
+   *                     DDP-SYS-001, "something went wrong", logged as a fault
+   *                     of ours. The import path had rejected the same flat by
+   *                     name a moment earlier.
+   *   an EXCLUDED flat  written happily, then invisible: the grid only shows
+   *                     active flats. It would reappear as "this month's
+   *                     reading" the day the flat was billed again.
+   *   a negative number a meter total below zero. Billing blocked it as
+   *                     below-previous, so it could not reach a bill — it just
+   *                     sat in the table being untrue.
+   *
+   * Rejected ROW BY ROW, not as a batch. Autosave sends whatever is queued, so
+   * failing the call outright would throw away every good reading typed
+   * alongside a bad one, and the queue drops a 4xx rather than retrying it.
+   */
+  const known = new Map(
+    ((await env.DB.prepare('SELECT flat, active FROM flats').all()).results ?? [])
+      .map((f) => [f.flat, f.active]));
+
+  const rejected = [];
+  const valid = [];
+  for (const e of entries) {
+    const reading = Number(e.reading);
+    const reason = !e.flat || !known.has(e.flat) ? 'unknown-flat'
+      : !known.get(e.flat) ? 'not-billed'
+      : !Number.isFinite(reading) ? 'not-a-number'
+      : reading < 0 ? 'negative'
+      : null;
+    if (reason) rejected.push({ flat: e.flat ?? null, reason });
+    else valid.push({ flat: e.flat, reading });
+  }
+
+  if (!valid.length) {
+    // Nothing to write and something to say: a caller that sent only bad rows
+    // gets a refusal it cannot mistake for success.
+    if (rejected.length) fail('DDP-BILL-019', { period, rejected });
+    return { saved: 0, skipped: entries.length, rejected };
+  }
 
   await env.DB.batch(valid.map((e) =>
     env.DB.prepare(
@@ -442,10 +489,47 @@ export async function saveReadings(env, period, entries, actorId) {
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT (flat, period) DO UPDATE SET
          reading = excluded.reading, entered_by = excluded.entered_by, entered_at = excluded.entered_at`
-    ).bind(e.flat, period, Number(e.reading), readOn, actorId, now)
+    ).bind(e.flat, period, e.reading, readOn, actorId, now)
   ));
 
-  return { saved: valid.length, skipped: entries.length - valid.length };
+  return { saved: valid.length, skipped: entries.length - valid.length, rejected };
+}
+
+/**
+ * One line into cells, on , ; or tab, respecting double quotes.
+ *
+ * THE BUG THIS EXISTS FOR. The old splitter was `line.split(/[\t,;]/)`, which
+ * has no notion of a quoted field — so a resident called "Nair, R" split into
+ * two cells and every column after the name moved one to the left. The reading
+ * column then held the PREVIOUS reading, which is a real number: the row
+ * imported silently, the flat billed zero, and nothing anywhere said so. Found
+ * on 2026-09-05 by importing a sheet with a comma in a name.
+ *
+ * Excel, Numbers and Sheets all quote a field containing the separator, so
+ * honouring quotes fixes every file they produce. A hand-typed comma inside an
+ * unquoted field stays ambiguous by construction — `countMismatch` below is
+ * what stops that one from importing quietly.
+ */
+export function splitCells(line) {
+  const cells = [];
+  let cell = '';
+  let quoted = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quoted) {
+      // "" inside a quoted field is one literal quote — the format's own escape.
+      if (ch === '"' && line[i + 1] === '"') { cell += '"'; i++; continue; }
+      if (ch === '"') { quoted = false; continue; }
+      cell += ch;
+      continue;
+    }
+    if (ch === '"') { quoted = true; continue; }
+    if (ch === ',' || ch === ';' || ch === '\t') { cells.push(cell.trim()); cell = ''; continue; }
+    cell += ch;
+  }
+  cells.push(cell.trim());
+  return cells;
 }
 
 /**
@@ -464,12 +548,14 @@ export async function saveReadings(env, period, entries, actorId) {
  * its own, so a data row is never mistaken for a header.
  */
 function headerColumns(line) {
-  const cells = line.split(/[\t,;]/).map((c) => normaliseFlat(c));
+  const cells = splitCells(line).map((c) => normaliseFlat(c));
   if (cells.some((c) => /^\d+(\.\d+)?$/.test(c))) return null;
   const flat = cells.indexOf('FLAT');
   const reading = cells.indexOf('READING');
   if (flat === -1 || reading === -1) return null;
-  return { flat, reading };
+  // `count` is how many columns the file says it has, which is what makes a
+  // shifted row detectable at all.
+  return { flat, reading, count: cells.length };
 }
 
 /**
@@ -503,7 +589,24 @@ export function parseReadings(text, knownFlats) {
     if (columns) {
       // Split WITHOUT collapsing, so an empty cell keeps its position and
       // column 3 is still column 3 on a row whose reading has not been taken.
-      const cells = line.split(/[\t,;]/).map((c) => c.trim());
+      const cells = splitCells(line);
+
+      /**
+       * MORE CELLS THAN THE HEADER DECLARED means the columns have moved, and
+       * reading one by index would be reading the wrong one. The usual cause is
+       * an unquoted comma inside a name, which no splitter can resolve: the row
+       * looks perfectly well formed and its reading column holds last month's
+       * number. Refused by name instead — a row the treasurer can see and fix
+       * beats a bill nobody questions.
+       *
+       * FEWER is not an error. Some exporters drop trailing empty cells, and a
+       * flat not yet read is exactly that row.
+       */
+      if (cells.length > columns.count) {
+        errors.push({ line, flat: cells[columns.flat] ?? '', reason: 'wrong-columns' });
+        continue;
+      }
+
       const label = cells[columns.flat] ?? '';
       const value = cells[columns.reading] ?? '';
       // A blank reading is a flat not yet read, not a bad row. The grid shows
