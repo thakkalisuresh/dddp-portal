@@ -462,12 +462,20 @@ function readingsBody() {
     const done = entered.length === grid.total && !rejected.length;
     const refused = rejected.map((i) => i.getAttribute('data-flat'));
     go.className = `btn btn--block${done ? '' : ' btn--quiet'}`;
+    // NAMED WHEN A NAME HELPS, counted when it does not. At the start of a
+    // walk "1D, 1E, 1F and 90 more" is noise; at the end of one, "3 still to
+    // enter" sends the treasurer scanning 93 rows for the boxes that are
+    // empty, when the screen already knows which three they are. Refused rows
+    // have always been named — this is the same courtesy for missing ones.
+    const names = empty.map((i) => i.getAttribute('data-flat'));
     go.textContent = done
       ? 'Work out what everyone owes'
       : refused.length
         ? `Fix ${refused.slice(0, 3).join(', ')}`
           + (refused.length > 3 ? ` and ${refused.length - 3} more` : '')
-        : `${empty.length} still to enter — take me there`;
+        : names.length <= 3
+          ? `Still to enter: ${names.join(', ')} — take me there`
+          : `${empty.length} still to enter — take me there`;
     go.onclick = done
       ? async () => {
           // Anything still queued goes FIRST. Step 3 prices what the server
@@ -567,12 +575,26 @@ function importPanel(tbody, out, refresh) {
       // in the middle of their import summary. Reported during testing on
       // 2026-08-14, from exactly the conditional-child style used everywhere
       // else in this file.
+      // ONE CAUSE, ONE SENTENCE. A file whose header row was deleted fails on
+      // every line for the same reason, and listing all 93 buries the fix in
+      // its own evidence. Named individually only while the list is short
+      // enough to act on.
+      const headerless = parsed.errors.filter((e) => e.reason === 'no-header');
+      const rest = parsed.errors.filter((e) => e.reason !== 'no-header');
+
       out.replaceChildren(...[
         el('span', {}, `${accepted} filled in as a draft. `),
-        parsed.errors.length
+        headerless.length
           ? el('strong', { style: 'color:var(--overdue)' },
-              `${parsed.errors.length} could not be read: `
-              + parsed.errors.map((e) => `${e.flat ?? '?'} (${e.reason})`).join(', ') + ' ')
+              `${headerless.length} row${headerless.length > 1 ? 's' : ''} could not be read: `
+              + 'the file has no header row. Its first line has to name the columns, '
+              + 'as the template does — flat, resident, previous, reading. ')
+          : null,
+        rest.length
+          ? el('strong', { style: 'color:var(--overdue)' },
+              `${rest.length} could not be read: `
+              + rest.slice(0, 12).map((e) => `${e.flat ?? '?'} (${e.reason})`).join(', ')
+              + (rest.length > 12 ? ` and ${rest.length - 12} more` : '') + ' ')
           : null,
         refused.length
           ? el('strong', { style: 'color:var(--overdue)' },

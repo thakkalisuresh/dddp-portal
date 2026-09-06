@@ -624,6 +624,22 @@ export function parseReadings(text, knownFlats) {
       continue;
     }
 
+    /**
+     * A SPREADSHEET ROW WITH NO HEADER ABOVE IT.
+     *
+     * The heuristic below reads everything before the last number as the flat,
+     * which is right for "4A 5.817" out of a WhatsApp message and catastrophic
+     * for a template whose header row was deleted: every line came back as
+     * `unknown-flat` under a name like "1D Meera Menon [demo] 22.625", and 93
+     * of those printed as one paragraph of noise. The fault was one missing
+     * line at the top, and nothing said so.
+     *
+     * Three or more cells on a REAL separator is the tell. A pasted pair is
+     * one or two, whichever way it was typed, so nothing that used to work
+     * lands here.
+     */
+    if (splitCells(line).length >= 3) { errors.push({ line, reason: 'no-header' }); continue; }
+
     const parts = line.split(/[\t,;]+|\s+/).filter(Boolean);
     if (parts.length < 2) { errors.push({ line, reason: 'malformed' }); continue; }
 

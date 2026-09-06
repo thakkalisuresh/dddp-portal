@@ -163,6 +163,31 @@ describe('parsing a pasted month', () => {
       expect(errors).toEqual([]);
     });
 
+    /**
+     * DELETING THE HEADER used to produce 93 identical failures, each naming a
+     * flat like "1D Meera Menon [demo] 22.625" — the heuristic reading
+     * everything before the last number as the flat name. The cause was one
+     * missing line at the top, and the report said nothing about it.
+     */
+    it('names a missing header instead of failing every row as an unknown flat', () => {
+      const { rows, errors } = parseReadings('4A,Meera Menon,5.817,6.900\n4B,Rajesh Pillai,2.94,3.5', flats);
+      expect(rows).toEqual([]);
+      expect(errors.map((e) => e.reason)).toEqual(['no-header', 'no-header']);
+    });
+
+    it('still reads a pasted pair, which has no header and never did', () => {
+      // The shape this heuristic exists for: two columns out of a message.
+      expect(parseReadings('4A 5.817\n4B\t2.94', flats).rows).toEqual([
+        { flat: '4A', reading: 5.817 },
+        { flat: '4B', reading: 2.94 },
+      ]);
+      expect(parseReadings('4A,5.817', flats).rows).toEqual([{ flat: '4A', reading: 5.817 }]);
+    });
+
+    it('still reads a pasted pair carrying a unit', () => {
+      expect(parseReadings('4A 5.817 m3', flats).rows).toEqual([{ flat: '4A', reading: 5.817 }]);
+    });
+
     it('reads columns by NAME, so their order does not matter', () => {
       const { rows } = parseReadings('reading,flat\n6.900,4A', flats);
       expect(rows).toEqual([{ flat: '4A', reading: 6.900 }]);
