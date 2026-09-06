@@ -279,10 +279,34 @@ export const api = {
     updateBill:    (id, b)   => request('PATCH', `/api/admin/bills/${id}`, b),
     backupHealth:  ()        => request('GET',  '/api/admin/backup-health'),
 
-    /** Hand out the template first so column order is guaranteed on the way back. */
+    /**
+     * Hand out the template first so column order is guaranteed on the way back.
+     *
+     * WHO, NOT WHERE. The second column used to be `floor`, which nobody
+     * checked against anything — the flat number carries the floor in its own
+     * first character. It names the person being billed instead, so a meter
+     * walk can be read against the door it is standing at.
+     *
+     * That person is `occupantOf`'s answer, decided once for the whole grid: on
+     * a let flat it is the TENANT, not the owner, because it is the tenant the
+     * bill will be addressed to (docs/RESIDENTS-OCCUPANCY.md). It is a label
+     * and nothing more — the import reads `flat` and `reading` and discards the
+     * rest, so correcting a name here corrects nothing.
+     *
+     * NAMES ARE STRIPPED OF SEPARATORS. The parser splits on , ; and tab with
+     * no quote handling, so one resident called "Nair, R" would push that row's
+     * reading into the wrong column and lose it. The column is never read back,
+     * so flattening it is free; quoting it would not be.
+     */
     downloadTemplate(period, grid) {
-      const rows = [['flat', 'floor', 'previous', 'reading']];
-      for (const f of grid.flats) rows.push([f.flat, f.floor, f.previous ?? '', '']);
+      // , ; and tab break the parser; " and newlines break the file.
+      const clean = (v) => String(v ?? '').replace(/[,;\t"\r\n]+/g, ' ').trim();
+
+      const rows = [['flat', 'resident', 'previous', 'reading']];
+      for (const f of grid.flats) {
+        rows.push([f.flat, clean(f.resident), f.previous ?? '', '']);
+      }
+
       const csv = rows.map((r) => r.join(',')).join('\n');
       const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
       const a = document.createElement('a');

@@ -633,8 +633,9 @@ function importPanel(tbody, out, refresh) {
           'CSV, TSV or plain text. In Excel or Sheets choose File → Save as / '
           + 'Download → CSV. ',
           sample,
-          ' — it lists every flat with last month’s reading beside it, so the '
-          + 'meter walk is a matter of filling the last column in.')),
+          ' — it lists every billed flat with the person billed and last month’s '
+          + 'reading beside it, so the meter walk is a matter of filling the last '
+          + 'column in.')),
       el('p', { class: 'label' }, 'Or paste it'),
       box,
       el('div', { class: 'row' },

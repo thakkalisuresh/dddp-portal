@@ -12,7 +12,7 @@
 import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
-import { $, el, esc, renderViewBanner, showError, foldedSection } from './ui.js';
+import { $, el, esc, setChildren, renderViewBanner, showError, foldedSection } from './ui.js';
 import { mobileField } from './mobile-field.js';
 import { ADMINISTRATOR } from './contact.js';
 import { money, kg, periodLabel, dayLabel } from './i18n.js';
@@ -373,7 +373,13 @@ async function flatBillingPanel() {
     const off = flats.filter((f) => !f.billed);
     const unsold = flats.filter((f) => f.billed && f.unsold);
 
-    list.replaceChildren(
+    // setChildren, NOT replaceChildren. The native method stringifies a null
+    // child, and the "billed, but nobody is on file" section below is written
+    // as `unsold.length ? … : null` — so the word "null" rendered under the
+    // last excluded flat whenever that section was empty, which is to say
+    // whenever nothing was wrong. ui.js has carried this helper, and this
+    // warning, since the same bug shipped on the public homepage.
+    setChildren(list,
       el('p', { class: 'muted small' },
         `${flats.length - off.length} of ${flats.length} flats are being billed. `
         + 'A flat left out stays out of every month until it is turned back on '
@@ -736,7 +742,9 @@ function editable(p, field, label, status, { type = 'text', placeholder = '' } =
     }
 
     wrap.classList.add('dircell--dirty');
-    wrap.replaceChildren(
+    // Same trap as the flats panel: `reason` is null on a field that needs no
+    // approval, which is most of them, and replaceChildren would print it.
+    setChildren(wrap,
       el('span', { class: 'dircell__label' }, label),
       editor.node,
       reason,

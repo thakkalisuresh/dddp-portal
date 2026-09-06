@@ -92,11 +92,11 @@ describe('parsing a pasted month', () => {
    */
   describe('a filled-in template goes back in', () => {
     // Exactly the columns api.admin.downloadTemplate writes.
-    const header = 'flat,floor,previous,reading';
+    const header = 'flat,resident,previous,reading';
 
     it('round-trips the template the app itself exports', () => {
       const { rows, errors } = parseReadings(
-        `${header}\n4A,4,5.817,6.900\n4B,4,2.94,3.500`, flats);
+        `${header}\n4A,Meera Menon,5.817,6.900\n4B,Rajesh Pillai,2.94,3.500`, flats);
       expect(rows).toEqual([
         { flat: '4A', reading: 6.900 },
         { flat: '4B', reading: 3.500 },
@@ -105,14 +105,14 @@ describe('parsing a pasted month', () => {
     });
 
     it('does not report the header row as a failure', () => {
-      const { errors } = parseReadings(`${header}\n4A,4,5.817,6.900`, flats);
+      const { errors } = parseReadings(`${header}\n4A,Meera Menon,5.817,6.900`, flats);
       expect(errors).toEqual([]);
     });
 
     it('treats a blank reading as not-yet-read, not as a bad row', () => {
       // The meter walk is done in passes; half a template is the normal state.
       const { rows, errors } = parseReadings(
-        `${header}\n4A,4,5.817,6.900\n4B,4,2.94,`, flats);
+        `${header}\n4A,Meera Menon,5.817,6.900\n4B,Rajesh Pillai,2.94,`, flats);
       expect(rows).toEqual([{ flat: '4A', reading: 6.900 }]);
       expect(errors).toEqual([]);
     });
@@ -123,7 +123,7 @@ describe('parsing a pasted month', () => {
     });
 
     it('still catches an unknown flat when there is a header', () => {
-      const { rows, errors } = parseReadings(`${header}\n9F,9,1.0,2.110`, flats);
+      const { rows, errors } = parseReadings(`${header}\n9F,Nobody,1.0,2.110`, flats);
       expect(rows).toEqual([]);
       expect(errors[0].reason).toBe('unknown-flat');
     });
