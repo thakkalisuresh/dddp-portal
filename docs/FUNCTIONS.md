@@ -29,6 +29,7 @@ Admin billing: the reading grid, and generation.
 | fn | `planRateChange` | What changing a month's rate would do to the bills already in it. |
 | fn | `changeRate` | Change the rate on a month, recalculating the bills already in it. |
 | fn | `saveReadings` |  |
+| fn | `splitCells` | One line into cells, on , ; or tab, respecting double quotes. |
 | fn | `parseReadings` | Parse pasted or uploaded readings. |
 | fn | `normaliseFlat` |  |
 
@@ -902,4 +903,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-482 exports. 224 have no doc comment.
+483 exports. 224 have no doc comment.

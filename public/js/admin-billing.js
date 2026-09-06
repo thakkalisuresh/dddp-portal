@@ -633,8 +633,9 @@ function importPanel(tbody, out, refresh) {
           'CSV, TSV or plain text. In Excel or Sheets choose File → Save as / '
           + 'Download → CSV. ',
           sample,
-          ' — it lists every flat with last month’s reading beside it, so the '
-          + 'meter walk is a matter of filling the last column in.')),
+          ' — it lists every billed flat with the person billed and last month’s '
+          + 'reading beside it, so the meter walk is a matter of filling the last '
+          + 'column in.')),
       el('p', { class: 'label' }, 'Or paste it'),
       box,
       el('div', { class: 'row' },
@@ -829,13 +830,21 @@ async function flush() {
   const flats = batch.map((b) => b.flat);
 
   try {
-    await api.admin.saveReadings(period, batch);
+    const result = await api.admin.saveReadings(period, batch);
     for (const { flat, reading } of batch) {
       // Only clear if unchanged since the snapshot, or an edit made mid-flight
       // would be dropped without ever being sent.
       if (pending.get(flat) === reading) pending.delete(flat);
     }
-    markRows(flats.filter((f) => !pending.has(f)), 'msg--ok', '✓ saved');
+
+    // A 200 IS NOT "ALL OF THEM SAVED". The server writes the rows it can and
+    // names the ones it would not — a flat that is no longer billed, or a
+    // number below zero. Marked here rather than left to the ✓, because a tick
+    // on a row the server refused is the worst of the three outcomes.
+    const refused = new Set((result?.rejected ?? []).map((r) => r.flat));
+    const kept = flats.filter((f) => !pending.has(f) && !refused.has(f));
+    markRows(kept, 'msg--ok', '✓ saved');
+    if (refused.size) markRows([...refused], 'msg--error', 'not saved');
   } catch (err) {
     // NOT EVERY FAILURE IS WORTH RETRYING, and treating them alike is how a
     // safety net becomes a hammer. A locked month, a refused value, any 4xx:

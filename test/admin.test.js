@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   nextPeriod, previousPeriod, readMonthFor, parseReadings, normaliseFlat, jumpWarning, dropWarning,
+  saveReadings,
 } from '../functions/lib/admin.js';
 
 describe('period arithmetic', () => {
@@ -92,11 +93,11 @@ describe('parsing a pasted month', () => {
    */
   describe('a filled-in template goes back in', () => {
     // Exactly the columns api.admin.downloadTemplate writes.
-    const header = 'flat,floor,previous,reading';
+    const header = 'flat,resident,previous,reading';
 
     it('round-trips the template the app itself exports', () => {
       const { rows, errors } = parseReadings(
-        `${header}\n4A,4,5.817,6.900\n4B,4,2.94,3.500`, flats);
+        `${header}\n4A,Meera Menon,5.817,6.900\n4B,Rajesh Pillai,2.94,3.500`, flats);
       expect(rows).toEqual([
         { flat: '4A', reading: 6.900 },
         { flat: '4B', reading: 3.500 },
@@ -104,15 +105,60 @@ describe('parsing a pasted month', () => {
       expect(errors).toEqual([]);
     });
 
+    /**
+     * A COMMA INSIDE A NAME USED TO IMPORT SILENTLY.
+     *
+     * The splitter had no notion of a quoted field, so "Nair, R" became two
+     * cells and every column after it moved one to the left. `reading` then
+     * held the PREVIOUS reading — a real number, in range, indistinguishable
+     * from a real meter walk. The flat billed zero and nothing said so.
+     */
+    it('reads a quoted name containing the separator as one cell', () => {
+      const { rows, errors } = parseReadings(
+        `${header}\n4A,"Nair, R",5.817,6.900`, flats);
+      expect(rows).toEqual([{ flat: '4A', reading: 6.900 }]);
+      expect(errors).toEqual([]);
+    });
+
+    it('reads a doubled quote inside a quoted name', () => {
+      const { rows, errors } = parseReadings(
+        `${header}\n4A,"Nair ""Raju"", R",5.817,6.900`, flats);
+      expect(rows).toEqual([{ flat: '4A', reading: 6.900 }]);
+      expect(errors).toEqual([]);
+    });
+
+    /**
+     * An UNQUOTED comma cannot be resolved by any splitter — the row is
+     * genuinely ambiguous. Refused by name, because the alternative is what
+     * used to happen: last month's number imported as this month's.
+     */
+    it('refuses a row carrying more columns than the header declared', () => {
+      const { rows, errors } = parseReadings(
+        `${header}\n4A,Nair, R,5.817,6.900`, flats);
+      expect(rows).toEqual([]);
+      expect(errors).toEqual([{ line: '4A,Nair, R,5.817,6.900', flat: '4A', reason: 'wrong-columns' }]);
+    });
+
+    /**
+     * FEWER is not an error. Some exporters drop trailing empty cells, and a
+     * flat nobody has read yet is exactly that row.
+     */
+    it('accepts a row whose trailing empty cells were dropped', () => {
+      const { rows, errors } = parseReadings(
+        `${header}\n4A,Meera Menon,5.817,6.900\n4B,Rajesh Pillai,2.94`, flats);
+      expect(rows).toEqual([{ flat: '4A', reading: 6.900 }]);
+      expect(errors).toEqual([]);
+    });
+
     it('does not report the header row as a failure', () => {
-      const { errors } = parseReadings(`${header}\n4A,4,5.817,6.900`, flats);
+      const { errors } = parseReadings(`${header}\n4A,Meera Menon,5.817,6.900`, flats);
       expect(errors).toEqual([]);
     });
 
     it('treats a blank reading as not-yet-read, not as a bad row', () => {
       // The meter walk is done in passes; half a template is the normal state.
       const { rows, errors } = parseReadings(
-        `${header}\n4A,4,5.817,6.900\n4B,4,2.94,`, flats);
+        `${header}\n4A,Meera Menon,5.817,6.900\n4B,Rajesh Pillai,2.94,`, flats);
       expect(rows).toEqual([{ flat: '4A', reading: 6.900 }]);
       expect(errors).toEqual([]);
     });
@@ -123,7 +169,7 @@ describe('parsing a pasted month', () => {
     });
 
     it('still catches an unknown flat when there is a header', () => {
-      const { rows, errors } = parseReadings(`${header}\n9F,9,1.0,2.110`, flats);
+      const { rows, errors } = parseReadings(`${header}\n9F,Nobody,1.0,2.110`, flats);
       expect(rows).toEqual([]);
       expect(errors[0].reason).toBe('unknown-flat');
     });
@@ -197,5 +243,98 @@ describe('implausibly LOW warning — the error nobody reports', () => {
   it('says nothing without enough history to judge against', () => {
     expect(dropWarning(0.4, [])).toBe(null);
     expect(dropWarning(0.4, [4.38])).toBe(null);
+  });
+});
+
+
+/**
+ * What may reach the readings table.
+ *
+ * These are not reachable from the grid — it only ever sends flats it drew and
+ * numbers from a number box. They are reachable by anything else holding an
+ * admin cookie, which on 2026-09-05 was enough to store a reading against a
+ * flat that is not billed, and a meter total below zero.
+ */
+describe('saveReadings refuses what a meter could not have shown', () => {
+  const rows = {
+    'SELECT status FROM periods WHERE period = ?': { status: 'open' },
+  };
+
+  function fakeDb() {
+    const written = [];
+    return {
+      written,
+      DB: {
+        prepare(sql) {
+          return {
+            bind: (...args) => ({
+              first: async () => rows[sql] ?? null,
+              all: async () => ({ results: [] }),
+              _sql: sql,
+              _args: args,
+            }),
+            all: async () => ({
+              results: sql.includes('FROM flats')
+                ? [{ flat: '4A', active: 1 }, { flat: '4B', active: 1 }, { flat: '6G', active: 0 }]
+                : [],
+            }),
+          };
+        },
+        batch: async (stmts) => { written.push(...stmts.map((s) => s._args)); },
+      },
+    };
+  }
+
+  const save = async (entries) => {
+    const db = fakeDb();
+    const result = await saveReadings(db, '2026-09', entries, 1);
+    return { ...result, written: db.written };
+  };
+
+  it('writes a reading for a billed flat', async () => {
+    const r = await save([{ flat: '4A', reading: 21.9 }]);
+    expect(r.saved).toBe(1);
+    expect(r.rejected).toEqual([]);
+  });
+
+  /**
+   * A batch with nothing valid in it THROWS, rather than returning a quiet
+   * count of zero. Every one of these is a single-row batch, which is what
+   * autosave sends as the treasurer types.
+   */
+  const refuse = async (entries) => {
+    let caught = null;
+    try { await save(entries); } catch (err) { caught = err; }
+    return caught;
+  };
+
+  it('refuses a flat that is not part of the building', async () => {
+    // It used to reach the INSERT, break its foreign key, and surface as
+    // DDP-SYS-001 — our fault, logged and alerted, for their typo.
+    const err = await refuse([{ flat: '4AA', reading: 21.9 }]);
+    expect(err?.code).toBe('DDP-BILL-019');
+    expect(err?.detail?.rejected).toEqual([{ flat: '4AA', reason: 'unknown-flat' }]);
+  });
+
+  it('refuses a flat that is not being billed', async () => {
+    // Written happily before, then invisible: the grid only draws active flats.
+    const err = await refuse([{ flat: '6G', reading: 21.9 }]);
+    expect(err?.detail?.rejected).toEqual([{ flat: '6G', reason: 'not-billed' }]);
+  });
+
+  it('refuses a reading below zero', async () => {
+    const err = await refuse([{ flat: '4A', reading: -5 }]);
+    expect(err?.detail?.rejected).toEqual([{ flat: '4A', reason: 'negative' }]);
+  });
+
+  it('refuses something that is not a number at all', async () => {
+    const err = await refuse([{ flat: '4A', reading: 'abc' }]);
+    expect(err?.detail?.rejected).toEqual([{ flat: '4A', reason: 'not-a-number' }]);
+  });
+
+  it('writes nothing at all when every row is bad', async () => {
+    const err = await refuse([{ flat: '4AA', reading: 1 }, { flat: '6G', reading: 2 }]);
+    expect(err?.code).toBe('DDP-BILL-019');
+    expect(err?.detail?.rejected.map((r) => r.flat)).toEqual(['4AA', '6G']);
   });
 });

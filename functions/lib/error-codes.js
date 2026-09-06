@@ -92,6 +92,9 @@ export const ERROR_CODES = {
   // The outbox could not tell somebody their bill exists. One row, not the
   // month: the drain carries on and the cron sweeps it again.
   'DDP-BILL-018': { severity: 'warn',  message: 'Bill announcement could not be emailed to the resident' },
+  'DDP-BILL-019': { severity: 'warn',
+    message: 'Reading refused — unknown flat, a flat that is not billed, or a value below zero' },
+  'DDP-BILL-020': { severity: 'warn',  message: 'Readings saved into a month that was never opened' },
 
   // ── MAIL ───────────────────────────────────────────────────────────────
   'DDP-MAIL-001': { severity: 'error', message: 'Reset email could not be sent' },

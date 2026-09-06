@@ -116,6 +116,9 @@ const EXPECTED = {
   'DDP-BILL-010': [409, "This month has no rate of its own. Enter it — rates aren't carried forward."],
   'DDP-BILL-001': [409, 'Some readings are missing or need fixing. Check the grid before generating.'],
   'DDP-BILL-002': [409, 'A reading is lower than last month. Meters do not run backwards.'],
+  'DDP-BILL-019': [400, 'Those readings are for flats that are not being billed, or are not '
+    + 'numbers a meter could show.'],
+  'DDP-BILL-020': [409, 'That month has not been opened yet. Open it on the Billing tab first.'],
   'DDP-BILL-008': [409, 'A late fee must be a whole number of rupees.'],
   'DDP-AUTH-007': [403, 'Credentials cannot be changed while viewing as another resident.'],
   // The four password-policy refusals carry their own wording — the minimum
