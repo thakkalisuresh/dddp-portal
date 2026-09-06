@@ -773,16 +773,6 @@ Dialling codes, and what a valid national number looks like under each.
 | fn | `splitMobile` | Split an E.164 number into its dialling code and the rest. |
 | fn | `countryName` | The country's own name for itself is not what an admin here is scanning for; the English name is. |
 
-### `public/js/country-hint.js`
-
-"Overseas? Include your country code" — shown to the people who need it and to nobody else.
-
-| | Export | What it does |
-|---|---|---|
-| fn | `rememberFormatKnown` | Record that this browser has typed a working number, after a login or a reset succeeds. |
-| fn | `showCountryHint` | Reveal the hint regardless of where the device claims to be, and regardless of whether this browser has logged in before. |
-| fn | `applyCountryHint` | Show the hint on load if the device looks like it is outside India and this browser has not already proved it knows the format. |
-
 ### `public/js/god-dash.js`
 
 The god-mode dashboard — is anyone actually using this portal? The activity log below it answers "what happened to 4A on Tuesday".
@@ -913,4 +903,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-486 exports. 224 have no doc comment.
+483 exports. 224 have no doc comment.
