@@ -25,6 +25,22 @@ import { noticeHtml, noticeSignature } from './notice-doc.js';
 export const TABLES = [
   'flats', 'owners', 'periods', 'readings', 'meter_changes', 'bills',
   'payment_intents', 'payment_proofs', 'notices', 'comments', 'attachments',
+  // Polls, parents first: an option points at a poll and a vote at both.
+  //
+  // `poll_votes` IS in this list but is NOT dumped whole — see DUMP_QUERIES.
+  // While a poll is open its ballot must not leave D1, or the running count
+  // this design hides from everybody but the superadmin can simply be read out
+  // of last night's CSV. Once the poll has closed the ballot rides the bundle
+  // like anything else.
+  //
+  // THAT IS ONLY SAFE BECAUSE THE BUNDLE GOES TO THE RESTRICTED FOLDER. See
+  // committeeFolder() below: the nightly CSV goes to GOOGLE_BACKUP_FOLDER_ID,
+  // whose reader list is short, while proofs and notice attachments go to a
+  // folder SHARED with the committee. If GOOGLE_COMMITTEE_FOLDER_ID is unset
+  // the two are the same place and this exports who-voted-what to every
+  // committee member. `committeeFolderSeparate()` detects it and doctor
+  // reports it; it must be true before polls ship.
+  'polls', 'poll_options', 'poll_votes', 'poll_mail',
   'committee', 'messages', 'contact_requests',
   'statement_sessions', 'statement_credits', 'reconciliations',
   'bill_edit_requests', 'bill_edit_approvals',
@@ -103,9 +119,28 @@ export function stripSecrets(rows) {
   });
 }
 
+/**
+ * Tables that are NOT dumped whole, and why the exception earns its place.
+ *
+ * `SELECT *` is the default and should stay the default — a table exporting
+ * only some of its rows is a table whose backup does not restore it. The one
+ * exception: a poll's ballot is secret while the poll is open, and a nightly
+ * CSV of it would hand the running count to anybody who can open the bundle.
+ *
+ * The omitted rows are not lost. They arrive in the first bundle taken after
+ * the poll closes, which is the whole of the 2026-09-09 decision.
+ */
+export const DUMP_QUERIES = {
+  poll_votes:
+    `SELECT v.* FROM poll_votes v
+       JOIN polls p ON p.id = v.poll_id
+      WHERE p.closed_at IS NOT NULL
+      ORDER BY v.id`,
+};
+
 export async function dumpTable(env, table) {
   if (!TABLES.includes(table)) fail('DDP-SYS-003', { table });
-  const rows = await env.DB.prepare(`SELECT * FROM ${table}`).all();
+  const rows = await env.DB.prepare(DUMP_QUERIES[table] ?? `SELECT * FROM ${table}`).all();
   return toCsv(stripSecrets(rows.results ?? []));
 }
 

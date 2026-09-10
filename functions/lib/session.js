@@ -166,6 +166,20 @@ export function committeeMayUse(method, path) {
   // to the poster's own notice in the handler, which is also where a comment
   // attachment — a resident's photograph, and a moderation act — is refused.
   if (method === 'DELETE' && /^\/api\/admin\/attachments\/\d+$/.test(path)) return true;
+
+  // Polls, on the same terms as notices: a committee member may put a question
+  // to the building, and may close or publish THE POLLS THEY POSTED. That
+  // second narrowing needs the row, so it happens in managePoll rather than
+  // here — reaching a route is not being allowed to change what is behind it.
+  //
+  // The ballot is deliberately absent. It is the superadmin's alone, and the
+  // router checks that separately; a committee member must not reach it even
+  // for a poll they created.
+  if (method === 'POST' && path === '/api/admin/polls') return true;
+  if (method === 'PATCH' && /^\/api\/admin\/polls\/\d+$/.test(path)) return true;
+  if (method === 'POST' && /^\/api\/admin\/polls\/\d+\/(close|publish|unpublish)$/.test(path)) {
+    return true;
+  }
   return false;
 }
 

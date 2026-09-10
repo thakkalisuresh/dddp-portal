@@ -64,6 +64,14 @@ describe('the one gate a committee member gets past', () => {
     ['GET', '/api/admin/notices/archive'],
     ['GET', '/api/admin/notices/12/archived'],
     ['DELETE', '/api/admin/attachments/3'],
+    // Polls, on the same terms as notices. Managing is narrowed a second time
+    // to the poster's own poll inside managePoll, which needs the row.
+    ['POST', '/api/admin/polls'],
+    ['POST', '/api/admin/polls/7/close'],
+    ['POST', '/api/admin/polls/7/publish'],
+    ['POST', '/api/admin/polls/7/unpublish'],
+    // Editing, narrowed to the poster's own poll in patchPoll.
+    ['PATCH', '/api/admin/polls/7'],
   ];
 
   for (const [method, path] of allowed) {
@@ -89,6 +97,12 @@ describe('the one gate a committee member gets past', () => {
     // permission, destroying a notice is another and lives under /god anyway.
     ['DELETE', '/api/admin/notices/12'],
     ['PUT', '/api/admin/notices'],
+    // THE BALLOT IS NOT ON THE LIST, and this is the test that keeps it off.
+    // Who voted for what is the superadmin's alone; a committee member must be
+    // refused even on a poll they created themselves.
+    ['GET', '/api/admin/polls/7/ballot'],
+    // Deleting a poll is not managing one.
+    ['DELETE', '/api/admin/polls/7'],
   ];
 
   for (const [method, path] of refused) {
@@ -103,6 +117,10 @@ describe('the one gate a committee member gets past', () => {
     expect(committeeMayUse('PATCH', '/api/admin/notices/12/purge')).toBe(false);
     expect(committeeMayUse('POST', '/api/admin/notices/12/attachments/5')).toBe(false);
     expect(committeeMayUse('POST', '/api/admin/noticesXX')).toBe(false);
+    // Same anchoring on the poll routes: nothing may hang off the action.
+    expect(committeeMayUse('POST', '/api/admin/polls/7/close/now')).toBe(false);
+    expect(committeeMayUse('POST', '/api/admin/pollsXX')).toBe(false);
+    expect(committeeMayUse('POST', '/api/admin/polls/7/ballot')).toBe(false);
   });
 
   it('does not match a non-numeric id', () => {

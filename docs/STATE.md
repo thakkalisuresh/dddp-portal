@@ -1,4 +1,4 @@
-# Where this is, 12 August 2026
+# Where this is, 9 September 2026
 
 What is built, what is live, what is half-done. Figures read from production
 rather than remembered.
@@ -11,10 +11,15 @@ The portal is **built and deployed**. It has never billed a real month.
 
 ## Production right now
 
-**https://diamondpark.pages.dev** · 1200 tests · `npm run doctor` reports
+**https://diamondpark.pages.dev** · 1418 tests · `npm run doctor` reports
 **0 failing**, 2 warnings.
 
-Figures below read from production on 2026-08-20.
+Figures below read from production on 2026-08-20, **except the two marked
+`repo`**, which are facts about this checkout and were refreshed 2026-09-09.
+
+> **The production figures have not been re-read since 2026-08-20** and at
+> least one has certainly moved — the reset-link work shipped 0035. Run
+> `npm run doctor` before trusting the table rather than this sentence.
 
 > **The Billing tab is live.** Deployed 2026-08-20 with migration
 > `0033_bill_announcements.sql` applied first, since it creates the table
@@ -28,8 +33,9 @@ Figures below read from production on 2026-08-20.
 | Bills | 898 — all demo (0 belong to a real account) |
 | Readings | 990 |
 | Months | 10 — all demo |
-| Migrations applied | 33 |
-| Error codes | 93 |
+| Migrations applied | 33 — **stale**, see the note above; 36 exist in the repo |
+| Error codes | 105 · `repo` |
+| Tests | 1418 · `repo` |
 
 > ### The demo data is live
 >
@@ -187,6 +193,32 @@ export.
 `npm run doctor` self-checks, generated error-code and function references with
 drift tests.
 
+**Polls.** Built 2026-09-09 and **verified end to end against a local D1**, not
+only by tests: a poll created through the real composer, voted on, closed,
+published, and its ballot opened, with every gate checked on the wire. One vote
+per flat; owners vote and a per-poll switch decides whether tenants may watch;
+nothing about the count is visible while voting is open except to the
+superadmin, and nothing in the interface says so. Design and the reasoning
+behind all of it: `docs/POLLS-PLAN.md`. Invariants 8 and 9 in the PRD.
+
+What that verification did **not** cover, and it is worth being exact:
+
+* **No poll email has ever been sent.** The three letters and their drain are
+  written and tested, but Gmail is still unconfigured — the same blocker
+  `/forgot` has had since phase 8.
+* **The tenant path has never run.** The dev seed has no tenants, so
+  `show_tenants` and the read-only voting state are unit-tested and nothing
+  more.
+* **Nothing is deployed.** No poll has existed in production. `0036_polls.sql`
+  must be applied **before** the code that reads it ships, and both halves
+  deployed — Pages alone leaves the cron on old code.
+* **`GOOGLE_COMMITTEE_FOLDER_ID` must be confirmed separate before this ships.**
+  Ballots ride the nightly CSV bundle once a poll closes, and that bundle is
+  meant for the restricted folder. If the variable is unset it falls back to the
+  folder **shared with the committee**, which hands every committee member the
+  ballot the design keeps from them. `committeeFolderSeparate()` detects it and
+  `doctor` reports it.
+
 ## Built but inert
 
 **Self-service password reset** (`/forgot`) — live, accepts requests, sends
@@ -287,6 +319,10 @@ the cutover meter walk.
 
 **Run `npm run doctor` after generating the first real month and before any
 resident sees a bill.**
+
+Polls are the second gap, and smaller: verified against a local database but
+never against production, never with a tenant, and no poll email has ever left
+the building. See the polls entry under *Built and verified* for the exact list.
 
 ## What is actually blocking
 

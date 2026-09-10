@@ -10,7 +10,7 @@ import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
 import { $, el, esc, renderViewBanner, showError, setChildren, askFirst } from './ui.js';
-import { stampLabel } from './i18n.js';
+import { stampLabel, closesIn } from './i18n.js';
 import { renderMarkdown } from './markdown.js';
 import { prepareUpload, makeThumbnail } from './compress.js';
 
@@ -50,6 +50,40 @@ async function init() {
     if (err instanceof ApiError && err.status === 401) { location.href = '/login'; return; }
     showError(main, err);
   }
+}
+
+
+/**
+ * Open polls, above the notices.
+ *
+ * Only the OPEN ones, and only ever three. A poll is a thing to do; a closed
+ * one is a thing to read, and belongs in the list with everything else rather
+ * than at the top competing with the board. Without the cap, a building that
+ * ran six polls in a month would push its notices off the first screen.
+ *
+ * The chip is the only nudge here, and it is about the reader's own flat.
+ * Nothing on this strip says how many others have voted, because that is the
+ * number the whole feature hides.
+ */
+function pollStrip(polls) {
+  const open = polls.filter((p) => !p.closed).slice(0, 3);
+  if (!open.length) return null;
+
+  return el('div', { class: 'stack' },
+    el('p', { class: 'label' }, open.length === 1 ? 'Open poll' : 'Open polls'),
+    ...open.map((p) => el('a', { class: 'card', href: `/polls?id=${p.id}` },
+      el('div', { class: 'row--between' },
+        el('b', {}, p.title),
+        p.voted
+          ? el('span', { class: 'chip chip--paid' }, 'Voted')
+          : p.canVote
+            ? el('span', { class: 'chip chip--awaiting' }, 'Not voted')
+            : null),
+      el('p', { class: 'small muted' }, closesIn(p.closesAt)))),
+    polls.length > open.length
+      ? el('p', {}, el('a', { class: 'linkish', href: '/polls' }, 'All polls'))
+      : null,
+    el('hr', { class: 'rule' }));
 }
 
 /**
@@ -133,7 +167,17 @@ function withdrawnNotices() {
 }
 
 async function renderList() {
-  const { notices } = await api.notices();
+  // Both, together. Polls live on this board — see docs/POLLS-PLAN.md — and a
+  // poll fetched alongside means a resident meets it in the same scroll as the
+  // notice that explains it, rather than on a screen they have to know exists.
+  //
+  // The poll list is allowed to fail on its own. A broken polls endpoint must
+  // not cost a resident the noticeboard, which is the older and more important
+  // of the two.
+  const [{ notices }, polls] = await Promise.all([
+    api.notices(),
+    api.polls().then((r) => r.polls).catch(() => []),
+  ]);
   // setChildren, NOT the native replaceChildren: the admin link below is a
   // `cond ? node : null`, and the native method stringifies null, so a RESIDENT
   // — the one person who never sees the link — got the word "null" printed
@@ -160,6 +204,10 @@ async function renderList() {
     // composer in front of them every time they come to read.
     (isCommittee && !isAdmin) || (isAdmin && manageOpen) ? noticeComposer() : null,
     isAdmin && manageOpen ? withdrawnNotices() : null,
+    (isCommittee && !isAdmin) || (isAdmin && manageOpen)
+      ? el('p', {}, el('a', { class: 'linkish', href: '/polls?new=1' }, '+ Put a question to the building'))
+      : null,
+    ...(polls.length ? [pollStrip(polls)] : []),
     ...(notices.length
       ? notices.map((n) =>
           el('div', { class: `notice ${n.kind === 'event' ? 'notice--event' : ''}` },

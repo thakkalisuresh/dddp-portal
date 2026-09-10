@@ -119,6 +119,7 @@ Nightly backup, and retention.
 | fn | `toCsvValue` | RFC 4180. |
 | fn | `toCsv` |  |
 | fn | `stripSecrets` |  |
+| const | `DUMP_QUERIES` | Tables that are NOT dumped whole, and why the exception earns its place. |
 | fn | `dumpTable` |  |
 | fn | `dumpAll` |  |
 | fn | `bundle` | One readable file rather than a zip: Workers have no zip primitive, adding a library for it is silly at this size, and a single annotated CSV bundle is something a treasurer can actually scroll through. |
@@ -465,6 +466,58 @@ Notices and their comments.
 | fn | `addComment` |  |
 | fn | `setCommentHidden` |  |
 
+### `functions/lib/poll-mail.js`
+
+The three letters a poll writes, and the drain that sends them.
+
+| | Export | What it does |
+|---|---|---|
+| const | `DRAIN_SIZE` |  |
+| const | `MAX_ATTEMPTS` |  |
+| fn | `pollEmail` | NO COUNTS IN ANY OF THESE. |
+| fn | `drainPollMail` | Send up to `limit` queued letters, for every poll that has any. |
+| fn | `pollMailPending` |  |
+
+### `functions/lib/poll-text.js`
+
+A closing time, written for an email.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `deadlineText` |  |
+
+### `functions/lib/polls.js`
+
+Polls — a question the committee puts to the building.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `isClosed` | Has this poll closed? CLOSING IS EVALUATED ON READ, and this function is why. |
+| fn | `midpoint` | The midpoint of a poll's own life, which is when the reminder goes out. |
+| fn | `canSeePoll` | May this viewer see the poll at all? THE ONE PLACE THE RULE LIVES, for the same reason canSeeNotice is: the list, the single fetch, the vote endpoint and the email recipients all ask this function rather than repeating the condition. |
+| fn | `canVote` | May this viewer cast their flat's vote? Owners only, on every poll, with no per-poll exception — decided 2026-09-09. |
+| fn | `isCommittee` |  |
+| fn | `canManagePoll` | May this person close, publish or edit this poll? The asymmetry 0030 established, applied to a second object: an admin manages the whole board, a committee member manages what they posted. |
+| fn | `canSeeCount` | May this viewer see the count right now? Residents and admins alike see nothing until the poll is closed AND published. |
+| fn | `tally` | The count, and the tie. |
+| fn | `assertCanClose` | Reject a state change that must not happen, loudly. |
+| fn | `assertCanVote` |  |
+| fn | `queuePollMail` | Queue one mailing. |
+| fn | `queuePollReminder` | The reminder goes only to flats that have NOT voted. |
+| fn | `createPoll` |  |
+| fn | `listPolls` | Every poll this viewer may see, newest first, with their flat's answer. |
+| fn | `getPoll` | One poll, with its options, this flat's answer, and the count if — and only if — this viewer may see it. |
+| fn | `castVote` | Cast or change a flat's vote. |
+| fn | `updatePoll` | Edit a poll that is still open. |
+| fn | `closePoll` |  |
+| fn | `publishPoll` | Publish the count to residents. |
+| fn | `unpublishPoll` |  |
+| fn | `getBallot` | The ballot: which flat voted for what, and which owner cast it. |
+| fn | `sweepClosures` | Polls whose time has passed but whose row still says open. |
+| fn | `sweepReminders` |  |
+| const | `BALLOT_RETENTION_DAYS` | Ballots are pruned six months after the poll closed. |
+| fn | `pruneBallots` |  |
+
 ### `functions/lib/proof.js`
 
 Payment proofs.
@@ -793,6 +846,8 @@ Formatting for the things a resident reads: money, weight, months, dates.
 | fn | `dayLabel` |  |
 | fn | `timeLabel` |  |
 | fn | `stampLabel` | When something was posted, at the precision a reader actually wants. |
+| fn | `deadlineLabel` |  |
+| fn | `closesIn` | 'Closes in 3 days'. |
 
 ### `public/js/markdown.js`
 
@@ -833,6 +888,26 @@ What counts as an acceptable password, in one place.
 | fn | `personalTokens` | Everything about this account that an attacker could read off the roster. |
 | fn | `checkPassword` | Returns null when the password is acceptable, or `{ code, message }` describing the first thing wrong with it. |
 | fn | `describePolicy` |  |
+
+### `public/js/poll-rules.js`
+
+The rules a poll must obey, shared by the browser and the Worker.
+
+| | Export | What it does |
+|---|---|---|
+| const | `MAX_TITLE` | The rules a poll must obey, shared by the browser and the Worker. |
+| const | `MAX_BODY` |  |
+| const | `MAX_OPTION` |  |
+| const | `MIN_OPTIONS` |  |
+| const | `MAX_OPTIONS` |  |
+| fn | `isYesNoPair` |  |
+| fn | `validatePoll` | Everything that must be true before a poll may be posted. |
+| const | `DRAIN_SIZE` | How fast this portal can mail the building, and what that means for a poll. |
+| const | `CRON_RUNS_PER_DAY` |  |
+| const | `SENDS_PER_DAY` |  |
+| fn | `deliveryWarnings` | Warnings the creation form shows BEFORE a short poll is posted. |
+| fn | `validateBallot` | Is this ballot one the poll will accept? Checked here rather than in the handler so the rule can be tested without a database, and so the client and the server cannot disagree about it — the form greys its Submit using the same function. |
+| fn | `optionsFrozen` | Are the options frozen? Title and description stay editable for ever; the options stop being editable the moment the first vote is cast. |
 
 ### `public/js/qr.js`
 
@@ -903,4 +978,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-483 exports. 224 have no doc comment.
+530 exports. 243 have no doc comment.
