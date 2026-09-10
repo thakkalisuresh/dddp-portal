@@ -174,7 +174,19 @@ const HEADER_PATTERNS = {
   debit: /debit|withdraw|dr\s*amount|amount\s*\(dr\)/i,
   amount: /^amount|transaction amount|txn amount/i,
   type: /\b(dr\s*\/?\s*cr|cr\s*\/?\s*dr|type|indicator)\b/i,
-  reference: /\b(ref|utr|rrn|cheque|chq|instrument)\b/i,
+  // `ref(erence)?s?`, not a bare `ref`: the word boundary after "ref" meant the
+  // single commonest heading a bank prints for this column -- "Reference" --
+  // was not recognised, and neither was "Transaction Reference".
+  //
+  // That is not a cosmetic miss. With no reference column, pass 1 of the
+  // matcher never runs and every credit falls through to amount-and-date. A
+  // statement whose credits are all present then reports the residents who
+  // paid them under "Claimed, but no money arrived" -- the screen accuses
+  // neighbours of lying about a payment that is sitting on the statement.
+  //
+  // Spelled out rather than `ref\w*`, which would swallow a "Refund" column
+  // and take it for the reference.
+  reference: /\b(ref(erence)?s?|utr|rrn|cheque|chq|instrument)\b/i,
 };
 
 /** Bank exports bury the table under account-holder preamble. Find the real header row. */

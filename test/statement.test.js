@@ -103,6 +103,34 @@ describe('credits from a statement', () => {
     expect(() => creditsFromCsv(debitsOnly)).toThrow(/DDP-RECON-002/);
   });
 
+  /**
+   * The column headed with the whole word.
+   *
+   * `\b(ref|...)\b` matched the abbreviation and not "Reference", which is what
+   * most banks actually print. The damage was downstream and silent: with no
+   * reference column the matcher skips its reference pass, every credit falls
+   * through to amount-and-date, and residents who did pay are reported under
+   * "Claimed, but no money arrived".
+   */
+  it('finds the reference column however the bank spells it', () => {
+    for (const heading of ['Reference', 'Transaction Reference', 'Ref No', 'UTR', 'RRN']) {
+      const csv = `Txn Date,Narration,${heading},Debit,Credit\n`
+        + '05/08/2026,UPI/SOMEBODY/gas,621932447570,,494.00';
+      const { credits } = creditsFromCsv(csv);
+      expect(credits, heading).toHaveLength(1);
+      expect(credits[0].reference, heading).toBe('621932447570');
+    }
+  });
+
+  it('does not mistake a Refund column for the reference', () => {
+    const csv = 'Txn Date,Narration,Refund,Debit,Credit\n'
+      + '05/08/2026,UPI/SOMEBODY/gas,SOMETHING,,494.00';
+    const { credits } = creditsFromCsv(csv);
+    // The narration still carries a reference or it carries none; what must not
+    // happen is the Refund cell being read as one.
+    expect(credits[0].reference).not.toBe('SOMETHING');
+  });
+
   it('warns when it had to guess that positive means money in', () => {
     const noCreditColumn = 'Date,Description,Amount\n05/08/2026,UPI/CR/621932447570/X,494.00';
     const { credits, warnings } = creditsFromCsv(noCreditColumn);
