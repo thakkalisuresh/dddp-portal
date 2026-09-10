@@ -22,8 +22,12 @@
  */
 
 import { mailToken, sendEmail, mailConfigured } from './mailer.js';
-import { renderEmail, para, action, aside, SITE } from './email-template.js';
-import { deadlineText } from './poll-text.js';
+import { renderEmail, para, heading, figure, details, action, aside, SITE }
+  from './email-template.js';
+import { deadlineText, deadlineShort } from './poll-text.js';
+// The same counting the portal does, so a letter and the screen can never
+// disagree about a published result.
+import { tally } from './polls.js';
 
 /** Twenty sends plus one token refresh is twenty-one. See the header. */
 export const DRAIN_SIZE = 20;
@@ -35,22 +39,49 @@ const permanentFailure = (reason = '') => /\b4\d\d\b/.test(String(reason));
 /* ── the letters ───────────────────────────────────────────────────────── */
 
 /**
- * NO COUNTS IN ANY OF THESE. Not the turnout, not the split, not "38 flats
- * have voted so far". An email is the one surface the committee cannot take
- * back, and a figure that leaks here leaks to ninety inboxes at once.
+ * NO COUNT LEAVES THE BUILDING BEFORE THE COMMITTEE PUBLISHES ONE.
+ *
+ * `opened` and `reminder` carry the question, the options and the deadline and
+ * nothing else — no turnout, no split, no "38 flats have voted so far". An
+ * email is the one surface the committee cannot take back, and a figure that
+ * leaks here leaks to ninety inboxes at once.
+ *
+ * `result` is the exception and the whole point of that letter: by the time it
+ * is queued, `publishPoll` has already made the count visible to every resident
+ * who could vote. Withholding it in the email would mean sending somebody a
+ * notification that a number exists.
+ *
+ * THE OPTIONS ARE IN THE LETTER because the alternative is asking a resident to
+ * open a link to find out what the question even offers. A first version of
+ * this sent the title and a button, which is a notification rather than a
+ * letter. It cannot be a ballot — nobody votes from an inbox — but it can be
+ * enough to decide with.
  */
-export function pollEmail(kind, { title, closesAt, pollId, origin = SITE }) {
+export function pollEmail(kind, {
+  title, body = '', closesAt, pollId, origin = SITE, options = [], result = null,
+}) {
   const url = `${origin}/polls?id=${pollId}`;
+
+  // Option label on the left, its note on the right. An option with no note
+  // leaves that cell empty, which reads as a plain hairline-separated list
+  // rather than as something missing.
+  const optionRows = options.length
+    ? [heading(options.length === 2 ? 'The two options' : `The ${options.length} options`),
+       details(options.map((o) => [o.label, o.sub ?? '']))]
+    : [];
 
   if (kind === 'opened') {
     return {
       subject: `Poll: ${title}`,
+      preview: `Voting closes ${deadlineText(closesAt)}.`,
       blocks: [
         para('The committee has put a question to the building.'),
-        para(title),
-        para(`Voting closes ${deadlineText(closesAt)}.`),
+        ...(body ? [para(body)] : []),
+        ...optionRows,
+        figure(deadlineShort(closesAt), 'voting closes · IST'),
         action('Vote now', url),
-        aside('One vote per flat. Results are not shown while voting is open.'),
+        aside('One vote per flat, and it belongs to the flat’s owner. Results '
+          + 'are not shown while voting is open.'),
       ],
     };
   }
@@ -58,10 +89,11 @@ export function pollEmail(kind, { title, closesAt, pollId, origin = SITE }) {
   if (kind === 'reminder') {
     return {
       subject: `Your flat has not voted: ${title}`,
+      preview: `Voting closes ${deadlineText(closesAt)}.`,
       blocks: [
         para('This poll is halfway through and your flat has not voted yet.'),
-        para(title),
-        para(`Voting closes ${deadlineText(closesAt)}.`),
+        ...optionRows,
+        figure(deadlineShort(closesAt), 'voting closes · IST'),
         action('Vote now', url),
         // Said plainly, because a resident who has decided not to vote should
         // know this is the only chase they will get rather than bracing for
@@ -72,13 +104,33 @@ export function pollEmail(kind, { title, closesAt, pollId, origin = SITE }) {
     };
   }
 
+  // ── the result ────────────────────────────────────────────────────────
+  const counted = result?.options ?? [];
+  const top = Math.max(0, ...counted.map((o) => o.votes ?? 0));
+  const leaders = counted.filter((o) => (o.votes ?? 0) === top && top > 0);
+  const flats = result?.flats ?? 0;
+  const turnout = `${flats} of ${result?.flatsTotal ?? 0} flats voted`;
+
   return {
     subject: `Result: ${title}`,
+    preview: turnout,
     blocks: [
       para('The committee has published the result of a poll you could vote in.'),
-      para(title),
+      // A tie is reported and never resolved — the portal does not invent a
+      // casting vote it has no authority to give.
+      ...(leaders.length === 1
+        ? [figure(leaders[0].label, turnout)]
+        : leaders.length > 1
+          ? [para(`The vote is tied between ${leaders.map((o) => o.label).join(' and ')}. `
+              + 'The committee will decide from here.'), para(turnout)]
+          : [para('Nobody voted.')]),
+      ...(counted.length
+        ? [heading('Every option'),
+           details(counted.map((o) => [o.label, `${o.votes} ${o.votes === 1 ? 'flat' : 'flats'}`]))]
+        : []),
       action('See the result', url),
-      aside('The result is the count only. How each flat voted is not shown.'),
+      aside('The result is the count only. How each flat voted is not shown — '
+        + 'not to residents, and not to the committee.'),
     ],
   };
 }
@@ -92,9 +144,11 @@ export function pollEmail(kind, { title, closesAt, pollId, origin = SITE }) {
  */
 const renderPollEmail = (kind, poll, origin) => {
   const mail = pollEmail(kind, {
-    title: poll.title, closesAt: poll.closes_at, pollId: poll.id, origin,
+    title: poll.title, body: poll.body, closesAt: poll.closes_at,
+    pollId: poll.poll_id ?? poll.id, origin,
+    options: poll.options ?? [], result: poll.result ?? null,
   });
-  return renderEmail({ title: mail.subject, preview: poll.title, blocks: mail.blocks });
+  return renderEmail({ title: mail.subject, preview: mail.preview, blocks: mail.blocks });
 };
 
 /* ── the drain ─────────────────────────────────────────────────────────── */
@@ -113,7 +167,7 @@ export async function drainPollMail(env, { limit = DRAIN_SIZE, origin = SITE } =
 
   const { results } = await env.DB.prepare(
     `SELECT m.poll_id, m.owner_id, m.kind, m.attempts,
-            o.email, p.title, p.closes_at
+            o.email, p.title, p.body, p.closes_at
        FROM poll_mail m
        JOIN owners o ON o.id = m.owner_id
        JOIN polls  p ON p.id = m.poll_id
@@ -124,6 +178,13 @@ export async function drainPollMail(env, { limit = DRAIN_SIZE, origin = SITE } =
 
   const queue = results ?? [];
   if (!queue.length) return { sent: 0, failed: 0 };
+
+  // The letters name the options, so they have to be fetched — but ONCE per
+  // poll, not once per recipient. A drain is twenty letters about one or two
+  // polls, so this is two queries rather than twenty. D1 is counted against a
+  // separate internal allowance and does not compete for the subrequest budget,
+  // but twenty round trips for the same eight rows would still be silly.
+  const content = await pollContent(env, [...new Set(queue.map((r) => r.poll_id))]);
 
   // ONCE per drain. This line is the whole reason the outbox exists.
   const auth = await mailToken(env);
@@ -137,7 +198,7 @@ export async function drainPollMail(env, { limit = DRAIN_SIZE, origin = SITE } =
       await markMail(env, row, 'unreachable', row.attempts, null);
       continue;
     }
-    const mail = renderPollEmail(row.kind, row, origin);
+    const mail = renderPollEmail(row.kind, { ...row, ...content.get(row.poll_id) }, origin);
     const res = await sendEmail(env, {
       to: row.email, subject: mail.subject, text: mail.text, html: mail.html,
     }, auth.token);
@@ -158,6 +219,59 @@ export async function drainPollMail(env, { limit = DRAIN_SIZE, origin = SITE } =
   // drain reporting "18 reminders sent for poll 4" tells the reader that
   // eighteen flats had not voted, which is the turnout.
   return { sent, failed };
+}
+
+
+/**
+ * The options for each poll being mailed about, and the counts for the ones
+ * whose result has been published.
+ *
+ * THE COUNT IS FETCHED ONLY FOR A PUBLISHED POLL. Reading it for every poll and
+ * letting `pollEmail` decide what to print would put the running count of an
+ * OPEN poll one careless template edit away from ninety inboxes. The safest
+ * place for a secret is not in the letter's logic; it is out of the data the
+ * letter is built from.
+ */
+async function pollContent(env, pollIds) {
+  const out = new Map();
+  if (!pollIds.length) return out;
+  const marks = pollIds.map(() => '?').join(',');
+
+  const [{ results: options }, { results: published }, flats] = await Promise.all([
+    env.DB.prepare(
+      `SELECT id, poll_id, label, sub FROM poll_options
+        WHERE poll_id IN (${marks}) ORDER BY poll_id, sort`
+    ).bind(...pollIds).all(),
+    env.DB.prepare(
+      `SELECT id FROM polls WHERE id IN (${marks}) AND published_at IS NOT NULL`
+    ).bind(...pollIds).all(),
+    env.DB.prepare('SELECT COUNT(*) AS n FROM flats WHERE active = 1').first(),
+  ]);
+
+  for (const id of pollIds) out.set(id, { options: [], result: null });
+  for (const o of options ?? []) {
+    out.get(o.poll_id)?.options.push({ label: o.label, sub: o.sub });
+  }
+
+  const live = (published ?? []).map((r) => r.id);
+  if (!live.length) return out;
+
+  const { results: votes } = await env.DB.prepare(
+    `SELECT poll_id, option_id, flat FROM poll_votes
+      WHERE poll_id IN (${live.map(() => '?').join(',')})`
+  ).bind(...live).all();
+
+  for (const id of live) {
+    const mine = (votes ?? []).filter((v) => v.poll_id === id);
+    const rows = (options ?? []).filter((o) => o.poll_id === id);
+    const counted = tally(rows, mine);
+    out.get(id).result = {
+      options: counted.options,
+      flats: counted.flats,
+      flatsTotal: flats?.n ?? 0,
+    };
+  }
+  return out;
 }
 
 function markMail(env, row, status, attempts, error) {

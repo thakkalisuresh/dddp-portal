@@ -474,7 +474,7 @@ The three letters a poll writes, and the drain that sends them.
 |---|---|---|
 | const | `DRAIN_SIZE` |  |
 | const | `MAX_ATTEMPTS` |  |
-| fn | `pollEmail` | NO COUNTS IN ANY OF THESE. |
+| fn | `pollEmail` | NO COUNT LEAVES THE BUILDING BEFORE THE COMMITTEE PUBLISHES ONE. |
 | fn | `drainPollMail` | Send up to `limit` queued letters, for every poll that has any. |
 | fn | `pollMailPending` |  |
 
@@ -484,6 +484,7 @@ A closing time, written for an email.
 
 | | Export | What it does |
 |---|---|---|
+| fn | `deadlineShort` | '20 Sept, 6:00 pm' — for the figure block, which sets 32px type. |
 | fn | `deadlineText` |  |
 
 ### `functions/lib/polls.js`
@@ -978,4 +979,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-530 exports. 243 have no doc comment.
+531 exports. 243 have no doc comment.
