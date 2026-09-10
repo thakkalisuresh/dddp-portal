@@ -33,8 +33,16 @@ export async function browser() {
  * cookie flags and the mustChangePassword redirect are part of what the
  * screenshots are supposed to show being true.
  */
-export async function session(br, { mobile, password, viewport, scale = 2 }) {
-  const ctx = await br.newContext({ viewport, deviceScaleFactor: scale });
+export async function session(br, { mobile, password, viewport, scale = 2, touch = false }) {
+  // `touch` is not a detail. The thumb-reachable bottom bar is gated on
+  // `@media (pointer: coarse) and (max-width: 820px)` (public/css/app.css:391),
+  // and Playwright's default context is `pointer: fine`. So a 390px capture
+  // WITHOUT this renders the wide-screen nav at phone width -- a screen no
+  // resident and no admin has ever seen, in a guide whose whole claim is that
+  // it shows the real thing. It fails silently: the shot looks like a phone.
+  const ctx = await br.newContext({
+    viewport, deviceScaleFactor: scale, hasTouch: touch, isMobile: touch,
+  });
   const page = await ctx.newPage();
 
   await page.goto(`${BASE}/login.html`, { waitUntil: 'networkidle' });
@@ -112,7 +120,7 @@ export async function sanitise(page) {
  * reported rather than silently dropped — a badge that vanishes because a
  * selector rotted is precisely the failure that would ship unnoticed.
  */
-export async function shot(page, file, { target = null, marks = [], padding = 0 } = {}) {
+export async function shot(page, file, { target = null, marks = [], padding = 0, clipFrom = 0, clipTo = null } = {}) {
   await settle(page);
   await sanitise(page);
 
@@ -124,13 +132,50 @@ export async function shot(page, file, { target = null, marks = [], padding = 0 
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(80);
 
-  const el = target ? await page.locator(target).first() : null;
-  if (target && !(await el.count())) throw new Error(`shot ${file}: target not found: ${target}`);
+  const viewport = page.viewportSize();
 
-  const box = el
-    ? await el.boundingBox()
-    : { x: 0, y: 0, ...page.viewportSize() };
-  if (!box) throw new Error(`shot ${file}: target has no box: ${target}`);
+  /**
+   * NEVER `fullPage: true`.
+   *
+   * Chromium drops its mobile emulation for a fullPage screenshot. The page
+   * re-renders at `pointer: fine` DURING the capture, so on a phone viewport
+   * the thumb bar stops being `position: fixed`, its items stop stacking, and
+   * the whole document reflows — after every element box has been measured at
+   * `pointer: coarse`. The image is a layout nobody has ever seen, and every
+   * badge measured beforehand describes a page that no longer exists.
+   *
+   * It is completely silent: the shot still looks like a phone screenshot.
+   * It was found by capturing the admin console at 390px and noticing the
+   * bottom bar sitting under the appbar with its last item cut in half.
+   *
+   * So: a clip that fits the viewport is shot as-is. A target taller than the
+   * viewport grows the viewport instead, which Chromium does not treat as a
+   * mode change, and emulation survives.
+   */
+  const measure = async () => {
+    const el = target ? await page.locator(target).first() : null;
+    if (target && !(await el.count())) throw new Error(`shot ${file}: target not found: ${target}`);
+    const b = el ? await el.boundingBox() : { x: 0, y: 0, ...page.viewportSize() };
+    if (!b) throw new Error(`shot ${file}: target has no box: ${target}`);
+    return b;
+  };
+
+  let box = await measure();
+  let grown = false;
+  const needed = box.y + box.height + padding;
+  if (needed > viewport.height) {
+    const docH = await page.evaluate(() => document.documentElement.scrollHeight);
+    // 8000 is a guard, not a limit anybody should hit: past that the capture is
+    // a whole scrolling document rather than a screen, and belongs in pieces.
+    await page.setViewportSize({ width: viewport.width, height: Math.min(Math.ceil(Math.max(docH, needed)), 8000) });
+    await settle(page);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(120);
+    grown = true;
+    // Re-measure. The reflow at the taller viewport can move the target, and a
+    // box measured before the resize would put the crop in the wrong place.
+    box = await measure();
+  }
 
   const clip = {
     x: Math.max(0, box.x - padding),
@@ -139,25 +184,47 @@ export async function shot(page, file, { target = null, marks = [], padding = 0 
     height: box.height + padding * 2,
   };
 
+  /**
+   * The window: `clipFrom` moves the top of the crop down, `clipTo` caps its
+   * height. Applied HERE, before the marks are worked out, so the percentages
+   * describe the image that is actually written. The previous arrangement shot
+   * the whole thing, then re-shot a sub-rectangle and rescaled the marks
+   * afterwards — two chances to get the arithmetic wrong, and the failure is
+   * invisible because badges that have drifted still look plausible.
+   */
+  if (clipFrom || clipTo) {
+    const from = Math.max(0, clipFrom);
+    const height = Math.min(clipTo ?? (clip.height - from), clip.height - from);
+    if (height <= 0) {
+      throw new Error(`shot ${file}: clipFrom ${from} is past the end of a ${Math.round(clip.height)}px capture`);
+    }
+    clip.y += from;
+    clip.height = height;
+  }
+
   const positions = [];
   const missing = [];
   for (const [i, sel] of marks.entries()) {
     const m = page.locator(sel).first();
     const mb = (await m.count()) ? await m.boundingBox() : null;
     if (!mb) { missing.push(sel); continue; }
-    positions.push({
+    const pos = {
       n: i + 1,
       // Percentages of the clip, so the layout can scale the image freely.
       left: ((mb.x - clip.x) / clip.width) * 100,
       top: ((mb.y - clip.y) / clip.height) * 100,
       width: (mb.width / clip.width) * 100,
       height: (mb.height / clip.height) * 100,
-    });
+    };
+    // A control the window cut off gets no badge. Reported, not dropped
+    // quietly: a numbered step whose badge vanished is a step pointing at
+    // nothing, and the guide is written on the promise that it points at
+    // something.
+    if (pos.top < 0 || pos.top + pos.height > 100) { missing.push(`${sel} (outside the window)`); continue; }
+    positions.push(pos);
   }
 
-  // fullPage, because a panel taller than the viewport would otherwise be
-  // silently truncated to the visible part while the percentages above still
-  // describe the whole thing.
-  await page.screenshot({ path: file, clip, fullPage: true });
+  await page.screenshot({ path: file, clip });
+  if (grown) await page.setViewportSize(viewport);
   return { file, clip, marks: positions, missing };
 }

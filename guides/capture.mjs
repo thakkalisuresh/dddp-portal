@@ -11,7 +11,7 @@
  * have not ended, which is what removes the orange "for testing" panel — so the
  * capture matches production without anything being cropped or edited out.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { browser, session, shot, settle, DESKTOP, MOBILE, BASE } from './lib/portal.mjs';
@@ -47,8 +47,31 @@ function credential(who) {
   return { mobile, password };
 }
 
-const ADMIN = credential('ADMIN');
-const RESIDENT = credential('RESIDENT');
+/**
+ * `--resident-only` skips every admin shot. The resident guide needs none of
+ * them, and the admin pass is the half that opens a billing month and moves
+ * readings about — worth not running at all when nothing will use its output.
+ */
+const RESIDENT_ONLY = process.argv.includes('--resident-only');
+
+/**
+ * `--admin-phone` runs the admin pass ALONE, at the resident's viewport.
+ *
+ * The admin console is mobile-first — every dense screen on it is a flex row
+ * with `min-width: 0`, or an `auto-fit minmax()` grid, and none of them is a
+ * fixed-width table. So the committee guide can be shot on a phone and reuse
+ * the resident guide's device frame, badge rail and trim unchanged.
+ *
+ * It writes a SEPARATE manifest. The A4 handbook is still built from the
+ * desktop shots in shots.json, and merging the two would have the phone pass
+ * quietly replace the figures that handbook renders.
+ */
+const ADMIN_PHONE = process.argv.includes('--admin-phone');
+
+const ADMIN = RESIDENT_ONLY ? null : credential('ADMIN');
+// Not required by the phone pass, and `credential` throws when it is unset —
+// so asking for it would make --admin-phone demand a login it never uses.
+const RESIDENT = ADMIN_PHONE ? null : credential('RESIDENT');
 
 /** `.field` wrapper for a labelled control, by its visible label text. */
 const field = (label) => `.field:has(label:text-is("${label}"))`;
@@ -65,10 +88,35 @@ const RESIDENT_SHOTS = [
   { name: 'dashboard-pay', url: '/dashboard.html', target: '.pay-block' },
   { name: 'dashboard-breakdown', url: '/dashboard.html', target: 'main section.stack:nth-of-type(3)' },
   { name: 'dashboard-history', url: '/dashboard.html', target: 'main section.stack:nth-of-type(5)', clipTo: 420 },
-  { name: 'proof-upload', url: '/proof.html', target: 'main', clipTo: 430 },
+  {
+    name: 'proof-upload', url: '/proof.html', target: 'main', clipTo: 430,
+    // No mark on "Submit for approval": that button is only rendered once a
+    // file has been chosen, so on the empty screen there is nothing to point at.
+    marks: ['label.drop'],
+  },
   { name: 'notices', url: '/notices.html', target: 'main', clipTo: 700 },
+  // The bottom bar is the whole of a resident's navigation, and section 3 of
+  // the guide is about nothing else. Shot on its own so it can run wide.
+  { name: 'resident-nav', url: '/dashboard.html', target: '.bottomnav' },
+  // One notice opened, so the guide can show a thread rather than a list.
+  // id=5 is the Onam notice: scope "all", replies switched on, five of them.
+  { name: 'notice-detail', url: '/notices.html?id=5', target: 'main', clipTo: 760 },
+  {
+    name: 'notice-reply', url: '/notices.html?id=5',
+    target: '.stack:has(> textarea[aria-label="Your reply"])',
+    marks: [
+      'textarea[aria-label="Your reply"]',
+      'input[aria-label="Attach photos or a PDF"]',
+      'button:text-is("Post")',
+    ],
+  },
+  // Replies switched off, which is what section 9 tells a resident to look for.
+  // Deliberately id=1 and not one of the owners-only notices: the demo account
+  // is a TENANT, and canSeeNotice hides scope "owners" from tenants, so those
+  // render as "That notice could not be found" rather than as a notice.
+  { name: 'notice-noreply', url: '/notices.html?id=1', target: 'main', clipTo: 620 },
   { name: 'profile', url: '/profile.html', target: 'main', clipTo: 700 },
-  { name: 'forgot', url: '/forgot.html', target: 'main' },
+  { name: 'forgot', url: '/forgot.html', target: 'main', marks: ['#mobile, input[type=tel]'] },
 ];
 
 /**
@@ -156,6 +204,110 @@ const ADMIN_SHOTS = [
   { name: 'admin-reconcile', url: '/admin/statement.html', target: 'main', clipTo: 700 },
   { name: 'admin-residents', url: '/admin/index.html#residents', target: 'main', clipTo: 800 },
   { name: 'admin-notices', url: '/notices.html', target: 'main', clipTo: 760 },
+];
+
+/**
+ * The same screens, framed for a phone.
+ *
+ * Two kinds of shot, and the difference is deliberate.
+ *
+ *   · A COMPLETE SCREEN — `target: 'body'` clipped to one 844px screenful.
+ *     Appbar at the top, bottom nav at the bottom, nothing cut off. A cropped
+ *     frame reads as "the phone looks weird" rather than as a screenshot, and
+ *     that was the first correction made to the resident guide.
+ *   · A DETAIL, targeted at the element being badged. Used only where the text
+ *     is a numbered list, because a number in the prose has to have a badge to
+ *     point at.
+ *
+ * No `clipFrom` is set anywhere yet. Guessing an offset for a screen nobody has
+ * looked at is how the first draft ended up with badges on the wrong controls;
+ * the offsets get set once these have been run and looked at, not before.
+ */
+// No `target`: the box is the VIEWPORT, which is the whole point. Targeting
+// `body` measures the entire scrolling document, grows the viewport to fit it
+// (see shot()), and the fixed thumb bar then sits at the bottom of that tall
+// frame instead of at the bottom of the screen — so the one element the
+// "complete screen" framing exists to keep is the one that falls outside it.
+const SCREEN = {};
+
+const ADMIN_PHONE_SHOTS = [
+  // Numbered, because the page that introduces the console lists the tabs as a
+  // numbered list. A number in the prose has to have a badge to point at.
+  {
+    name: 'ph-console', url: '/admin/index.html', ...SCREEN,
+    // FIVE, not six. The strip is one scrolling row now, and Residents sits
+    // past the right edge on arrival — it is in the DOM but not in the picture,
+    // and a badge for a tab you cannot see points at nothing. The page says in
+    // words that it is reached by swiping.
+    marks: ['.tab:text-is("Home")', '.tab:text-is("Billing")', '.tab:text-is("Bills")',
+            '.tab:text-is("Proofs")', '.tab:text-is("Reconcile")'],
+  },
+  { name: 'ph-home', url: '/admin/index.html#home', ...SCREEN },
+  {
+    name: 'ph-home-reminders',
+    url: '/admin/index.html#home',
+    target: 'details.board__fold:has(.board__t:text-is("Bills unpaid past the due date"))',
+    openDetails: 'details.board__fold:has(.board__t:text-is("Bills unpaid past the due date"))',
+    clipTo: 620,
+  },
+  { name: 'ph-bills', url: '/admin/index.html#bills', ...SCREEN },
+  { name: 'ph-proofs', url: '/admin/proofs.html', ...SCREEN },
+  // One row at a time. The queue page shows the shape; these show the three
+  // states a treasurer has to tell apart, each beside the sentence about it.
+  { name: 'ph-row-match', url: '/admin/proofs.html', target: '.qrow >> nth=0' },
+  { name: 'ph-row-noref', url: '/admin/proofs.html', target: '.qrow >> nth=2' },
+  { name: 'ph-row-differs', url: '/admin/proofs.html', target: '.qrow--bad >> nth=0' },
+  { name: 'ph-reconcile', url: '/admin/statement.html', ...SCREEN },
+  { name: 'ph-residents', url: '/admin/index.html#residents', ...SCREEN },
+  // One resident's card, for the page about which fields may be changed.
+  // Resident rows are collapsed <details>; the fields are inside. Open the
+  // first one, then crop to it.
+  {
+    name: 'ph-person', url: '/admin/index.html#residents',
+    openDetails: 'details:has(.person)',
+    target: 'details:has(.person) >> nth=0', clipTo: 620,
+  },
+  { name: 'ph-notices', url: '/notices.html', ...SCREEN },
+  // The composer is behind two controls: an admin reads the board like anyone
+  // else until the management controls are switched on.
+  { name: 'ph-compose', url: '/notices.html', click: ['Manage notices', '+ Post a notice'], target: 'main', clipTo: 700 },
+];
+
+/** The Billing tab on a phone, in the same two month states as the desktop pass. */
+const draftPhoneShots = () => [
+  { name: 'ph-billing', url: '/admin/index.html#billing', collapse: [METERS], ...SCREEN },
+  {
+    name: 'ph-billing-rate',
+    url: '/admin/index.html#billing',
+    target: step(PRICE),
+    openStep: PRICE,
+    marks: [field('Rate per kg'), field('Payment due'), field('Late fee')],
+  },
+  {
+    name: 'ph-billing-readings',
+    url: '/admin/index.html#billing',
+    target: step(METERS),
+    openStep: METERS,
+    clipTo: 760,
+  },
+  {
+    name: 'ph-billing-import',
+    url: '/admin/index.html#billing',
+    target: step(METERS),
+    openStep: METERS,
+    expand: 'Import from a spreadsheet, or paste',
+    clipTo: 620,
+  },
+];
+
+const publishPhoneShots = () => [
+  {
+    name: 'ph-billing-publish',
+    url: '/admin/index.html#billing',
+    target: step(PUBLISH),
+    openStep: PUBLISH,
+    clipTo: 820,
+  },
 ];
 
 /**
@@ -319,6 +471,35 @@ const publishShots = () => [
   },
 ];
 
+/**
+ * A proof whose amount does not match its bill.
+ *
+ * The guide has to show the row a treasurer must not approve on sight, and the
+ * seed has five proofs that all match exactly. Rather than draw a fake row, one
+ * real proof's parsed amount is moved for the length of the run and put back in
+ * a finally — the same stash-and-restore the readings use. A capture run must
+ * never leave the database different from how it found it.
+ */
+function stashProofMismatch() {
+  const row = query(`SELECT b.id, b.total FROM payment_proofs pp
+                     JOIN bills b ON b.id = pp.bill_id
+                     WHERE pp.status = 'pending' AND pp.parsed_amount IS NOT NULL
+                     ORDER BY pp.id DESC LIMIT 1`)[0];
+  if (!row) return null;
+  // THE BILL MOVES, NOT THE PROOF. Moving the proof's parsed amount produced a
+  // figure that contradicted itself: the row read "short by 47" beside a
+  // thumbnail of the screenshot still showing the original sum. Raising the
+  // bill instead leaves the screenshot, the parsed amount and the shortfall
+  // agreeing with each other — which is what a real underpayment looks like.
+  exec(`UPDATE bills SET total = ${row.total + 47} WHERE id = ${row.id}`);
+  return row;
+}
+
+function restoreProofMismatch(row) {
+  if (!row) return;
+  exec(`UPDATE bills SET total = ${row.total} WHERE id = ${row.id}`);
+}
+
 /** Blank the demo flag so unfinished months, and their warning panel, go away. */
 function stashDemoFlag() {
   const row = query("SELECT value FROM settings WHERE key = 'demo_seed_ids'")[0];
@@ -377,6 +558,25 @@ async function capture(page, spec, viewport) {
     if (await d.count()) { await d.evaluate((n) => { n.open = true; }); await page.waitForTimeout(200); }
   }
 
+  // Wait for the thing being photographed to exist. networkidle is not enough
+  // for a panel that renders from a fetch: `.person` measured 0px high and the
+  // crop failed outright, which is the good version of this bug.
+  if (spec.waitFor) {
+    await page.locator(spec.waitFor).first().waitFor({ state: 'visible', timeout: 15_000 });
+    await page.waitForTimeout(250);
+  }
+
+  // A control that is neither a <details> nor an accordion step: the notice
+  // composer is a button that unhides a form. Clicked by its visible text, so
+  // the selector says what a reader would look for.
+  for (const label of spec.click ?? []) {
+    const b = page.getByText(label, { exact: true }).first();
+    if (!(await b.count())) throw new Error(`nothing to click labelled "${label}"`);
+    await b.click();
+    await page.waitForTimeout(350);
+    await settle(page);
+  }
+
   // Some panels only exist after a hash-routed tab renders.
   if (spec.find) {
     const anchor = page.getByText(spec.find, { exact: false }).first();
@@ -385,33 +585,27 @@ async function capture(page, spec, viewport) {
   }
 
   const file = join(OUT, `${spec.name}.png`);
+  // The window is applied inside shot(), while the viewport is still the one
+  // every box was measured against. See the fullPage note in lib/portal.mjs.
   const res = await shot(page, file, {
     target: spec.target ?? null,
     marks: spec.marks ?? [],
     padding: spec.padding ?? 0,
+    clipFrom: spec.clipFrom ?? 0,
+    clipTo: spec.clipTo ?? null,
   });
-
-  // A tall panel cropped down, so a guide page can show the part being talked
-  // about without a screenful of whitespace or an unrelated list under it.
-  //
-  // Badge positions are percentages OF THE IMAGE, so cropping the image
-  // rescales every one of them. Forgetting this is silent: the badges stay on
-  // the page, drift upward, and still look plausible.
-  if (spec.clipTo && res.clip.height > spec.clipTo) {
-    const ratio = res.clip.height / spec.clipTo;
-    await page.screenshot({
-      path: file,
-      clip: { ...res.clip, height: spec.clipTo },
-      fullPage: true,
-    });
-    res.clip.height = spec.clipTo;
-    res.marks = res.marks
-      .map((m) => ({ ...m, top: m.top * ratio, height: m.height * ratio }))
-      .filter((m) => m.top + m.height <= 100);
-  }
 
   res.name = spec.name;
   res.viewport = viewport;
+  // The FIGURE's own dimensions, which is what device() sizes the phone from.
+  // Without these it computes `shot.h / shot.w` as NaN, and every badge rail
+  // silently collapses to zero height — the badges stack on one another at the
+  // top of the figure and the last one drawn hides the rest. The screen itself
+  // still looks correct, because the image sizes itself, so nothing about the
+  // figure says it is wrong. measure-sim.mjs has always emitted these; this
+  // pass never did.
+  res.w = Math.round(res.clip.width);
+  res.h = Math.round(res.clip.height);
   return res;
 }
 
@@ -422,10 +616,21 @@ async function run() {
   const problems = [];
 
   try {
-    const admin = await session(br, { ...ADMIN, viewport: DESKTOP });
-    for (const spec of ADMIN_SHOTS) {
+    if (RESIDENT_ONLY) console.log('  (--resident-only: skipping admin shots)');
+    if (ADMIN_PHONE) console.log('  (--admin-phone: admin console at 390x844, touch on)');
+    if (!RESIDENT_ONLY) {
+    const vp = ADMIN_PHONE ? 'mobile' : 'desktop';
+    const admin = await session(br, {
+      ...ADMIN,
+      viewport: ADMIN_PHONE ? MOBILE : DESKTOP,
+      touch: ADMIN_PHONE,
+    });
+    const stashedProof = ADMIN_PHONE ? stashProofMismatch() : null;
+    if (stashedProof) console.log(`  bill ${stashedProof.id} temporarily raised, to photograph an underpaid row`);
+    try {
+    for (const spec of (ADMIN_PHONE ? ADMIN_PHONE_SHOTS : ADMIN_SHOTS)) {
       try {
-        const r = await capture(admin.page, spec, 'desktop');
+        const r = await capture(admin.page, spec, vp);
         manifest[spec.name] = r;
         if (r.missing.length) problems.push(`${spec.name}: no match for ${r.missing.join(', ')}`);
         console.log(`  ✓ ${spec.name.padEnd(20)} ${Math.round(r.clip.width)}×${Math.round(r.clip.height)}  ${r.marks.length} badge(s)`);
@@ -434,6 +639,11 @@ async function run() {
         console.log(`  ✗ ${spec.name.padEnd(20)} ${err.message}`);
       }
     }
+    } finally {
+      restoreProofMismatch(stashedProof);
+      if (stashedProof) console.log('  bill total restored');
+    }
+
     // The Billing tab, in its two states. Both passes run against the same open
     // month: first with no meter read, then with all of them in — because step
     // 3 refuses to open until every flat has a reading, and step 2 only shows
@@ -443,9 +653,9 @@ async function run() {
     const stashedEmails = stashEmails();
     console.log(`  billing month ${period}${scratchCreated ? ' (created for this run)' : ' (already open)'}`);
     try {
-      for (const spec of draftShots()) {
+      for (const spec of (ADMIN_PHONE ? draftPhoneShots() : draftShots())) {
         try {
-          const r = await capture(admin.page, spec, 'desktop');
+          const r = await capture(admin.page, spec, vp);
           manifest[spec.name] = r;
           if (r.missing.length) problems.push(`${spec.name}: no match for ${r.missing.join(', ')}`);
           console.log(`  ✓ ${spec.name.padEnd(24)} ${Math.round(r.clip.width)}×${Math.round(r.clip.height)}  ${r.marks.length} badge(s)`);
@@ -456,9 +666,9 @@ async function run() {
       }
 
       fillReadings(period);
-      for (const spec of publishShots()) {
+      for (const spec of (ADMIN_PHONE ? publishPhoneShots() : publishShots())) {
         try {
-          const r = await capture(admin.page, spec, 'desktop');
+          const r = await capture(admin.page, spec, vp);
           manifest[spec.name] = r;
           console.log(`  ✓ ${spec.name.padEnd(24)} ${Math.round(r.clip.width)}×${Math.round(r.clip.height)}  ${r.marks.length} badge(s)`);
         } catch (err) {
@@ -473,8 +683,11 @@ async function run() {
       console.log('  readings, addresses and period restored');
     }
     await admin.ctx.close();
+    }
 
-    const res = await session(br, { ...RESIDENT, viewport: MOBILE });
+    if (ADMIN_PHONE) console.log('  (--admin-phone: skipping the resident passes)');
+    if (!ADMIN_PHONE) {
+    const res = await session(br, { ...RESIDENT, viewport: MOBILE, touch: true });
     for (const spec of RESIDENT_SHOTS) {
       try {
         const r = await capture(res.page, spec, 'mobile');
@@ -494,7 +707,7 @@ async function run() {
     try {
       const tempPassword = await makePending(cred);
       const pending = await session(br, {
-        mobile: RESIDENT.mobile, password: tempPassword, viewport: MOBILE,
+        mobile: RESIDENT.mobile, password: tempPassword, viewport: MOBILE, touch: true,
       });
       try {
         const r = await capture(pending.page, ONBOARDING_SHOT, 'mobile');
@@ -512,12 +725,25 @@ async function run() {
       restoreCredential(cred);
       console.log(`  ${RESIDENT.mobile} restored to its own password`);
     }
+    }
   } finally {
     await br.close();
   }
 
-  writeFileSync('guides/out/shots.json', JSON.stringify(manifest, null, 2));
-  console.log(`\n  ${Object.keys(manifest).length} captured -> guides/out/shots.json`);
+  // A partial run merges rather than replaces: dropping the admin entries would
+  // silently break the admin handbook's next build.
+  //
+  // The phone pass writes its OWN file. The A4 handbook and the A4/A5 resident
+  // guides are still built from the desktop and simulator shots in shots.json;
+  // merging would have the phone pass quietly replace figures those documents
+  // render, and the replacement would be invisible until somebody opened a PDF.
+  const out = ADMIN_PHONE ? 'guides/out/admin-phone-shots.json' : 'guides/out/shots.json';
+  let merged = manifest;
+  if (RESIDENT_ONLY && existsSync(out)) {
+    merged = { ...JSON.parse(readFileSync(out, 'utf8')), ...manifest };
+  }
+  writeFileSync(out, JSON.stringify(merged, null, 2));
+  console.log(`\n  ${Object.keys(manifest).length} captured -> ${out}`);
   if (problems.length) {
     console.log(`\n  ${problems.length} problem(s):`);
     problems.forEach((p) => console.log(`    · ${p}`));
