@@ -380,6 +380,223 @@ A clickable mock-up of both states exists from the 2026-08-24 session
 (artifact "Two Ways In"): the required field, the empty-field refusal, and the
 already-taken-address refusal, against the real tokens.
 
+## B28 — The document library, and admin-managed shelves
+
+Raised 2026-09-09, designed and prototyped in the same session
+(`docs/documents-polls-prototype.html`, Documents tab). **Parked with the design
+finished, not with the design open** — what follows is the whole of it, so
+picking this up is building rather than re-deciding.
+
+Came out of comparing the portal against MyGate, ADDA and NoBrokerHood. All
+three ship a document repository; this portal stores the documents already and
+has no way to find them.
+
+### What is already built, and what is actually missing
+
+0018 stores notice attachments and says in its own header what they are for:
+the AGM agenda, three waterproofing quotes, the audited accounts. They are kept
+at full quality, thumbnailed, soft-deleted, quota-counted, and copied to Drive
+nightly by `backupAttachments`.
+
+**The gap is findability, not storage.** A document is reachable only by
+remembering which notice carried it. The March AGM minutes are in R2 right now
+and there is no way to ask for them by name.
+
+So the library is **a read view over `attachments`**, not a new subsystem:
+`GET /api/documents` plus a page, listing rows where the parent is a notice,
+newest first, searchable by filename and notice title.
+
+**Comment attachments are excluded deliberately.** A resident's photograph of a
+damp patch belongs to its thread. The library is the association's filing
+cabinet, not every picture anyone ever posted.
+
+**Visibility reuses `canSeeAttachment` unchanged.** Not a second copy. That
+function's own comment records that the first version of the rule leaked
+owners-only AGM papers to a tenant, because an admin's clearance short-circuited
+the scope check during view-as. Withdrawn notices' files staying visible to the
+committee and nobody else falls out of the same function for free.
+
+### The shelves — documents with no notice
+
+The half a read view cannot reach: the bye-laws, the registration certificate,
+the insurance policy. Nobody posts a notice to file them, so they have no
+parent and the `CHECK` refuses the row. These are also the documents residents
+ask for most and the ones that never change.
+
+**`attachments` gains a third parent, in one rebuild.** SQLite cannot alter a
+`CHECK`, so this is a table rebuild — follow 0030's twelve-step recipe, which
+did the same thing to `owners`. The check becomes:
+
+```sql
+CHECK ((notice_id IS NOT NULL) + (comment_id IS NOT NULL) + (shelf_id IS NOT NULL) = 1)
+```
+
+`shelf_id` and the scope column below go in during that same rebuild. Do not
+plan two.
+
+**A shelf document carries its own `scope`.** A notice attachment inherits
+owners-only from its notice; a shelf document has no notice to inherit from, and
+the audited accounts are owners-only. `canSeeAttachment` learns to read the
+attachment's own scope when there is no parent notice.
+
+### Two traps that will each look like working code
+
+**`serveAttachment` will 404 every shelf document.** It joins
+`JOIN notices n ON n.id = COALESCE(a.notice_id, c.notice_id)` — an inner join. A
+shelf document has neither id, so no row comes back and the file is unreachable.
+It must become a LEFT JOIN with the scope fallback above. The library page looks
+perfect right up until somebody taps a file, which is why this is written down.
+
+**Do not save shelves the way the committee list is saved.** `PUT
+/api/admin/committee` is `DELETE FROM committee` followed by re-inserting the
+whole list. That is safe there because nothing references `committee.id`. Every
+document references its shelf, so a whole-list replace regenerates the ids and
+orphans the entire library. Shelves need per-row POST / PATCH / retire. This
+works flawlessly against an empty library and destroys a year of filing the
+first time somebody reorders the shelves.
+
+### Shelves are admin-managed, and why
+
+Decided 2026-09-09. A fixed list in a `CHECK` means a migration every time the
+committee wants "Legal", which is goal 3 — survive its author — failing in
+miniature: a taxonomy only a developer can change is one that needs a developer
+for ever.
+
+```sql
+CREATE TABLE shelves (
+  id         INTEGER PRIMARY KEY,
+  name       TEXT NOT NULL,
+  sort       INTEGER NOT NULL DEFAULT 0,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER REFERENCES owners(id),
+  created_at TEXT NOT NULL
+);
+```
+
+**A table rather than a JSON list in `settings`,** even though that table exists
+and would be cheaper. Documents reference a shelf, so it needs a stable id: with
+a table, renaming "AGM" to "AGM papers" is one UPDATE and every document
+follows. Keyed by name in JSON, a rename either rewrites every attachment row or
+silently breaks the link.
+
+* **Rename** — free, any time, documents follow.
+* **Retire** (`active = 0`) rather than delete, matching notices, comments and
+  attachments. The shelf stops being offered for new uploads; its documents stay
+  readable. Nobody has to answer "where did those twelve files go".
+* **Hard delete** only for a shelf that has never held a document; otherwise
+  refuse and say how many are on it.
+* **Reorder** via `sort` and up/down buttons — `committee.sort` already does it.
+* **Admin, not committee.** 0030 is explicit that a committee member posts
+  notices and nothing else; shelves are structural.
+* **Seed the five** — Bye-laws, Accounts, AGM, Insurance, Contracts — in the
+  migration, so the committee edits a sensible default rather than facing a
+  blank page.
+
+**No shelf creation from the upload form.** This one rule is the whole defence
+against drift. Handing the list to admins does not remove the "AGM / AGM 2026 /
+AGM Papers" problem, it relocates it: if the upload form can invent a shelf,
+every filing is an invitation to, and there are eleven by next Onam. Shelves are
+created on their own admin screen; the upload form offers a picker only.
+
+**Empty shelves are hidden from residents and shown to admins.** Otherwise the
+committee creates "Insurance", files nothing yet, and 89 people see a chip that
+leads nowhere.
+
+### Backup
+
+`attachments` is already in `TABLES`, so the metadata rides along. Two changes:
+
+* `shelves` joins `TABLES`. Structural, tiny, and a restore without it leaves
+  every document unfiled. The coverage test in `test/backup.test.js` forces the
+  call to be made either way.
+* `backupAttachments` files a notice-less attachment under `orphaned/` (there is
+  a comment saying somewhere obvious beats nowhere). A shelf document should go
+  to `library/<shelf>/` instead.
+
+### Where it lives
+
+**Under Me, not its own tab.** `nav.js` caps the bar at five and says so. A
+resident has three items and room for one more, but a superadmin already has
+five — Bill, Notices, Docs, Me, Admin, God is six, and dropping God from the bar
+to make room is a worse trade than the alternative.
+
+The cost is discoverability: a resident hunting for the bye-laws has to think of
+them as living under "my stuff". Mitigate with a link to the library from the
+notices screen, which is where documents come from anyway.
+
+Note the collision with **B27**: if personal flat documents are ever built, Me
+is exactly where those belong, and the association's library becomes the wrong
+tenant of that tab. Decide B27 first if it is ever seriously proposed.
+
+## B27 — Personal flat documents
+
+Raised 2026-09-09, out of the documents/polls prototype
+(`docs/documents-polls-prototype.html`). **Not rejected — parked, because it is
+a different system wearing the same word.** The association's library (the
+bye-laws, the AGM papers, three waterproofing quotes) and a resident's own
+paperwork (sale deed, lease, Aadhaar copy, NOC) share a noun and almost nothing
+else: different owner, different audience, different retention, different
+consequence when it leaks.
+
+MyGate and NoBrokerHood both ship a "document repository" that quietly means
+both at once. Shipping the association half is a filing cabinet. Shipping the
+resident half makes this association the custodian of 89 households' identity
+documents, which is a promise nobody on the committee has agreed to make.
+
+### Why it is not a corner of the library feature
+
+**`attachments` is the wrong table.** Every row in it today is published to
+somebody the moment it lands — a notice attachment to the building, a comment
+photo to the thread. `canSeeAttachment` decides who may read it from the parent
+notice's scope. A personal document has no parent, no audience, and needs the
+opposite default: nobody, including the committee.
+
+**The nightly backup would carry it off-site by default.** `TABLES` in
+`functions/lib/backup.js` covers `attachments`, and `backupAttachments` copies
+the R2 objects into a committee member's personal Google Drive. A locker built
+inside `attachments` inherits both, which means a resident's sale deed lands in
+somebody's Drive the same night. That is not a bug to fix afterwards; it is the
+reason the locker cannot live in that table.
+
+**R2 is the one service that bills.** `docs/COSTS.md` is explicit: R2 meters
+storage with no free-plan cutoff, which is why the account needed a card. Notice
+attachments are bounded by how often the committee posts. A locker is bounded by
+nothing — 89 flats × 25MB scans, uploaded once and kept for ever, is the first
+feature in this portal capable of producing a real bill.
+
+**PRIVACY.md does not describe it.** The document promises what is recorded and
+how break-glass recovery works. Neither sentence currently covers "the
+association holds a copy of your title deed", and adding the feature without
+adding that sentence is how a privacy policy becomes fiction.
+
+### What it would take, if it is ever wanted
+
+Not a column. A separate table, and each of these decided on purpose:
+
+* **Its own table and its own R2 prefix**, so nothing about it is reachable
+  through the attachment routes by accident.
+* **Named in `NEVER_BACKUP`**, alongside `sessions` and `password_history`, with
+  a comment saying why. The coverage test in `test/backup.test.js` forces the
+  choice to be made rather than defaulted — use that.
+* **A per-flat quota in bytes**, counted in SQL the way `assertRoom` counts
+  files, and small. 25MB per flat total, not per file.
+* **No committee read path at all**, including god mode. Invariant 7 makes every
+  god edit recorded; the honest version here is that the power does not exist,
+  because "recorded" is not consent. A superadmin who can read a resident's
+  Aadhaar copy is a worse failure mode than a resident who lost their upload.
+* **A retention answer for a flat that changes hands.** Invariant 3 already says
+  bills and proofs belong to the person, not the flat. Personal documents are
+  the sharpest case of that rule: the incoming owner must never inherit them,
+  and "delete on transfer" needs to be the default rather than a cleanup job.
+* **A line in `docs/PRIVACY.md`** written before the code, not after.
+
+### The trigger
+
+Ask the committee whether they want it. If nobody has asked for it, this stays
+closed — the association library solves the problem that was actually raised
+("where are the bye-laws"), and this solves one nobody in the building has
+reported having.
+
 ## B23 — The app row sends people to install apps they already have
 
 Raised 2026-08-11, out of the device run recorded in STATE.md under "The Android

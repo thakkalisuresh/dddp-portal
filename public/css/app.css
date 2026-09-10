@@ -259,6 +259,27 @@ a { color: var(--accent); }
   border-radius: var(--radius);
   padding: var(--s-4);
 }
+
+/* A whole card that is one link.
+ *
+ * Without this the anchor's colour and underline reach every word inside it,
+ * so a title, a chip and a timestamp all arrive underlined in accent green and
+ * the card reads as a wall of link rather than as a thing with a heading. The
+ * notice board solved the same problem for a heading-shaped link with `.plain`;
+ * this is that idea for the whole box.
+ *
+ * The card keeps a visible focus ring and earns an underline on its heading on
+ * hover, so it is still discoverable as a link and still keyboard-visible —
+ * removing the underline must not mean removing the affordance. */
+a.card {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  transition: border-color var(--transition);
+}
+a.card:hover { border-color: var(--border-strong); }
+a.card:hover b, a.card:focus-visible b { text-decoration: underline; }
+a.card:focus-visible { outline: var(--focus-ring) solid var(--accent); outline-offset: 2px; }
 .note {
   border-radius: var(--radius); padding: var(--s-3) var(--s-4);
   font-size: var(--text-sm); border: 1px solid;

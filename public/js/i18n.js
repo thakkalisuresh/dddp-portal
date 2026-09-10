@@ -109,3 +109,70 @@ export function stampLabel(iso, now = new Date()) {
   const date = `${then.day} ${MONTHS[then.month - 1]}`;
   return then.year === today.year ? `${date}, ${time}` : `${date} ${then.year}, ${time}`;
 }
+
+/* ── deadlines ─────────────────────────────────────────────────────────────
+   A DEADLINE IS THE ONE THING ON THIS SITE NOT SHOWN IN THE BUILDING'S CLOCK
+   ALONE, and the exception is deliberate rather than an oversight of the rule
+   at the top of this file.
+
+   That rule is about DATES. A due date is a calendar square: the 20th is the
+   20th, and rendering it in the reader's zone is how an owner in Toronto was
+   shown the 19th for a bill the treasurer set to the 20th. A poll's closing
+   time is not a square, it is an instant — and an owner abroad who has to
+   convert 6:00pm IST in their head is an owner who misses the vote.
+
+   So both are shown, the reader's own clock first, and neither is ever printed
+   as a bare unlabelled time. A reader in Kerala sees one time, not the same
+   time twice.
+   ────────────────────────────────────────────────────────────────────────── */
+
+const VIEWER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const VIEWER_IS_IST = VIEWER_TZ === IST;
+
+const DEADLINE_FMT = new Intl.DateTimeFormat('en-GB', {
+  timeZone: IST, day: 'numeric', month: 'short',
+  hour: 'numeric', minute: '2-digit', hour12: true,
+});
+const LOCAL_DEADLINE_FMT = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true,
+});
+
+/**
+ * 'PDT', 'EDT', 'GMT+4' — whatever the reader's zone is actually called.
+ *
+ * en-US rather than en-GB: en-GB renders 'GMT-7' even for zones that have a
+ * name, and 'PDT' is what the reader's own phone says. Zones without a name
+ * (Dubai) fall back to an offset either way, which is still better than an
+ * unlabelled clock.
+ */
+function zoneLabel(iso, timeZone) {
+  const part = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'short' })
+    .formatToParts(new Date(iso)).find((x) => x.type === 'timeZoneName');
+  return part?.value ?? '';
+}
+
+/** '20 Sept, 5:30 am PDT · 20 Sept, 6:00 pm IST' — or just IST, in Kerala. */
+export function deadlineLabel(iso) {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return '';
+  const ist = `${DEADLINE_FMT.format(when)} IST`;
+  if (VIEWER_IS_IST) return ist;
+  return `${LOCAL_DEADLINE_FMT.format(when)} ${zoneLabel(iso, VIEWER_TZ) || 'your time'} · ${ist}`;
+}
+
+/**
+ * 'Closes in 3 days'. Timezone-free, which is why it leads.
+ *
+ * Rounded rather than precise: a countdown ticking down to the minute invites
+ * somebody to wait for the last one, and a vote is not a bid.
+ */
+export function closesIn(iso, now = Date.now()) {
+  const ms = Date.parse(iso) - now;
+  if (!Number.isFinite(ms)) return '';
+  if (ms <= 0) return 'Closed';
+  const plural = (n, unit) => `Closes in ${n} ${unit}${n === 1 ? '' : 's'}`;
+  const hours = ms / 3_600_000;
+  if (hours < 1) return plural(Math.max(1, Math.round(ms / 60_000)), 'minute');
+  if (hours < 48) return plural(Math.round(hours), 'hour');
+  return plural(Math.round(hours / 24), 'day');
+}

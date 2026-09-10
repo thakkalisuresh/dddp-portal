@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dayLabel, timeLabel, stampLabel } from '../public/js/i18n.js';
+import { dayLabel, timeLabel, stampLabel, deadlineLabel, closesIn } from '../public/js/i18n.js';
 
 /**
  * Dates are read in Kerala, so they are formatted in Kerala's time zone.
@@ -76,3 +76,33 @@ describe('stampLabel', () => {
   });
 });
 
+
+describe('deadlines', () => {
+  it('counts down in whole units, and never past zero', () => {
+    const at = '2026-09-20T12:30:00.000Z';
+    expect(closesIn(at, Date.parse('2026-09-10T12:30:00.000Z'))).toBe('Closes in 10 days');
+    expect(closesIn(at, Date.parse('2026-09-19T12:30:00.000Z'))).toBe('Closes in 24 hours');
+    // Hours are kept right up to 48, because "25 hours" is more use to
+    // somebody deciding whether to vote tonight than "1 day".
+    expect(closesIn(at, Date.parse('2026-09-19T11:30:00.000Z'))).toBe('Closes in 25 hours');
+    expect(closesIn(at, Date.parse('2026-09-18T11:30:00.000Z'))).toBe('Closes in 2 days');
+    expect(closesIn(at, Date.parse('2026-09-20T12:00:00.000Z'))).toBe('Closes in 30 minutes');
+    expect(closesIn(at, Date.parse('2026-09-21T00:00:00.000Z'))).toBe('Closed');
+  });
+
+  it('rounds a nearly-elapsed poll up to a minute rather than to zero', () => {
+    // 'Closes in 0 minutes' reads as closed on a poll still taking votes.
+    const at = '2026-09-20T12:30:00.000Z';
+    expect(closesIn(at, Date.parse('2026-09-20T12:29:50.000Z'))).toBe('Closes in 1 minute');
+  });
+
+  it('names the building’s clock, always', () => {
+    // Whatever zone the test runner is in, IST must be present and labelled.
+    expect(deadlineLabel('2026-09-20T12:30:00.000Z')).toMatch(/6:00 pm IST$/);
+  });
+
+  it('says nothing for an unreadable timestamp', () => {
+    expect(deadlineLabel('not a date')).toBe('');
+    expect(closesIn('not a date')).toBe('');
+  });
+});
