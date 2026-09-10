@@ -1,0 +1,31 @@
+-- The notice a poll is about.
+--
+-- Three quotes go up as a notice with the PDFs attached; the poll that decides
+-- between them points at it. Before this the connection was a committee member
+-- typing "the quotes are on the noticeboard" into the description — prose, which
+-- nothing keeps in step and which links in neither direction.
+--
+-- ONE FIELD, BOTH DIRECTIONS. The poll knows its notice; the notice finds its
+-- poll by looking for the row that points back. A second column on `notices`
+-- would store the same fact twice and the two copies would drift, which is the
+-- reasoning invariant 6 already applies to `relationship`.
+--
+-- ONE NOTICE, ONE POLL — decided 2026-09-10, and enforced here rather than in
+-- the handler that writes it. The partial index is what makes it true: NULLs
+-- are not compared by a UNIQUE index in SQLite, so any number of polls may
+-- stand alone while no two may claim the same notice. A handler check would be
+-- a race between two committee members posting at once.
+--
+-- NULLABLE ON PURPOSE, and the common case. "Onam sadhya — lunch or dinner?"
+-- has no notice behind it and should not be made to invent one.
+--
+-- WHAT THIS DELIBERATELY DOES NOT DO is reconcile the two visibility rules. A
+-- notice is owners-only or it is not; a poll carries its own `show_tenants`.
+-- They can disagree, and a poll a tenant may read can point at a notice they may
+-- not. The link is HIDDEN for that reader rather than shown and broken — see
+-- `linkedNotice` in lib/polls.js. Refusing the pairing outright was considered
+-- and rejected: a committee may reasonably want tenants to see a question whose
+-- financial detail stays the owners' business.
+ALTER TABLE polls ADD COLUMN notice_id INTEGER REFERENCES notices(id);
+
+CREATE UNIQUE INDEX ix_polls_notice ON polls(notice_id) WHERE notice_id IS NOT NULL;

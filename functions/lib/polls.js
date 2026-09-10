@@ -20,6 +20,8 @@
  */
 
 import { fail } from './errors.js';
+// The notice board's own visibility rule, borrowed rather than reimplemented.
+import { canSeeNotice } from './notices.js';
 // The shared rules. Re-exported below so every existing importer — and the
 // tests — keep asking this module, which is where polls are reasoned about.
 // Imported for USE. `export ... from` below re-exports the rest for callers,
@@ -106,6 +108,30 @@ export function canSeePoll(poll, viewer) {
  */
 export function canVote(viewer) {
   return Boolean(viewer) && viewer.relationship !== 'tenant';
+}
+
+/**
+ * The notice behind a poll, as this viewer may see it — or nothing.
+ *
+ * HIDDEN RATHER THAN BROKEN. A poll and a notice scope differently: a notice is
+ * owners-only or not, a poll carries its own `show_tenants`. They can disagree,
+ * and a poll a tenant may read can point at a notice they may not. A link that
+ * 404s for exactly the people the visibility switch was meant to include is
+ * worse than no link, so this returns null for them and the screen shows
+ * nothing at all.
+ *
+ * `canSeeNotice` decides it — the same function the notice board uses, not a
+ * second copy. That function's own comment records the leak that followed from
+ * having two.
+ */
+export function linkedNotice(row, viewer) {
+  if (!row?.notice_id || !row.notice_active) return null;
+  if (!canSeeNotice(row.notice_scope, viewer)) return null;
+  return {
+    id: row.notice_id,
+    title: row.notice_title,
+    attachmentCount: row.notice_files ?? 0,
+  };
 }
 
 /** Committee by the viewer's own role — the same ladder the notice board uses. */
@@ -283,22 +309,44 @@ export async function queuePollReminder(env, pollId, { now = new Date().toISOStr
   return true;
 }
 
+/**
+ * Refuse a notice that another poll has already claimed.
+ *
+ * The unique index would refuse it anyway, but as a constraint violation — an
+ * opaque 500 rather than a sentence naming the poll already there. This runs
+ * first so the committee gets told what happened; the index stays as the thing
+ * that is actually true, because two people posting at once would race past
+ * any check made here.
+ */
+async function assertNoticeFree(env, noticeId, exceptPollId = null) {
+  if (!noticeId) return;
+  const taken = await env.DB.prepare(
+    'SELECT id, title FROM polls WHERE notice_id = ? AND id IS NOT ?'
+  ).bind(noticeId, exceptPollId).first();
+  if (taken) {
+    fail('DDP-POLL-009', { noticeId, message:
+      `That notice already has a poll on it — “${taken.title}”. A notice carries one poll.` });
+  }
+}
+
 /** Create a poll and its options in one batch, and queue the opening letter. */
 export async function createPoll(env, {
   title, body, multi = false, maxChoices = null, showTenants = false,
-  closesAt, options = [], createdBy, now = new Date().toISOString(),
+  closesAt, options = [], noticeId = null, createdBy, now = new Date().toISOString(),
 }) {
   const check = validatePoll({ title, body, multi, maxChoices, options, closesAt, now });
   if (!check.ok) fail('DDP-POLL-005', { message: check.message });
 
+  await assertNoticeFree(env, noticeId);
+
   const row = await env.DB.prepare(
     `INSERT INTO polls (title, body, multi, max_choices, show_tenants,
-                        opens_at, closes_at, reminder_at, created_by, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+                        opens_at, closes_at, reminder_at, notice_id, created_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
   ).bind(
     String(title).trim(), String(body).trim(), multi ? 1 : 0,
     multi ? Number(maxChoices) : null, showTenants ? 1 : 0,
-    now, closesAt, midpoint(now, closesAt), createdBy, now,
+    now, closesAt, midpoint(now, closesAt), noticeId || null, createdBy, now,
   ).first();
 
   await env.DB.batch(options.map((o, i) => env.DB.prepare(
@@ -334,6 +382,7 @@ export async function listPolls(env, viewer, { now = new Date().toISOString() } 
       closed: isClosed(p, now),
       published: Boolean(p.published_at),
       voted: p.my_votes > 0,
+      hasNotice: Boolean(p.notice_id),
       // Whether this viewer has a vote to cast at all, so the board can say
       // "you can watch this" instead of offering a control that will refuse.
       canVote: canVote(viewer),
@@ -345,7 +394,14 @@ export async function listPolls(env, viewer, { now = new Date().toISOString() } 
  * if — this viewer may see it.
  */
 export async function getPoll(env, id, viewer, { now = new Date().toISOString() } = {}) {
-  const poll = await env.DB.prepare('SELECT * FROM polls WHERE id = ?').bind(id).first();
+  const poll = await env.DB.prepare(
+    `SELECT p.*, n.title AS notice_title, n.scope AS notice_scope, n.active AS notice_active,
+            (SELECT COUNT(*) FROM attachments a
+              WHERE a.notice_id = n.id AND a.deleted_at IS NULL) AS notice_files
+       FROM polls p
+       LEFT JOIN notices n ON n.id = p.notice_id
+      WHERE p.id = ?`
+  ).bind(id).first();
   if (!poll || !canSeePoll(poll, viewer)) return null;
 
   const [{ results: options }, { results: mine }] = await Promise.all([
@@ -374,6 +430,7 @@ export async function getPoll(env, id, viewer, { now = new Date().toISOString() 
     options: (options ?? []).map((o) => ({ id: o.id, label: o.label })),
     myVotes: (mine ?? []).map((v) => v.option_id),
     votedAt: mine?.[0]?.cast_at ?? null,
+    notice: linkedNotice(poll, viewer),
   };
 
   // WHETHER THE OPTIONS ARE FROZEN, WHICH IS NOT THE SAME AS HOW MANY VOTED.
@@ -480,6 +537,11 @@ export async function updatePoll(env, id, patch = {}, { now = new Date().toISOSt
     || patch.maxChoices !== undefined;
   if (touchesShape && optionsFrozen(cast?.n ?? 0)) fail('DDP-POLL-006', { id, votes: cast?.n });
 
+  // The link is not part of the shape: pointing a running poll at the notice
+  // somebody has just posted is a correction, not a change to what anybody
+  // voted for. Checked against every OTHER poll, so re-saving keeps its own.
+  if (patch.noticeId !== undefined) await assertNoticeFree(env, patch.noticeId, id);
+
   // The poll as it WOULD be, checked by the same function the create path uses.
   const next = {
     title: patch.title ?? poll.title,
@@ -504,16 +566,20 @@ export async function updatePoll(env, id, patch = {}, { now = new Date().toISOSt
     ? poll.reminder_at
     : midpoint(poll.created_at, next.closesAt);
 
+  const noticeId = patch.noticeId === undefined
+    ? poll.notice_id
+    : (patch.noticeId || null);
+
   const writes = [
     env.DB.prepare(
       `UPDATE polls
           SET title = ?, body = ?, multi = ?, max_choices = ?, show_tenants = ?,
-              closes_at = ?, reminder_at = ?
+              closes_at = ?, reminder_at = ?, notice_id = ?
         WHERE id = ?`
     ).bind(
       next.title.trim(), next.body.trim(), next.multi ? 1 : 0,
       next.multi ? Number(next.maxChoices) : null, showTenants,
-      next.closesAt, reminderAt, id,
+      next.closesAt, reminderAt, noticeId, id,
     ),
   ];
 

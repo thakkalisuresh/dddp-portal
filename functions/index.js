@@ -1390,6 +1390,7 @@ async function postPoll(request, env, session, ctx) {
       multi: Boolean(b?.multi), maxChoices: b?.maxChoices ?? null,
       showTenants: Boolean(b?.showTenants),
       closesAt: b?.closesAt, options: b?.options ?? [],
+      noticeId: b?.noticeId ?? null,
       createdBy: session.actor.id,
     });
   } catch (err) {
@@ -1430,7 +1431,8 @@ async function patchPoll(request, env, session, path) {
   // would let an absent field read as "set this to undefined" and quietly wipe
   // a description the editor never touched.
   const patch = {};
-  for (const key of ['title', 'body', 'closesAt', 'showTenants', 'multi', 'maxChoices', 'options']) {
+  for (const key of ['title', 'body', 'closesAt', 'showTenants', 'multi', 'maxChoices',
+                     'options', 'noticeId']) {
     if (b?.[key] !== undefined) patch[key] = b[key];
   }
   if (!Object.keys(patch).length) return json({ ok: true, changed: false });

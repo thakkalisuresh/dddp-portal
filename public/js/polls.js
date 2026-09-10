@@ -116,6 +116,7 @@ function draw() {
     el('p', { class: 'small' },
       `${p.closed ? 'Closed' : 'Closes'} ${deadlineLabel(p.closesAt)}`),
     el('p', { class: 'notice__body' }, p.body),
+    noticeCard(p),
 
     // A tenant on a poll the committee chose to show them. Said plainly rather
     // than by greying a control with no explanation beside it.
@@ -299,6 +300,24 @@ const packOptions = (list) => list
 
 function showComposer(me) {
   const feedback = el('div', {});
+  const noticeNote = el('p', { class: 'small' });
+  const noticePicker = el('select', { class: 'input' },
+    el('option', { value: '' }, 'No — this poll stands on its own'));
+  noticePicker.addEventListener('change', () => {
+    draft.noticeId = noticePicker.value;
+    check();
+  });
+
+  // Filled from the board the committee already reads. A notice that another
+  // poll has claimed is offered but labelled, so the refusal is legible before
+  // the server gives it — one notice, one poll.
+  api.notices().then(({ notices }) => {
+    for (const n of notices) {
+      noticePicker.append(el('option', { value: String(n.id) },
+        `${n.title}${n.scope === 'owners' ? ' (owners only)' : ''}`
+        + `${n.pollId ? ' — already has a poll' : ''}`));
+    }
+  }).catch(() => {});
   const closesNote = el('p', { class: 'small' });
   const post = el('button', { class: 'btn btn--block', type: 'button' }, 'Post the poll');
 
@@ -380,6 +399,18 @@ function showComposer(me) {
 
   function check() {
     drawRule();
+
+    // Said as it is chosen rather than discovered later. The person creating
+    // the poll is the one who would never see the mismatch, because they can
+    // open both halves.
+    const opt = noticePicker.selectedOptions[0];
+    const chosen = draft.noticeId ? opt?.textContent.trim() ?? '' : '';
+    noticeNote.textContent = !draft.noticeId
+      ? 'Residents will see the question and nothing behind it.'
+      : /owners only/.test(chosen) && draft.showTenants
+        ? 'That notice is owners-only, but this poll is set to show tenants. '
+          + 'They will see the poll without the notice.'
+        : 'The poll will link to that notice, and the notice will link back.';
     const closesAt = istFieldToIso(draft.closesAt);
     const verdict = validatePoll({
       title: draft.title, body: draft.body, multi: draft.multi,
@@ -414,6 +445,7 @@ function showComposer(me) {
         maxChoices: draft.multi ? Number(draft.maxChoices) : null,
         showTenants: draft.showTenants,
         closesAt: istFieldToIso(draft.closesAt),
+        noticeId: draft.noticeId ? Number(draft.noticeId) : null,
         options: packOptions(draft.options),
       });
       trackAction('poll.create');
@@ -428,7 +460,7 @@ function showComposer(me) {
   closes.addEventListener('input', () => { draft.closesAt = closes.value; check(); });
 
   const tenants = el('input', { type: 'checkbox' });
-  tenants.addEventListener('change', () => { draft.showTenants = tenants.checked; });
+  tenants.addEventListener('change', () => { draft.showTenants = tenants.checked; check(); });
 
   setChildren(main,
     el('a', { class: 'linkish', href: '/notices' }, '‹ Notices'),
@@ -439,6 +471,9 @@ function showComposer(me) {
     field('What it is about', 'body', 'textarea', { rows: '3' }),
     optionsBox,
     typeBox,
+    el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+      el('span', { class: 'label' }, 'Is this about a notice?'),
+      noticePicker, noticeNote),
     el('label', { class: 'stack', style: 'gap:var(--s-2)' },
       el('span', { class: 'label' }, 'Closes — the building’s time (IST)'),
       closes, closesNote),
@@ -637,6 +672,29 @@ function ballotPanel(p) {
 
   setChildren(wrap, open);
   return wrap;
+}
+
+
+/**
+ * The notice this poll is about.
+ *
+ * A card rather than a bare link: a voter has to decide whether what is behind
+ * it is worth leaving the vote for, and "see the notice" tells them nothing
+ * while the title and the file count do.
+ *
+ * Absent entirely when the server sent no `notice` — which covers both a poll
+ * that stands alone and a poll whose notice this reader may not open. The
+ * server decides which; the screen cannot tell the two apart, and should not.
+ */
+function noticeCard(p) {
+  if (!p.notice) return null;
+  const files = p.notice.attachmentCount;
+  return el('a', { class: 'card card--linked', href: `/notices?id=${p.notice.id}` },
+    el('p', { class: 'small muted' }, 'The notice behind this poll'),
+    el('b', {}, p.notice.title),
+    files
+      ? el('p', { class: 'small muted' }, `${files} file${files > 1 ? 's' : ''} attached`)
+      : null);
 }
 
 const note = (text, extra = '') =>
