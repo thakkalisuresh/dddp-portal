@@ -42,10 +42,11 @@ describe('the letters', () => {
     }
   });
 
-  it('DOES carry the count once the result is published', () => {
-    // By the time this is queued the count is already visible to every
-    // resident who could vote. Withholding it would be notifying somebody that
-    // a number exists.
+  it('carries the winner and the turnout, and NOT the split', () => {
+    // An email is a permanent copy outside the portal. Unpublishing takes the
+    // count off the screen; it cannot take it out of ninety inboxes. So the
+    // outcome travels and the per-option breakdown stays where withdrawing it
+    // still means something.
     const body = words(pollEmail('result', {
       ...full,
       result: {
@@ -54,8 +55,11 @@ describe('the letters', () => {
         flats: 70, flatsTotal: 89,
       },
     }));
+    expect(body).toContain('Shalimar Waterproofing');
     expect(body).toContain('70 of 89 flats voted');
-    expect(body).toContain('51 flats');
+    // The loser's number must not be in the letter.
+    expect(body).not.toContain('19 flats');
+    expect(body).not.toContain('51 flats');
   });
 
   it('reports a tie and does not resolve it', () => {
@@ -84,10 +88,6 @@ describe('the letters', () => {
     for (const kind of ['opened', 'reminder']) {
       expect(words(pollEmail(kind, full)), kind).toContain('IST');
     }
-  });
-
-  it('says the reminder is the only one, because it is', () => {
-    expect(words(pollEmail('reminder', full))).toMatch(/only reminder/i);
   });
 
   it('says a published result is the count alone', () => {

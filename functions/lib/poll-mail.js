@@ -80,8 +80,6 @@ export function pollEmail(kind, {
         ...optionRows,
         figure(deadlineShort(closesAt), 'voting closes · IST'),
         action('Vote now', url),
-        aside('One vote per flat, and it belongs to the flat’s owner. Results '
-          + 'are not shown while voting is open.'),
       ],
     };
   }
@@ -95,11 +93,6 @@ export function pollEmail(kind, {
         ...optionRows,
         figure(deadlineShort(closesAt), 'voting closes · IST'),
         action('Vote now', url),
-        // Said plainly, because a resident who has decided not to vote should
-        // know this is the only chase they will get rather than bracing for
-        // three more. reminders.js records the committee reaching the same
-        // conclusion about unpaid bills.
-        aside('This is the only reminder we will send about this poll.'),
       ],
     };
   }
@@ -124,11 +117,14 @@ export function pollEmail(kind, {
           ? [para(`The vote is tied between ${leaders.map((o) => o.label).join(' and ')}. `
               + 'The committee will decide from here.'), para(turnout)]
           : [para('Nobody voted.')]),
-      ...(counted.length
-        ? [heading('Every option'),
-           details(counted.map((o) => [o.label, `${o.votes} ${o.votes === 1 ? 'flat' : 'flats'}`]))]
-        : []),
-      action('See the result', url),
+      // THE WINNER AND THE TURNOUT, AND NOT THE SPLIT. Decided 2026-09-10.
+      //
+      // An email is a permanent copy outside the portal: the committee can
+      // unpublish a result and the screen takes it back, but ninety inboxes
+      // keep whatever was sent. So the letter carries the outcome — which is
+      // what a resident who voted actually wants — and the per-option counts
+      // stay on the portal, where withdrawing them still means something.
+      action('See the full result', url),
       aside('The result is the count only. How each flat voted is not shown — '
         + 'not to residents, and not to the committee.'),
     ],

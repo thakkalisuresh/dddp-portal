@@ -261,9 +261,50 @@ function istFieldToIso(value) {
 }
 
 const draft = {
-  title: '', body: '', options: ['', ''], multi: false, maxChoices: 2,
-  closesAt: '', showTenants: false,
+  title: '', body: '',
+  // {label, sub}. The note is what lets an option carry the thing that decides
+  // it — a price, a warranty, a time — without stuffing it into the label and
+  // making every option a paragraph.
+  options: [{ label: '', sub: '' }, { label: '', sub: '' }],
+  multi: false, maxChoices: 2, closesAt: '', showTenants: false,
 };
+
+/**
+ * One option: what it is, and the note underneath.
+ *
+ * Shared by the composer and the edit form, so the two cannot drift into
+ * offering different fields for the same row.
+ */
+function optionRow(list, i, { onChange, onRemove }) {
+  const o = list[i];
+  const label = el('input', {
+    class: 'input', value: o.label ?? '', placeholder: `Option ${i + 1}`,
+  });
+  label.addEventListener('input', () => { o.label = label.value; onChange(); });
+
+  const sub = el('input', {
+    class: 'input input--sub', value: o.sub ?? '',
+    placeholder: 'Note — optional. A price, a warranty, a time',
+  });
+  sub.addEventListener('input', () => { o.sub = sub.value; onChange(); });
+
+  const remove = list.length > 2
+    ? el('button', {
+        class: 'btn btn--quiet btn--sm', type: 'button',
+        'aria-label': `Remove option ${i + 1}`, onclick: () => onRemove(i),
+      }, 'Remove')
+    : null;
+
+  return el('div', { class: 'optrow' },
+    el('div', { class: 'row row--between', style: 'gap:var(--s-2);align-items:center' },
+      label, remove),
+    sub);
+}
+
+/** The draft's options as the API wants them: trimmed, and empties dropped. */
+const packOptions = (list) => list
+  .filter((o) => (o.label ?? '').trim())
+  .map((o) => ({ label: o.label.trim(), sub: (o.sub ?? '').trim() || null }));
 
 function showComposer(me) {
   const feedback = el('div', {});
@@ -285,31 +326,20 @@ function showComposer(me) {
   function drawOptions() {
     setChildren(optionsBox,
       el('span', { class: 'label' }, 'Options'),
-      ...draft.options.map((value, i) => {
-        const input = el('input', {
-          class: 'input', value, placeholder: `Option ${i + 1}`, style: 'flex:1',
-        });
-        input.addEventListener('input', () => { draft.options[i] = input.value; check(); });
-        const remove = draft.options.length > 2
-          ? el('button', {
-              class: 'btn btn--quiet btn--sm', type: 'button',
-              'aria-label': `Remove option ${i + 1}`,
-              onclick: () => { draft.options.splice(i, 1); drawOptions(); check(); },
-            }, 'Remove')
-          : null;
-        return el('div', { class: 'row row--between', style: 'gap:var(--s-2);align-items:center' },
-          input, remove);
-      }),
+      ...draft.options.map((_, i) => optionRow(draft.options, i, {
+        onChange: check,
+        onRemove: (n) => { draft.options.splice(n, 1); drawOptions(); check(); },
+      })),
       draft.options.length < MAX_OPTIONS
         ? el('button', {
             class: 'btn btn--ghost btn--sm', type: 'button',
             onclick: () => {
-              draft.options.push('');
+              draft.options.push({ label: '', sub: '' });
               drawOptions();
               check();
               // Focused so the count in the rule line moves as they type,
               // rather than after they go hunting for the new box.
-              optionsBox.querySelectorAll('input')[draft.options.length - 1]?.focus();
+              optionsBox.querySelectorAll('input')[(draft.options.length - 1) * 2]?.focus();
             },
           }, 'Add an option')
         : el('p', { class: 'small' }, `${MAX_OPTIONS} options is the maximum.`));
@@ -342,7 +372,7 @@ function showComposer(me) {
 
   /** The rule in the words the voter will meet it in, not the setting's name. */
   function drawRule() {
-    const filled = draft.options.filter((o) => o.trim()).length;
+    const filled = draft.options.filter((o) => (o.label ?? '').trim()).length;
     const blanks = draft.options.length - filled;
     const of = filled ? ` of the ${filled} option${filled === 1 ? '' : 's'}` : '';
     const cap = Number(draft.maxChoices);
@@ -363,7 +393,7 @@ function showComposer(me) {
     const verdict = validatePoll({
       title: draft.title, body: draft.body, multi: draft.multi,
       maxChoices: draft.multi ? Number(draft.maxChoices) : null,
-      options: draft.options.filter((o) => o.trim()).map((label) => ({ label })),
+      options: packOptions(draft.options),
       closesAt, now: new Date().toISOString(),
     });
 
@@ -393,7 +423,7 @@ function showComposer(me) {
         maxChoices: draft.multi ? Number(draft.maxChoices) : null,
         showTenants: draft.showTenants,
         closesAt: istFieldToIso(draft.closesAt),
-        options: draft.options.filter((o) => o.trim()).map((label) => ({ label: label.trim() })),
+        options: packOptions(draft.options),
       });
       trackAction('poll.create');
       location.href = `/polls?id=${id}`;
@@ -509,6 +539,24 @@ function editForm(p) {
   const frozen = Boolean(p.optionsFrozen);
   const patch = {};
 
+  // A working copy. Edits must not touch what is on screen until Save, or
+  // Cancel would leave the reader looking at changes the server never took.
+  const opts = p.options.map((o) => ({ label: o.label, sub: o.sub ?? '' }));
+  const optionsBox = el('div', { class: 'stack', style: 'gap:var(--s-2)' });
+  const drawOpts = () => setChildren(optionsBox,
+    el('span', { class: 'label' }, 'Options'),
+    ...opts.map((_, i) => optionRow(opts, i, {
+      onChange: () => { patch.options = packOptions(opts); },
+      onRemove: (n) => { opts.splice(n, 1); patch.options = packOptions(opts); drawOpts(); },
+    })),
+    opts.length < MAX_OPTIONS
+      ? el('button', {
+          class: 'btn btn--ghost btn--sm', type: 'button',
+          onclick: () => { opts.push({ label: '', sub: '' }); drawOpts(); },
+        }, 'Add an option')
+      : null);
+  if (!frozen) drawOpts();
+
   const line = (label, key, value, extra = {}) => {
     const input = el(extra.tag === 'textarea' ? 'textarea' : 'input',
       { class: 'input', ...(extra.attrs ?? {}) });
@@ -549,12 +597,8 @@ function editForm(p) {
       { attrs: { type: 'datetime-local' } }),
     el('label', { class: 'checkline' }, tenants,
       el('span', {}, el('b', {}, 'Let tenants read this poll'))),
-    frozen
-      ? note('The options froze when the first vote was cast. The question, the '
-        + 'description and the closing time can still change.')
-      : el('p', { class: 'small' },
-          'Nobody has voted yet, so the options can still be changed from the '
-          + 'poll’s own screen once this is saved.'),
+    frozen ? note('The options froze when the first vote was cast. The question, '
+      + 'the description and the closing time can still change.') : optionsBox,
     errors, save, cancel);
 }
 
