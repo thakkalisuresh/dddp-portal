@@ -11,18 +11,27 @@
   .qrow {
     display: flex; gap: var(--s-4); align-items: center;
     padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--border);
+    /* Wraps, because the three buttons are ~250px and will not share a 358px
+       row with a thumbnail and the flat. Without this the row cannot wrap, so
+       .qmeta — the only shrinkable item — was squeezed to a computed width of
+       ZERO on a phone, and the flat, payer, amount and match status overflowed
+       it and painted on top of the buttons. Every row, unreadable. */
+    flex-wrap: wrap;
   }
   .qrow--bad { background: var(--overdue-wash); }
   .qthumb {
     width: 46px; height: 62px; object-fit: cover; flex: none;
     border: 1px solid var(--border); border-radius: var(--radius); background: #EDEDE8;
   }
-  .qmeta { flex: 1; min-width: 0; }
+  /* A real basis, not `flex: 1`. Wrapping only helps if some item declines to
+     shrink to nothing first: with a basis of 0 the meta simply collapses again
+     and the row never wraps. min-width stays 0 so long text still truncates. */
+  .qmeta { flex: 1 1 12rem; min-width: 0; }
   .qmeta b { font-family: var(--font-ui); }
   .qmeta div { font-size: var(--text-sm); color: var(--ink-muted);
                font-family: var(--font-ui); font-variant-numeric: tabular-nums; }
   .qmeta .bad { color: var(--overdue); }
-  .qact { display: flex; gap: var(--s-2); flex: none; }
+  .qact { display: flex; gap: var(--s-2); flex: none; margin-left: auto; }
   .sect { padding: var(--s-4); border-bottom: 1px solid var(--border); background: var(--surface);
           display: flex; align-items: center; gap: var(--s-4); flex-wrap: wrap; }
   .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: var(--s-3); }

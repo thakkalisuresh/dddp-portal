@@ -107,6 +107,41 @@ function renderTabs() {
       ? el('a', { class: 'tab', href: t.href }, t.label)
       : el('button', { class: 'tab', type: 'button', 'data-tab': t.id,
                        onclick: () => show(t.id) }, t.label)));
+  nav.addEventListener('scroll', () => syncTabFade(nav), { passive: true });
+  addEventListener('resize', () => syncTabFade(nav));
+  syncTabFade(nav);
+}
+
+/**
+ * Which edge of the tab strip has more tabs beyond it.
+ *
+ * The strip scrolls with its scrollbar hidden, so without this nothing on
+ * screen says there is anything past the edge. The 1px slack absorbs the
+ * fractional scroll positions a trackpad and a zoomed viewport produce, which
+ * otherwise leave the fade on at the very end of the scroll.
+ */
+function syncTabFade(nav) {
+  const max = nav.scrollWidth - nav.clientWidth;
+  nav.classList.toggle('tabs--more-right', max > 1 && nav.scrollLeft < max - 1);
+  nav.classList.toggle('tabs--more-left', max > 1 && nav.scrollLeft > 1);
+}
+
+/**
+ * Bring the current tab into view.
+ *
+ * Landing on #residents put the strip at scrollLeft 0 with the tab you are
+ * actually on somewhere off the right edge — the one tab that must be visible.
+ *
+ * scrollLeft rather than scrollIntoView(): the latter also scrolls the nearest
+ * scrollable ancestor, so on a short viewport it moved the PAGE to bring a tab
+ * into view, and the admin console opened halfway down itself.
+ */
+function scrollTabIntoView(nav) {
+  const current = nav.querySelector('.tab[aria-current="true"]');
+  if (!current) return;
+  const target = current.offsetLeft - (nav.clientWidth - current.offsetWidth) / 2;
+  nav.scrollLeft = Math.max(0, target);
+  syncTabFade(nav);
 }
 
 async function show(id) {
@@ -124,6 +159,7 @@ async function show(id) {
   for (const button of document.querySelectorAll('[data-tab]')) {
     button.setAttribute('aria-current', String(button.dataset.tab === tab.id));
   }
+  scrollTabIntoView($('#tabs'));
   main.replaceChildren(el('p', { class: 'muted' }, 'Loading…'));
   try {
     main.replaceChildren(await tab.render());
