@@ -4,7 +4,7 @@ Decided 2026-09-09 in one sitting, question by question. This is the record of
 what was chosen and why, written before the code so the reasoning survives the
 implementation. Prototype: `docs/documents-polls-prototype.html` (Polls tab).
 
-The companion feature, the document library, is parked as **B28**.
+The companion feature, the document library, is parked as **B30**.
 
 ---
 
