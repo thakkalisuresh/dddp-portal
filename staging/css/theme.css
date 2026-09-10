@@ -1,0 +1,211 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Diamond Park — staging design system
+   ───────────────────────────────────────────────────────────────────────────
+   A ground-up rework of the portal's visual language, built against Apple's
+   Human Interface Guidelines as adapted for the web.
+
+   The audience decides almost everything here: retired residents of a Thrissur
+   apartment block, on mid-range Android phones, in bright daylight, who use
+   this once a month to find out what they owe and pay it. So:
+
+     · System fonts, because they already honour the reader's own text-size
+       setting (HIG Typography — "access all system fonts").
+     · 17px body minimum, and a text-size control on top of that, because the
+       HIG mobile default is 17pt and this readership sits above the average age.
+     · Semantic colour tokens with real light AND dark variants (HIG Color —
+       "make sure all your app's colors work well in light, dark, and increased
+       contrast contexts"). The old portal was light-only on purpose; a phone
+       held in a dark bedroom disagrees.
+     · Status never carried by colour alone — every chip pairs a hue with a
+       glyph and a word (HIG Accessibility — "convey information with more
+       than color alone").
+     · 48px minimum targets with 12px of air around them (HIG Accessibility —
+       mobility).
+
+   One accent, and it stays green: residents have logged in against a green
+   button for years, and continuity is worth more than novelty.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── type scale ──────────────────────────────────────────────────────────
+     Named after their role, not their size, so a screen asks for "the amount"
+     rather than "44 pixels". --scale is driven by the text-size control; every
+     step is derived from it, so one tap moves the whole interface together
+     and the hierarchy survives the change (HIG Typography — "maintain the
+     relative hierarchy … when people adjust text sizes").                   */
+  --scale: 1;
+
+  --t-caption:   calc(0.706rem * var(--scale));  /* 12 — timestamps, meta     */
+  --t-footnote:  calc(0.765rem * var(--scale));  /* 13 — field hints          */
+  --t-subhead:   calc(0.882rem * var(--scale));  /* 15 — list subtitles       */
+  --t-callout:   calc(0.941rem * var(--scale));  /* 16 — dense tables         */
+  --t-body:      calc(1rem * var(--scale));      /* 17 — the default          */
+  --t-title3:    calc(1.176rem * var(--scale));  /* 20 — card headings        */
+  --t-title2:    calc(1.294rem * var(--scale));  /* 22 — section headings     */
+  --t-title1:    calc(1.647rem * var(--scale));  /* 28 — screen titles        */
+  --t-large:     calc(2rem * var(--scale));      /* 34 — large title on scroll*/
+  --t-amount:    calc(3.176rem * var(--scale));  /* 54 — the bill, and nothing
+                                                    else on the screen        */
+
+  --w-regular: 400;
+  --w-medium:  500;
+  --w-semi:    600;
+  --w-bold:    700;
+
+  --lh-tight: 1.12;
+  --lh-snug:  1.3;
+  --lh-body:  1.47;
+
+  /* The system stack. -apple-system first so an iPhone gets SF Pro and its
+     optical sizing; Roboto for the Android majority; Segoe on the committee's
+     Windows laptops. No webfont download at all — on Kerala mobile data that
+     is the single largest thing this file does for perceived speed.          */
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text',
+          'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  /* Money and meter readings only. Tabular figures so a column of rupees does
+     not jitter, and so 1 and 7 cannot be mistaken for each other at a glance. */
+  --font-num: var(--font);
+
+  /* ── space ── 4px base, named by step ─────────────────────────────────── */
+  --sp-1: 4px;   --sp-2: 8px;   --sp-3: 12px;  --sp-4: 16px;
+  --sp-5: 20px;  --sp-6: 24px;  --sp-7: 32px;  --sp-8: 40px;  --sp-9: 56px;
+
+  /* Gutter either side of content. 16 on a phone, 20 once there is room. */
+  --gutter: 16px;
+
+  /* ── shape ───────────────────────────────────────────────────────────────
+     Larger radii than the old portal's 4px. A 14px card corner is the single
+     clearest signal that a group of rows belongs together, and it is what
+     every phone OS this readership uses already looks like.                  */
+  --r-card:  14px;
+  --r-btn:   12px;
+  --r-field: 12px;
+  --r-chip:  8px;
+  --r-pill:  999px;
+
+  /* ── targets ── 48 exceeds the 44pt HIG minimum, deliberately ─────────── */
+  --tap: 48px;
+  --tap-lg: 54px;
+
+  --measure: 62ch;
+  --page-max: 640px;
+  --wide-max: 1080px;
+
+  --dur: 220ms;
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);   /* the iOS sheet curve */
+}
+
+/* ═══ light ════════════════════════════════════════════════════════════════
+   Grouped-background family, in the HIG sense: the page is the recessed
+   plane, cards sit on top of it. That inversion — grey page, white cards —
+   is what makes a list read as a list without drawing a single border.      */
+:root,
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg:          #F2F2F7;   /* the page                                      */
+  --bg-elevated: #FFFFFF;   /* sheets, modals                                */
+  --surface:     #FFFFFF;   /* cards, list groups                            */
+  --surface-2:   #F7F7FA;   /* a row pressed, a table header                 */
+  --surface-3:   #EDEDF2;   /* skeletons, tracks                             */
+
+  --label:      #17171C;    /* 16.9:1                                        */
+  --label-2:    #56565E;    /* 7.4:1  — subtitles, meta                      */
+  /* The faintest text allowed anywhere, and it is checked against the GREY
+     PAGE, not against white — group titles and field hints sit on --bg, which
+     is the harder background. #79797F measured 4.33 on white and only 3.88 on
+     the page; this clears 4.5 on both.                                       */
+  --label-3:    #66666D;    /* 5.7:1 on surface · 5.1:1 on the page           */
+  --label-on:   #FFFFFF;    /* text on a filled accent                       */
+
+  --separator:  #E3E3E8;    /* hairline between rows                         */
+  --border:     #D4D4DA;    /* an actual edge — fields, outline buttons      */
+
+  --accent:      #056B4A;   /* 5.7:1 on white — links, filled buttons        */
+  --accent-hover:#04563C;
+  --accent-tint: #E7F4EE;   /* tinted button ground, selected row            */
+  --accent-line: #B9DCCB;
+
+  --good:      #056B4A;  --good-tint:  #E7F4EE;  --good-line:  #B9DCCB;
+  --warn:      #8A5300;  --warn-tint:  #FDF3E3;  --warn-line:  #EBD5AC;
+  --bad:       #B3251C;  --bad-tint:   #FDECEA;  --bad-line:   #EFC4C0;
+  --info:      #10559E;  --info-tint:  #E9F1FB;  --info-line:  #BCD4EE;
+
+  /* Elevation is nearly absent by design. A grouped list needs none, and the
+     two places that do get one use it to say "this floats above the page",
+     never as decoration.                                                     */
+  --shadow-1: 0 1px 2px rgb(20 20 30 / 0.06), 0 1px 1px rgb(20 20 30 / 0.04);
+  --shadow-2: 0 8px 28px rgb(20 20 30 / 0.13), 0 2px 6px rgb(20 20 30 / 0.07);
+  --scrim: rgb(20 20 30 / 0.34);
+  --bar-bg: rgb(255 255 255 / 0.82);
+}
+
+/* ═══ dark ═════════════════════════════════════════════════════════════════
+   Not an inversion. The page goes to true black so an OLED phone in a dark
+   room stops glowing, cards lift to #1C1C1E, and the accent brightens —
+   #056B4A on a dark card is 1.6:1 and effectively invisible, so dark mode
+   gets its own green rather than the same one dimmed.                        */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg:          #000000;
+  --bg-elevated: #1C1C1F;
+  --surface:     #1C1C1F;
+  --surface-2:   #26262A;
+  --surface-3:   #303036;
+
+  --label:      #F5F5F7;
+  --label-2:    #A3A3AB;   /* 7.0:1 on surface                               */
+  --label-3:    #8E8E96;   /* 5.2:1 on surface · 6.5:1 on the black page      */
+  --label-on:   #05231A;   /* dark ink on the bright accent fill             */
+
+  --separator:  #33333A;
+  --border:     #46464E;
+
+  --accent:      #3ED598;  /* 9.6:1 on --surface                             */
+  --accent-hover:#5BE0AB;
+  --accent-tint: #12362A;
+  --accent-line: #1F5946;
+
+  --good:      #3ED598;  --good-tint:  #12362A;  --good-line:  #1F5946;
+  --warn:      #FFB84D;  --warn-tint:  #3A2A0C;  --warn-line:  #5C441A;
+  --bad:       #FF6F63;  --bad-tint:   #3A1614;  --bad-line:   #5E2521;
+  --info:      #6BAEF5;  --info-tint:  #10263D;  --info-line:  #1E3F63;
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-2: 0 10px 34px rgb(0 0 0 / 0.62);
+  --scrim: rgb(0 0 0 / 0.6);
+  --bar-bg: rgb(28 28 31 / 0.82);
+}
+
+/* Follow the OS unless the reader has said otherwise. The [data-theme] rules
+   above win over this because they are more specific, which is exactly the
+   precedence a manual choice should have.                                    */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: #000000; --bg-elevated: #1C1C1F; --surface: #1C1C1F;
+    --surface-2: #26262A; --surface-3: #303036;
+    --label: #F5F5F7; --label-2: #A3A3AB; --label-3: #8E8E96; --label-on: #05231A;
+    --separator: #33333A; --border: #46464E;
+    --accent: #3ED598; --accent-hover: #5BE0AB; --accent-tint: #12362A; --accent-line: #1F5946;
+    --good: #3ED598; --good-tint: #12362A; --good-line: #1F5946;
+    --warn: #FFB84D; --warn-tint: #3A2A0C; --warn-line: #5C441A;
+    --bad: #FF6F63; --bad-tint: #3A1614; --bad-line: #5E2521;
+    --info: #6BAEF5; --info-tint: #10263D; --info-line: #1E3F63;
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 0.5);
+    --shadow-2: 0 10px 34px rgb(0 0 0 / 0.62);
+    --scrim: rgb(0 0 0 / 0.6);
+    --bar-bg: rgb(28 28 31 / 0.82);
+  }
+}
+
+/* Text-size control. Three steps, and the largest is 1.35× — a shade over the
+   200% enlargement the HIG asks for once the browser's own zoom is counted on
+   top, without the layout having to become a different design.               */
+:root[data-text='l']  { --scale: 1.15; }
+:root[data-text='xl'] { --scale: 1.35; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur: 1ms; }
+}

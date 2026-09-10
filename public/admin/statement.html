@@ -20,10 +20,16 @@
   .tally div { display: flex; flex-direction: column; gap: 2px; }
   .tally b { font-size: var(--text-lg); }
   .tally span { font-size: var(--text-sm); color: var(--ink-muted); }
+  /* Wraps for the same reason .qrow does: the action buttons will not share a
+     358px row with the flat, the verdict and the amounts. This row never
+     collapsed its meta to zero — `align-items: flex-start` and a wrapping
+     .qact spared it that — but 112px of gutter turned one sentence into seven
+     ragged lines beside a column of empty space. */
   .rrow { display: flex; gap: var(--s-4); align-items: flex-start;
-          padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--border); }
+          padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--border);
+          flex-wrap: wrap; }
   .rrow--bad { background: var(--overdue-wash); }
-  .rmeta { flex: 1; min-width: 0; font-family: var(--font-ui); }
+  .rmeta { flex: 1 1 12rem; min-width: 0; font-family: var(--font-ui); }
   .rmeta b { display: block; }
   .rmeta div { font-size: var(--text-sm); color: var(--ink-muted); font-variant-numeric: tabular-nums; }
   .rmeta .bad { color: var(--overdue); }

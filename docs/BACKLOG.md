@@ -505,6 +505,12 @@ so coverage should grow on its own.
 exactly this population if the onboarding field becomes required. Same gate,
 same number, and neither can be answered before the other.
 
+**B28 is a third answer to the same population** (added 2026-09-09): a reset
+code over WhatsApp needs only `mobile`, which every resident has by definition.
+It does not change this entry's gate — the count still decides whether anything
+is worth building — but it means "no email" may stop implying "no self-service"
+without email coverage having to grow at all.
+
 **Do not build anything here until the roster is in and the number is known.**
 If it turns out to be two households, a reset by hand is the right answer and
 always was — **by the superadmin, not an admin**, as of 2026-08-12. That is the
@@ -954,6 +960,159 @@ images, and it depends on somebody remembering — which is the dependency this
 whole feature exists to remove. It is worth keeping as the one copy that does
 not depend on Google, and a quarterly download before the AGM is a habit worth
 having, but it does not relieve the automated path.
+
+## B28 — WhatsApp as a second channel
+
+Raised 2026-09-09. Three uses were asked for: reset codes, unpaid-bill chases,
+and an announcement when a gas bill or a notice is published. They do not have
+one answer, and the difference between them is the whole entry.
+
+**Why this is worth an entry at all.** `mobile` is `NOT NULL UNIQUE` and has
+been E.164 since migration 0009 — it is the login id, so it is the one contact
+field every resident is guaranteed to have. Email is nullable and always was.
+Every channel decision this portal has taken so far routes through an address
+that some households do not have, which is B5 and B26 in one sentence.
+
+### The channel: Meta's Cloud API, not a self-hosted client
+
+The trigger for the question was OpenWA — a self-hosted gateway that drives a
+real WhatsApp session through `whatsapp-web.js` or Baileys. MIT, genuinely
+free, ~14k stars, actively maintained. **Rejected, and not on licence or cost.**
+
+It needs a long-lived Node process holding a socket and a headless Chromium.
+This portal is Workers and D1; there is no such process and adding one means a
+VPS to patch, a QR session that drops silently, and a 3am dependency the
+late-fee cron does not currently have. And the session would be the
+association's own number, driven by a reverse-engineered client, sending OTPs —
+the single most ban-prone pattern there is. Losing that number loses the way
+residents reach the committee, not just the automation. A machine holding a
+live session can also read every message the association has ever received.
+
+Cloud API is HTTPS in and HTTPS out. A Worker can do all of it.
+
+### It needs a second number, and that is not negotiable
+
+A number registered on Cloud API can never again be used in the WhatsApp app.
+The association's number is in the residents' group and is used for ordinary
+conversation, so it cannot move. The shape is two numbers: a new one that is
+never opened by a human and does the sending, and the existing one which stays
+human and stays in the group.
+
+### The group announcement does not work, and should not be forced
+
+Cloud API's Groups API caps a group at **8 participants**, requires an Official
+Business Account, and cannot join a group that already exists. For 99 flats it
+is not a partial answer, it is no answer.
+
+**Do not reach for OpenWA to close this gap.** It is the one thing OpenWA can
+genuinely do, and it is also the least valuable of the three: one message a
+month that a committee member sends in a single tap. The substitute is better
+anyway — send the announcement as 99 individual utility messages, each linking
+to that resident's own statement, rather than one generic group post. Same
+information, addressed to the person it concerns.
+
+### What it costs
+
+Rates are India, effective 2026-01-01, billed in rupees. Meta charges nothing
+for the account, the API, hosting, verification, or template approval.
+
+| Line | Rate | Monthly, ~99 flats |
+|---|---|---|
+| Reset codes — authentication template | ₹0.115 | ~₹1.73 |
+| Unpaid-bill chases — utility template | ₹0.115 | ~₹6.90 |
+| Bill published — utility template | ₹0.115 | ~₹11.50 |
+| Notices, two a month — utility template | ₹0.115 | ~₹23.00 |
+| GST | 18% | ₹7.76 |
+| | | **≈ ₹51/month** |
+
+Plus a SIM: ~₹200 once, and ~₹2,000 a year of annual-validity recharge so the
+telco does not recycle the number. **≈ ₹2,600/year all in, under ₹26 a flat.**
+
+**The one figure that can move.** Marketing templates are ₹0.8631 — 7.5× — and
+Meta, not us, decides the category. A notice untied to a transaction ("AGM on
+Sunday") can land there and turn that ₹23 line into ₹173. This is knowable
+before a single message is sent: the Message Templates API returns `category`
+alongside `correct_category`, a mismatch takes effect on the 1st of the next
+month rather than immediately, and there are 60 days to appeal. Submit one
+notice template and read the category back before designing around the cheap
+number.
+
+**Actual spend is observable per message, so none of this needs estimating for
+long.** Every send fires a status webhook carrying `pricing.billable` and
+`pricing.category` — the category Meta really billed. Log it in D1 next to the
+send the way `announce` already records send status, and the monthly cost is a
+query rather than a guess.
+
+**For scale, the alternative.** MyGate, ADDA, ApnaComplex and NoBrokerHood all
+bundle WhatsApp and charge ₹3–15 per flat per month — ₹3,600–18,000 a year here.
+They are charging for the billing engine we have already written. Worth knowing
+when somebody at an AGM proposes buying one.
+
+### The part actually worth building: inbound is free
+
+**Business-initiated messaging costs money. Resident-initiated conversation
+costs nothing.** A resident messaging the number opens a 24-hour customer
+service window; everything sent inside it — text, images, reply buttons (3),
+list messages (10 rows), Flows — is a service message and has been free since
+November 2024. Each reply resets the timer.
+
+So a bot costs ₹0 to run, and the webhook it needs is an HTTPS POST handler,
+which is what Pages Functions already are. No always-on process. This is the
+thing OpenWA was going to charge a VPS for.
+
+Two flows fall out almost free:
+
+**Payment proof by screenshot — the one to build first.** A resident sends the
+image, the webhook carries a media id, one GET resolves it, and it goes into
+`PROOFS` and through `vision.js` unchanged — that prompt already expects
+"whatever their bank or payment app produced". It deletes a login, a
+navigation and a file picker from the highest-friction flow in the portal, and
+the vision model does not care that the JPEG arrived over WhatsApp.
+
+**Dues self-service.** A list message with the balance, a button to the
+statement, a button to send proof. Converts the most common question the
+treasurer is asked into something nobody has to answer.
+
+Identity needs no auth step: the sender's number IS the login id. State that
+plainly rather than letting it feel clever — whoever holds the handset sees the
+bill, which is the same trust model as the OTP, and bills go to the occupant
+anyway.
+
+**Traps, all cheap to avoid and expensive to miss.** Media URLs expire in
+minutes and need the access token, so download immediately and never store the
+URL. Verify `X-Hub-Signature-256` on every webhook — `crypto.js` has the HMAC —
+because an unverified endpoint is a public write path into the proofs bucket.
+Reply inside 24 hours or fall back to a template.
+
+### What is already built, and what is not
+
+`waLink(mobile, text)` at `functions/lib/tenancy.js:377` builds one-tap chat
+links correctly, including the E.164 trap that made the old `wa.me/91${mobile}`
+form dead. `docs/BILLING-TAB.md` already has the prefilled chase message, the
+deliberate refusal to put a payment link in it, and the open question about a
+personal name appearing beside association wording. **All of that stands and is
+unaffected by this entry** — it is the human path, it costs nothing, and it
+should ship regardless of whether B28 is ever taken.
+
+Nothing else exists. No Meta account, no number, no templates, no webhook.
+
+### What has to be decided before any of it
+
+**Meta business verification is probably not needed.** An unverified WABA can
+reach 250 unique recipients per rolling 24 hours; the building is 99. If it is
+ever wanted, a registered society qualifies on a registration certificate and
+PAN, and near enough every rejection reported is the entity name in Business
+Manager not matching the certificate character for character.
+
+**The card is the real question.** Meta billing needs a card on file, and at
+₹51/month it lands on a committee member's personal card by default. That is
+the third instance of the pattern already flagged for the Drive account in
+`docs/PRIVACY.md` and the association Gmail in W1: one named person holding an
+association asset. Small money, but it should be decided rather than defaulted
+into.
+
+**Scope, if this is taken.** Resets and chases over WhatsApp, announcements as
+individual messages, and the inbound bot. Not the group. Not OpenWA.
 
 ---
 

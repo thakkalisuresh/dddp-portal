@@ -1,0 +1,244 @@
+/**
+ * The resident guide, in three trims from one stylesheet.
+ *
+ *   phone  116 x 207 mm   the PDF the 99 flats are sent. Same proportion as a
+ *                         phone screen, so nothing shrinks when it is read.
+ *   a5     148 x 210 mm   the printed copy. Two up on a sheet of A4.
+ *   card   148 x 105 mm   A6 landscape. The thing that ends up on a fridge.
+ *
+ * Only the tokens change between trims. No component is redefined, so a trim
+ * cannot drift away from the others — the failure the first version had, where
+ * a print stylesheet quietly stopped matching the screen one.
+ *
+ * Nothing carries meaning by colour alone: every step marker is a number, so
+ * the guide survives a black-and-white photocopy.
+ */
+
+/* ── tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --ink: #101E18;
+  --mute: #586A61;
+  --faint: #8A9891;
+  --line: #DFE7E2;
+  --wash: #F4F8F5;
+  --green: #0B5D3B;
+  --amber: #8A5A00;
+  --amber-wash: #FDF7EC;
+  --red: #A8261E;
+
+  --body: 3.5mm;
+  --small: 3.1mm;
+  --tiny: 2.5mm;
+  --h1: 7.4mm;
+  --h2: 5mm;
+  --kick: 2.6mm;
+  --lead: 1.45;
+  --gap: 3mm;
+  --gap-l: 5mm;
+  --pin: 5.4mm;
+  --screen: 44mm;
+}
+
+body.a5 {
+  --body: 3.6mm; --small: 3.2mm; --tiny: 2.6mm;
+  --h1: 8.6mm; --h2: 5.4mm; --kick: 2.7mm;
+  --gap: 3.4mm; --gap-l: 6mm; --screen: 40mm;
+}
+
+body.card {
+  --body: 3.4mm; --small: 3mm; --tiny: 2.4mm;
+  --h1: 8mm; --h2: 5mm; --kick: 2.5mm;
+  --gap: 3mm; --gap-l: 4mm; --pin: 5.4mm;
+}
+
+/* Greyscale rendering. Tokens only — never a component. */
+body.mono {
+  --green: #000000; --amber: #000000; --red: #000000;
+  --ink: #000000; --mute: #333333; --faint: #666666;
+  --line: #BBBBBB; --wash: #F2F2F2; --amber-wash: #F2F2F2;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Figtree", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  font-size: var(--body);
+  line-height: var(--lead);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, .plat, .num {
+  font-family: "Bricolage Grotesque", "Figtree", Georgia, serif;
+  font-weight: 800;
+  letter-spacing: -.015em;
+  text-wrap: balance;
+}
+
+/* ── page furniture ─────────────────────────────────────────────────── */
+.sheet { page-break-after: always; break-after: page; position: relative; }
+.sheet:last-child { page-break-after: auto; break-after: auto; }
+
+.kick {
+  font-family: "Figtree", sans-serif; font-weight: 700; font-size: var(--kick);
+  letter-spacing: .12em; text-transform: uppercase; color: var(--green);
+}
+h1 { font-size: var(--h1); line-height: 1.03; margin: 1.5mm 0 1.5mm; }
+h2 { font-size: var(--h2); line-height: 1.12; margin: 0 0 1.5mm; }
+.dek { font-size: var(--body); color: var(--mute); margin-bottom: var(--gap); }
+p + p { margin-top: 1.6mm; }
+b, strong { font-weight: 700; }
+
+/* ── the cover ──────────────────────────────────────────────────────── */
+.cover { display: flex; flex-direction: column; height: 100%; }
+.cover h1 { font-size: calc(var(--h1) * 1.35); margin-bottom: 3mm; }
+.cover .assoc {
+  font-family: "Figtree", sans-serif; font-weight: 700; font-size: var(--kick);
+  letter-spacing: .12em; text-transform: uppercase; color: var(--green);
+}
+.cover .sub { font-size: calc(var(--body) * 1.1); color: var(--mute); margin-bottom: var(--gap-l); }
+.cover .assoc { margin-bottom: var(--gap-l); }
+.contents { display: flex; flex-direction: column; margin-bottom: auto; }
+/* The handbook cover leads with a list of the month rather than a contents
+   block, and nothing in it absorbed the slack — so the page ended at its
+   midpoint and the rest was dead paper. This anchors the stamp to the foot. */
+.cover .points { margin-bottom: auto; }
+.cover .kick { margin-bottom: 2mm; }
+.c-row {
+  display: flex; text-decoration: none; color: inherit; gap: 3mm; align-items: baseline;
+  padding: 1.5mm 0; border-top: .3mm solid var(--line);
+  font-size: var(--small);
+}
+.c-row:last-child { border-bottom: .3mm solid var(--line); }
+.c-n {
+  flex: 0 0 5mm; font-family: "Figtree", sans-serif; font-weight: 800;
+  color: var(--green); font-variant-numeric: tabular-nums;
+}
+.cover .stamp {
+  border-top: .4mm solid var(--line); padding-top: 3mm;
+  display: flex; flex-direction: column; gap: .8mm;
+  font-size: var(--tiny); color: var(--faint);
+}
+
+/* ── steps ──────────────────────────────────────────────────────────── */
+.steps { list-style: none; display: flex; flex-direction: column; gap: 2.2mm; }
+.steps li { display: flex; gap: 2.2mm; }
+.steps .n {
+  flex: 0 0 var(--pin); height: var(--pin); border-radius: 50%;
+  background: var(--green); color: #fff; text-align: center;
+  font-family: "Figtree", sans-serif; font-weight: 800;
+  font-size: calc(var(--pin) * .55); line-height: var(--pin);
+  margin-top: .3mm;
+}
+body.mono .steps .n, body.mono .dev-rail .pin b {
+  background: #fff; color: #000; box-shadow: 0 0 0 .35mm #000 inset;
+}
+.steps .r { color: var(--mute); }
+
+/* ── boxes ──────────────────────────────────────────────────────────── */
+.box {
+  background: var(--wash); border-left: .8mm solid var(--green);
+  padding: 2.4mm 3mm; font-size: var(--small);
+}
+.box--warn { background: var(--amber-wash); border-left-color: var(--amber); }
+.box .lab { display: block; font-weight: 700; margin-bottom: .6mm; }
+
+/* ── the month map ──────────────────────────────────────────────────── */
+.flow { display: flex; flex-direction: column; gap: 1.6mm; }
+.node {
+  border: .3mm solid var(--line); border-radius: 2mm;
+  padding: 2.2mm 2.6mm; display: flex; gap: 2.4mm; align-items: flex-start;
+}
+.node--you { border-color: var(--green); border-width: .6mm; background: var(--wash); }
+.node .tag {
+  flex: 0 0 16mm; font-family: "Figtree", sans-serif; font-weight: 700;
+  font-size: var(--tiny); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--faint); padding-top: .6mm;
+}
+.node--you .tag { color: var(--green); }
+.node b { display: block; font-size: var(--body); margin-bottom: .5mm; }
+.node p { font-size: var(--small); color: var(--mute); }
+.node .when { display: block; font-size: var(--tiny); color: var(--faint); margin-top: .8mm; }
+
+/* ── error reference ────────────────────────────────────────────────── */
+.ref { display: flex; flex-direction: column; gap: 2.2mm; }
+.ref-item { border-left: .6mm solid var(--red); padding-left: 2.6mm; }
+.ref-item .quote { font-weight: 700; font-size: var(--small); color: var(--red); margin-bottom: .7mm; }
+.ref-item .answer { font-size: var(--small); color: var(--ink); }
+
+/* ── who to ask ─────────────────────────────────────────────────────── */
+.ask { display: flex; flex-direction: column; gap: 2.4mm; }
+.ask-card { border: .3mm solid var(--line); border-radius: 2mm; padding: 2.6mm 3mm; }
+.ask-card .who { font-weight: 700; font-size: var(--body); margin-bottom: .8mm; }
+.ask-card .what { font-size: var(--small); color: var(--mute); }
+
+/* ── the platform split ─────────────────────────────────────────────── */
+.plat { font-size: var(--h2); display: flex; align-items: center; gap: 2mm; margin-bottom: 2mm; }
+.plat .os {
+  font-family: "Figtree", sans-serif; font-weight: 700; font-size: var(--tiny);
+  letter-spacing: .1em; text-transform: uppercase; color: #fff;
+  background: var(--ink); border-radius: 99mm; padding: .9mm 2mm;
+}
+figcaption { font-size: var(--tiny); color: var(--faint); text-align: center; max-width: 56mm; }
+.drawn figcaption { color: var(--amber); }
+
+/* Two columns, but only where the trim is wide enough to hold them. The phone
+   trim is 116mm and cannot; A5 can. This is the one place the trims genuinely
+   differ in structure rather than in size. */
+.cols { display: flex; flex-direction: column; gap: var(--gap-l); }
+body.a5 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 8mm; align-items: start; }
+
+
+/* ── unnumbered points, for describing a screen ─────────────────────── */
+.points { list-style: none; display: flex; flex-direction: column; gap: 1.8mm; }
+.points li { padding-left: 3.4mm; position: relative; font-size: var(--small); }
+.points li::before {
+  content: ""; position: absolute; left: 0; top: 1.5mm;
+  width: 1.6mm; height: 1.6mm; border-radius: 50%; background: var(--green);
+}
+.points .r { color: var(--mute); }
+
+/* ── two devices in a row, for a flow ───────────────────────────────── */
+.dev-row { display: flex; gap: 5mm; align-items: stretch; justify-content: center; }
+.dev-row .dev-fig { flex: 0 1 auto; justify-content: space-between; }
+
+/* Space after a figure, without a margin on every call site. */
+.after { margin-top: var(--gap); }
+.after + .box, .box + .box { margin-top: var(--gap); }
+
+/* ── FAQ ────────────────────────────────────────────────────────────── */
+.faq { display: flex; flex-direction: column; gap: 2.6mm; }
+.faq-item { border-top: .3mm solid var(--line); padding-top: 2mm; }
+.faq-item .q {
+  font-family: "Bricolage Grotesque", "Figtree", sans-serif; font-weight: 800;
+  font-size: var(--body); margin-bottom: .8mm;
+}
+.faq-item .a { font-size: var(--small); color: var(--mute); }
+
+.fine { font-size: var(--tiny); color: var(--faint); margin-top: 1.5mm; }
+body.card .rule .url { margin-top: auto; }
+
+/* ── the fridge card ────────────────────────────────────────────────── */
+body.card .sheet { display: grid; grid-template-columns: 1fr 1fr; gap: 7mm; height: 100%; align-items: stretch; }
+body.card .sheet > div { display: flex; flex-direction: column; }
+body.card .steps { margin-bottom: auto; }
+body.card .steps { gap: 3.2mm; }
+body.card .rule { border-left: .3mm solid var(--line); padding-left: 6mm; }
+body.card .rule .ask { margin-bottom: auto; }
+.url { font-family: "Bricolage Grotesque", sans-serif; font-weight: 800;
+       font-size: calc(var(--body) * 1.2); color: var(--green); }
+
+/* ── a stack of one-row figures, each with its own line of copy ─────── */
+.rows { display: flex; flex-direction: column; gap: var(--gap); }
+.rows__item { display: flex; flex-direction: column; gap: 1.2mm; }
+.rows__item p { font-size: var(--small); }
+.rows__item .dev-fig { margin: 0; }
+
+/* ── links ──────────────────────────────────────────────────────────── */
+a { color: var(--green); text-decoration: none; border-bottom: .25mm solid var(--line); }
+.contents a, .stamp a, .cover a { border-bottom: 0; }
+.faq-item a, .box a, .dek a, .ask-card a { border-bottom: .25mm solid var(--green); }
+
+/* A caption under a row of figures, rather than under each one. */
+.cap { font-size: var(--tiny); color: var(--faint); text-align: center; margin-top: 1.5mm; }
+.drawn .cap, .cap.drawn { color: var(--amber); }

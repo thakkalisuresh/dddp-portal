@@ -8,11 +8,43 @@
 <link rel="stylesheet" href="../css/tokens.css">
 <link rel="stylesheet" href="../css/app.css">
 <style>
-  .tabs { display: flex; gap: var(--s-1); flex-wrap: wrap; border-bottom: 1px solid var(--border);
-          padding: 0 var(--s-4); background: var(--surface); }
+  /* ONE ROW THAT SCROLLS, not a strip that wraps.
+     Six tabs wrapped to two rows at phone width, which cost 54px of vertical
+     space on every admin screen and — worse — meant no tab held a fixed
+     position: row two began under Home, so adding or removing a tab moved
+     every tab after it. That is the same failure the fourteen-tab strip had,
+     and the reason it was cut down. A single row keeps the order stable, so
+     position becomes learnable. */
+  .tabs { display: flex; gap: var(--s-1); flex-wrap: nowrap; overflow-x: auto;
+          border-bottom: 1px solid var(--border);
+          padding: 0 var(--s-4); background: var(--surface);
+          scrollbar-width: none; -webkit-overflow-scrolling: touch;
+          /* NO scroll-snap. `scroll-snap-align: start` snapped the first tab to
+             the container's own 16px padding, leaving scrollLeft at 16 on a
+             strip that is actually at its start — which switched on the
+             left-hand fade, pointing at nothing. Snapping a six-item strip buys
+             very little and cost a wrong signal. */
+          overscroll-behavior-x: contain; }
+  .tabs::-webkit-scrollbar { display: none; }
+  /* A hidden scrollbar hides the fact that there is more to reach. The mask
+     fades whichever edge has tabs beyond it, and only that edge — a fade on a
+     side you have already scrolled to is a lie about there being more. The
+     classes are set by syncTabFade() in admin-console.js. */
+  .tabs--more-right:not(.tabs--more-left) {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+            mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+  .tabs--more-left:not(.tabs--more-right) {
+    -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent);
+            mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); }
+  .tabs--more-left.tabs--more-right {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+            mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
   .tab { font-family: var(--font-ui); font-size: var(--text-sm); padding: var(--s-3) var(--s-3);
          border: none; background: none; color: var(--ink-muted); cursor: pointer;
-         border-bottom: 2px solid transparent; min-height: var(--touch); }
+         border-bottom: 2px solid transparent; min-height: var(--touch);
+         /* Neither shrink nor wrap: a squeezed "Reconcile" broken over two
+            lines is what flex does by default in a nowrap row. */
+         flex: 0 0 auto; white-space: nowrap; }
   .tab[aria-current="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
   .panel { padding: var(--s-4); }
   /* A folded-in section. Reads as a row of the page it belongs to, not as a

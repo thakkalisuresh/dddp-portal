@@ -1,6 +1,62 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "portal", "runtimeExecutable": "npx", "runtimeArgs": ["wrangler", "pages", "dev", "pages/dist", "--port", "8788"], "port": 8788 }
+    {
+      "name": "portal",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "wrangler",
+        "pages",
+        "dev",
+        "pages/dist",
+        "--port",
+        "8788"
+      ],
+      "port": 8788
+    },
+    {
+      "name": "guideshots",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8899",
+        "--directory",
+        "guides"
+      ],
+      "port": 8899
+    },
+    {
+      "name": "portal-https",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "wrangler",
+        "pages",
+        "dev",
+        "pages/dist",
+        "--port",
+        "8789",
+        "--local-protocol",
+        "https",
+        "--https-key-path",
+        "/private/tmp/claude-501/-Users-sabarish-Downloads-Claude-dddp-portal/6d9edb8e-8da7-4aaf-a3d0-b53088ba3655/scratchpad/tls/leaf.key",
+        "--https-cert-path",
+        "/private/tmp/claude-501/-Users-sabarish-Downloads-Claude-dddp-portal/6d9edb8e-8da7-4aaf-a3d0-b53088ba3655/scratchpad/tls/leaf.pem"
+      ],
+      "port": 8789,
+      "url": "https://localhost:8789"
+    },
+    {
+      "name": "staging",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8901",
+        "--directory",
+        "staging"
+      ],
+      "port": 8901
+    }
   ]
 }
