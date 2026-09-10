@@ -10,7 +10,7 @@ import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
 import { $, el, esc, renderViewBanner, showError, setChildren, askFirst } from './ui.js';
-import { stampLabel } from './i18n.js';
+import { stampLabel, closesIn } from './i18n.js';
 import { renderMarkdown } from './markdown.js';
 import { prepareUpload, makeThumbnail } from './compress.js';
 
@@ -50,6 +50,78 @@ async function init() {
     if (err instanceof ApiError && err.status === 401) { location.href = '/login'; return; }
     showError(main, err);
   }
+}
+
+
+
+/**
+ * The poll on this notice, if there is one and this reader may vote in it.
+ *
+ * ASKED OF /api/polls, NOT DECIDED HERE. A notice's own scope does not answer
+ * it: a poll carries `show_tenants`, which is a different rule, so a tenant
+ * reading a public notice may or may not be allowed the poll on it. The poll
+ * list already applies that rule, and an id absent from it is an id this reader
+ * has no business being linked to.
+ */
+function noticePoll(n) {
+  if (!n.pollId) return null;
+  const wrap = el('div', {});
+
+  api.polls().then(({ polls }) => {
+    const p = polls.find((x) => x.id === n.pollId);
+    if (!p) return;                     // not this reader's to see
+    setChildren(wrap,
+      el('a', { class: 'card card--linked', href: `/polls?id=${p.id}` },
+        el('div', { class: 'row--between' },
+          el('span', { class: 'small muted' }, 'There is a poll on this'),
+          p.closed
+            ? null
+            : p.voted
+              ? el('span', { class: 'chip chip--paid' }, 'Voted')
+              : p.canVote
+                ? el('span', { class: 'chip chip--awaiting' }, 'Not voted')
+                : null),
+        el('b', {}, p.title),
+        el('p', { class: 'small muted' },
+          p.closed
+            ? (p.published ? 'Result published' : 'Voting closed')
+            : closesIn(p.closesAt))));
+  }).catch(() => {});                   // a broken poll list must not cost the notice
+
+  return wrap;
+}
+
+/**
+ * Open polls, above the notices.
+ *
+ * Only the OPEN ones, and only ever three. A poll is a thing to do; a closed
+ * one is a thing to read, and belongs in the list with everything else rather
+ * than at the top competing with the board. Without the cap, a building that
+ * ran six polls in a month would push its notices off the first screen.
+ *
+ * The chip is the only nudge here, and it is about the reader's own flat.
+ * Nothing on this strip says how many others have voted, because that is the
+ * number the whole feature hides.
+ */
+function pollStrip(polls) {
+  const open = polls.filter((p) => !p.closed).slice(0, 3);
+  if (!open.length) return null;
+
+  return el('div', { class: 'stack' },
+    el('p', { class: 'label' }, open.length === 1 ? 'Open poll' : 'Open polls'),
+    ...open.map((p) => el('a', { class: 'card', href: `/polls?id=${p.id}` },
+      el('div', { class: 'row--between' },
+        el('b', {}, p.title),
+        p.voted
+          ? el('span', { class: 'chip chip--paid' }, 'Voted')
+          : p.canVote
+            ? el('span', { class: 'chip chip--awaiting' }, 'Not voted')
+            : null),
+      el('p', { class: 'small muted' }, closesIn(p.closesAt)))),
+    polls.length > open.length
+      ? el('p', {}, el('a', { class: 'linkish', href: '/polls' }, 'All polls'))
+      : null,
+    el('hr', { class: 'rule' }));
 }
 
 /**
@@ -133,7 +205,17 @@ function withdrawnNotices() {
 }
 
 async function renderList() {
-  const { notices } = await api.notices();
+  // Both, together. Polls live on this board — see docs/POLLS-PLAN.md — and a
+  // poll fetched alongside means a resident meets it in the same scroll as the
+  // notice that explains it, rather than on a screen they have to know exists.
+  //
+  // The poll list is allowed to fail on its own. A broken polls endpoint must
+  // not cost a resident the noticeboard, which is the older and more important
+  // of the two.
+  const [{ notices }, polls] = await Promise.all([
+    api.notices(),
+    api.polls().then((r) => r.polls).catch(() => []),
+  ]);
   // setChildren, NOT the native replaceChildren: the admin link below is a
   // `cond ? node : null`, and the native method stringifies null, so a RESIDENT
   // — the one person who never sees the link — got the word "null" printed
@@ -160,6 +242,10 @@ async function renderList() {
     // composer in front of them every time they come to read.
     (isCommittee && !isAdmin) || (isAdmin && manageOpen) ? noticeComposer() : null,
     isAdmin && manageOpen ? withdrawnNotices() : null,
+    (isCommittee && !isAdmin) || (isAdmin && manageOpen)
+      ? el('p', {}, el('a', { class: 'linkish', href: '/polls?new=1' }, '+ Put a question to the building'))
+      : null,
+    ...(polls.length ? [pollStrip(polls)] : []),
     ...(notices.length
       ? notices.map((n) =>
           el('div', { class: `notice ${n.kind === 'event' ? 'notice--event' : ''}` },
@@ -212,6 +298,7 @@ async function renderOne(id) {
       // preview stays plain text: three clamped lines of a bulleted agenda is
       // not a summary of anything.
       el('div', { class: 'prose' }, ...renderMarkdown(n.body)),
+      noticePoll(n),
       attachmentList(n.attachments, isAdmin || Boolean(n.canManage)),
       // `canManage` comes from the server, which computed it with the same
       // function the PATCH route enforces. Asking the client to work it out

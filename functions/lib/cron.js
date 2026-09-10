@@ -9,6 +9,8 @@
 
 import { lateFeeDecision, applyLateFee } from './billing.js';
 import { sweepAnnouncements } from './announce.js';
+import { sweepClosures, sweepReminders, pruneBallots } from './polls.js';
+import { drainPollMail } from './poll-mail.js';
 import { reportError, fail, postToTelegram } from './errors.js';
 import { runDigest } from './digest.js';
 import { istToday } from './time.js';
@@ -281,6 +283,29 @@ export async function runScheduled(env, ctx) {
     // this caller.
     const announced = await sweepAnnouncements(env).catch(() => []);
 
+    // ── polls ──────────────────────────────────────────────────────────
+    //
+    // Closing is decided ON READ (see isClosed in lib/polls.js) because these
+    // crons run three times a day and cannot express "closes at 6pm". This
+    // sweep does not make a poll closed — it writes down that it is, so the
+    // result letter can be queued and the reminder stops being due.
+    //
+    // Reminders before the drain, so a reminder queued this minute goes out on
+    // this run rather than waiting eight hours for the next one.
+    //
+    // Every one of these swallows its own failure, for the reason the
+    // announcement sweep above does: a poll is a convenience and late fees are
+    // money. Nothing about polls may cost the building its fee run.
+    const pollsClosed = await sweepClosures(env).catch(() => 0);
+    const pollsReminded = await sweepReminders(env).catch(() => 0);
+    const pollMail = await drainPollMail(env).catch(() => ({ sent: 0, failed: 0 }));
+
+    // Ballots are pruned six months after their poll closed — a retention
+    // promise, not housekeeping (docs/PRIVACY.md). Run last of the poll work
+    // and swallowed like the rest: a prune that throws must not stop the
+    // letters going out.
+    const ballotsPruned = await pruneBallots(env).catch(() => 0);
+
     // Last, and in its own try. The digest is a convenience; late fees are
     // money. A digest that throws must never cost the building its fee run,
     // and the ordering means the digest can also report what just happened.
@@ -292,7 +317,12 @@ export async function runScheduled(env, ctx) {
     // watermark is also written to avoid.
     const healthcheck = await pingHealthcheck(env);
 
-    return { fees, stale: stale.length, announced, digest, healthcheck };
+    return {
+      fees, stale: stale.length, announced, digest, healthcheck,
+      // Counts of polls and of sends — never of recipients by kind, which for
+      // a reminder would be the turnout. See drainPollMail.
+      polls: { closed: pollsClosed, reminded: pollsReminded, mail: pollMail, ballotsPruned },
+    };
   } catch (err) {
     await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);
     return null;

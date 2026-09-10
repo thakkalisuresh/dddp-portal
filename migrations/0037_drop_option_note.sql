@@ -1,0 +1,23 @@
+-- The per-option note, removed one day after it arrived.
+--
+-- 0036 gave `poll_options` a `sub` column for the thing that decides an option
+-- — a price, a warranty, a time — and the composer never had a field for it.
+-- Given one, the committee's answer was that an option is an option: the
+-- description already carries the context, and a second line under every choice
+-- is a form to fill in twice for a question that reads fine without it.
+--
+-- WHY A SECOND MIGRATION RATHER THAN EDITING 0036. 0036 is applied to
+-- production and recorded in `d1_migrations`. Editing it would leave a fresh
+-- checkout building a schema that production does not have, which is the exact
+-- drift the ledger exists to prevent. The cost of being honest here is one
+-- extra file.
+--
+-- SAFE TO DROP, checked rather than assumed: production held 0 polls, 0 options
+-- and 0 votes when this was written — the feature deployed the same day and no
+-- poll has ever existed. Nothing is being discarded.
+--
+-- DROP COLUMN rather than the twelve-step rebuild 0030 needed. SQLite supports
+-- it from 3.35 and D1 is well past that; the restrictions are on columns that
+-- are indexed, PRIMARY KEY, UNIQUE or named in a CHECK, and `sub` is none of
+-- those. `ix_poll_options` covers (poll_id, sort) only.
+ALTER TABLE poll_options DROP COLUMN sub;

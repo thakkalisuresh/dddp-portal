@@ -147,7 +147,10 @@ export async function listNotices(env, viewer) {
     `SELECT n.id, n.title, n.body, n.kind, n.event_date, n.allow_comments, n.posted_at, n.scope,
             COUNT(c.id) FILTER (WHERE c.hidden_at IS NULL) AS comment_count,
             (SELECT COUNT(*) FROM attachments a
-              WHERE a.notice_id = n.id AND a.deleted_at IS NULL) AS attachment_count
+              WHERE a.notice_id = n.id AND a.deleted_at IS NULL) AS attachment_count,
+            -- The poll pointing AT this notice. One field on polls gives both
+            -- directions; a second column here would store the same fact twice.
+            (SELECT p.id FROM polls p WHERE p.notice_id = n.id) AS poll_id
        FROM notices n
        LEFT JOIN comments c ON c.notice_id = n.id
       WHERE n.active = 1${scopeClause}
@@ -166,6 +169,10 @@ export async function listNotices(env, viewer) {
     scope: n.scope ?? 'all',
     commentCount: n.comment_count ?? 0,
     attachmentCount: n.attachment_count ?? 0,
+    // The id only. Whether the reader may open it is the poll's own question —
+    // `show_tenants` is not `scope` — so the board asks /api/polls rather than
+    // deciding here from a notice's rules.
+    pollId: n.poll_id ?? null,
   }));
 }
 
@@ -204,6 +211,10 @@ export async function listArchivedNotices(env) {
     scope: n.scope ?? 'all',
     commentCount: n.comment_count ?? 0,
     attachmentCount: n.attachment_count ?? 0,
+    // The id only. Whether the reader may open it is the poll's own question —
+    // `show_tenants` is not `scope` — so the board asks /api/polls rather than
+    // deciding here from a notice's rules.
+    pollId: n.poll_id ?? null,
   }));
 }
 
@@ -348,6 +359,11 @@ export async function getNotice(env, noticeId, { isAdmin = false, viewer = null,
     // still attributes notices to the association rather than to a person,
     // which is what a notice from the committee is.
     postedBy: notice.posted_by ?? null,
+    // The poll pointing at this notice, if any. Selected here as well as in the
+    // list because a notice id is a small integer and the list is not the only
+    // way to reach one — the same reasoning the scope check above states.
+    pollId: (await env.DB.prepare('SELECT id FROM polls WHERE notice_id = ?')
+      .bind(noticeId).first())?.id ?? null,
     attachments: shapeAttachments(all.filter((a) => a.notice_id === noticeId)),
     comments: shapeComments(rows.results ?? [], {
       isAdmin,

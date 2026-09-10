@@ -61,6 +61,7 @@ the cron running old code, and shipping only the Worker leaves the site stale.
 | — | Every admin section has a way back to the console | **done** |
 | — | Rate editable on an open month, with the cost stated before it is applied | **done** |
 | — | A locked month refuses the change and names who decides | **done** |
+| 9 | Polls — one vote per flat, secret until the committee publishes | **built, not deployed** |
 
 ### The documents
 
@@ -74,14 +75,19 @@ the cron running old code, and shipping only the Worker leaves the site stale.
 | [docs/ERROR_CODES.md](docs/ERROR_CODES.md) | Every error code, generated from the registry |
 | [docs/COSTS.md](docs/COSTS.md) | Measured usage against the free tier |
 | [docs/PRIVACY.md](docs/PRIVACY.md) | What is recorded, and break-glass recovery |
+| [docs/POLLS-PLAN.md](docs/POLLS-PLAN.md) | Polls: every decision and why, written before the code |
 
 **100 demo residents across 89 flats are in production** for user testing. Remove with
 `node scripts/seed-demo.mjs --remote --remove` before importing the real roster.
 
-Screen designs for all 19 screens were built before any app code.
+Screen designs for all 19 screens were built before any app code. The two
+screens added since — the billing tab and polls — were prototyped the same way
+first, in `docs/`.
 
 Navigation is role-driven (`public/js/nav.js`): residents see Bill · Notices ·
-Me; admins also see Admin; the superadmin also sees God.
+Me; admins also see Admin; the superadmin also sees God. **Polls have no nav
+item of their own** — the bar caps at five and a superadmin already has five, so
+they live on the notice board, which is where a resident meets them anyway.
 
 ## Getting started
 
@@ -94,7 +100,7 @@ npm run dev
 
 ```bash
 npm run seed      # local dev data: 6 residents, real readings from the old portal
-npm test          # 799 tests, no network or D1 needed
+npm test          # 1418 tests, no network or D1 needed
 npm run errdoc    # regenerate docs/ERROR_CODES.md after editing the registry
 npm run doctor    # check the building's invariants against production
 npm run doctor -- --local --md   # ...locally, as markdown you can paste
@@ -199,7 +205,7 @@ functions/
     upi.js            deep links; iOS needs per-app schemes, Android doesn't
 migrations/           D1 schema
 scripts/              doc generation
-test/                799 tests
+test/                1418 tests
 ```
 
 ## Operating it

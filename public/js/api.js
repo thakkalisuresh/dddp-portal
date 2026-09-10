@@ -89,6 +89,12 @@ export const api = {
   notice:      (id)          => request('GET',  `/api/notices/${id}`),
   postComment: (id, body)    => request('POST', `/api/notices/${id}/comments`, { body }),
 
+  // Polls. `options` is always an array, single-choice included — one shape
+  // for the server to read means one path to get wrong rather than two.
+  polls:       ()            => request('GET',  '/api/polls'),
+  poll:        (id)          => request('GET',  `/api/polls/${id}`),
+  vote:        (id, options) => request('POST', `/api/polls/${id}/vote`, { options }),
+
   /**
    * One file per request, to whichever parent it belongs.
    *
@@ -250,6 +256,15 @@ export const api = {
     noticeArchive: ()        => request('GET',  '/api/admin/notices/archive'),
     archivedNotice: (id)     => request('GET',  `/api/admin/notices/${id}/archived`),
     updateNotice:  (id, b)   => request('PATCH', `/api/admin/notices/${id}`, b),
+
+    addPoll:       (body)    => request('POST', '/api/admin/polls', body),
+    // Only the keys you send are treated as edits — see patchPoll.
+    updatePoll:    (id, b)   => request('PATCH', `/api/admin/polls/${id}`, b),
+    closePoll:     (id)      => request('POST', `/api/admin/polls/${id}/close`),
+    publishPoll:   (id)      => request('POST', `/api/admin/polls/${id}/publish`),
+    unpublishPoll: (id)      => request('POST', `/api/admin/polls/${id}/unpublish`),
+    // Superadmin only, and the server records the read. See pollBallot().
+    pollBallot:    (id)      => request('GET',  `/api/admin/polls/${id}/ballot`),
     messages:      ()        => request('GET',  '/api/admin/messages'),
     markMessageHandled: (id) => request('POST', `/api/admin/messages/${id}/handled`),
     proofArchive:  (params = '') => request('GET', `/api/admin/proofs/archive${params}`),

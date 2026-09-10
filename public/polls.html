@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polls — Diamond Park</title>
+<link rel="icon" href="/img/favicon.ico" type="image/x-icon">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+<style>
+  /* A poll's title on the list, which is a heading that happens to be inside a
+     link. Kept ink-coloured so the list does not read as a wall of blue. */
+  .poll__title {
+    font-family: var(--font-ui); font-size: var(--text-md); font-weight: 600;
+    margin: var(--s-2) 0 var(--s-1); line-height: 1.25;
+  }
+  /* The heading is what earns the underline when the card is hovered — the
+     rule in app.css names <b>, and a list row uses a real heading instead. */
+  a.card:hover .poll__title, a.card:focus-visible .poll__title { text-decoration: underline; }
+  /* The body keeps the blank lines the committee typed, exactly as a notice
+     does — an agenda pasted in arrives as prose without this. */
+  .notice__body { white-space: pre-wrap; }
+
+  /* An option is a 48px target whether it is a button or, once voting has
+     closed, a plain div. Both shapes carry the same class so a closed poll
+     does not silently restyle itself. */
+  .option {
+    display: flex; gap: var(--s-3); align-items: flex-start; width: 100%;
+    text-align: left; font: inherit; color: inherit;
+    background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: var(--radius); padding: var(--s-4); min-height: var(--touch);
+    transition: var(--transition);
+  }
+  button.option { cursor: pointer; }
+  button.option:hover { border-color: var(--accent); background: var(--accent-wash); }
+  button.option:focus-visible { outline: var(--focus-ring) solid var(--accent); outline-offset: 2px; }
+  .option[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-wash); }
+  .option[aria-disabled="true"] { cursor: default; }
+
+  /* The dot is drawn rather than an <input> so it can sit inside a button
+     without nesting a control in a control. aria-pressed carries the state. */
+  .option__dot {
+    flex: none; width: 22px; height: 22px; border-radius: 50%; margin-top: 2px;
+    border: 2px solid var(--border-strong); background: var(--surface);
+    display: grid; place-items: center;
+  }
+  .option[aria-pressed="true"] .option__dot { border-color: var(--accent); }
+  .option[aria-pressed="true"] .option__dot::after {
+    content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
+  }
+  .option__text { min-width: 0; }
+  .option__title { font-family: var(--font-ui); font-size: var(--text-sm); font-weight: 600; display: block; }
+  .option__sub { display: block; margin-top: 2px; font-size: var(--text-xs); color: var(--ink-muted); }
+
+  /* Results. The leading bar takes the accent and the rest stay grey: the
+     shape of the answer should be readable without counting the numbers. */
+  .result { display: grid; gap: var(--s-1); }
+  .result__head { display: flex; justify-content: space-between; gap: var(--s-3); font-size: var(--text-sm); }
+  .result__name { font-family: var(--font-ui); font-weight: 600; }
+  .result__n { font-family: var(--font-ui); font-variant-numeric: tabular-nums; color: var(--ink-muted); }
+  .result__track {
+    /* A recessed tone one step below --paper. Not a token: it is used by this
+       one control, and tokens.css asks that the palette stay small. */
+    height: 10px; background: #F1F0EA; border-radius: 999px;
+    overflow: hidden; border: 1px solid var(--border);
+  }
+  .result__bar { height: 100%; background: var(--border-strong); border-radius: 999px; }
+  .result__bar.is-top { background: var(--accent); }
+  /* A card that points at the other half of a pair — the notice behind a poll,
+     or the poll on a notice. The left rule is what says "this is elsewhere"
+     without spending a whole icon on it. */
+  .card--linked { border-left: 3px solid var(--border-strong); }
+  .card--linked b { display: block; margin: var(--s-1) 0; font-family: var(--font-ui); }
+</style>
+</head>
+<body>
+<div class="viewbar" id="viewbar" hidden></div>
+<header class="appbar">
+  <span class="appbar__who" id="who">Loading…</span>
+  <button class="appbar__action" id="logout" type="button">Log out</button>
+</header>
+<main class="page stack--lg stack" id="main"><p class="muted">Loading polls…</p></main>
+<script type="module" src="js/polls.js"></script>
+</body>
+</html>

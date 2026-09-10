@@ -53,8 +53,29 @@ without reading why it was closed is not.
 - **A mobile app.** 99 households will not install one. The web page is the app.
 - **Accounting.** This bills gas. Maintenance, sinking fund and the audit are
   somebody else's system and should stay there.
-- **Being a general-purpose society platform.** ApnaComplex and MyGate exist. The
-  gap they do not fill is sub-metered gas billing, which is all this does.
+- **Being a general-purpose society ERP.** ApnaComplex, ADDA and MyGate exist,
+  and the gap they do not fill is sub-metered gas billing. What stays out is
+  their actual surface: accounting and the audit, gate and visitor management,
+  amenity booking, a helpdesk, staff and vendor management. Gate management in
+  particular is MyGate's whole moat and needs a guard holding a device at the
+  gate around the clock — which this project's constraints rule out on purpose.
+
+  > **Narrowed 2026-09-09, and the old wording is worth recording.** This
+  > non-goal used to end "...sub-metered gas billing, **which is all this
+  > does**", and by then that was no longer true. The notice board had already
+  > grown comments, scoping, attachments and an archive, and polls were built
+  > the same week.
+  >
+  > The line was too absolute rather than wrong. What was actually being
+  > refused was the ERP, and the reopening is narrow and deliberate: **the
+  > association talking to the building** — notices, polls, and the document
+  > library parked as B28 — is in scope, because it is the noticeboard this
+  > portal already is. Anything requiring hardware, a staffed desk, or a
+  > chartered accountant is not.
+  >
+  > The test to apply to the next proposal is not "is it a society feature". It
+  > is: *does this need somebody to be on duty for it to work?* A poll does not.
+  > A gate does.
 
 ## Constraints
 
@@ -111,6 +132,20 @@ copies would drift.
 **7 · Every god-mode edit is recorded.** Unlimited power is only safe to hand
 someone if the record of using it is automatic. Before, after, actor, and — for
 money — a reason.
+
+**8 · A vote belongs to the FLAT.** Not to the person, which is what makes it
+different from invariant 3. `poll_votes` is keyed on the flat, so two owners of
+one flat share one vote and the last to cast holds the flat's answer; `cast_by`
+records which of them acted, because that is what a disputed count asks. A flat
+sold mid-poll keeps its vote and the incoming owner may change it. Enforced by
+`UNIQUE (poll_id, flat, option_id)` rather than by whoever writes the handler.
+
+**9 · Nothing about a poll's count is visible while it is open.** Not the split,
+not the turnout, and not to admins either — only the superadmin, and nothing in
+the interface says so. Closing reveals the count to the committee; publishing
+reveals it to residents; the two are separate acts. A poll never reopens. The
+count is omitted from the API payload rather than hidden in the page, because a
+hidden element is readable and an absent one is not.
 
 ## The billing cycle
 

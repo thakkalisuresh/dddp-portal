@@ -179,10 +179,30 @@ export const ERROR_CODES = {
   'DDP-ATTACH-002': { severity: 'warn',  message: 'Attachment rejected — parent already has its maximum' },
   'DDP-ATTACH-003': { severity: 'error', message: 'Attachment missing from R2 but row says stored' },
   'DDP-ATTACH-004': { severity: 'fatal', message: 'Attachment row written but R2 upload failed' },
+
+  // ── POLL ───────────────────────────────────────────────────────────────
+  'DDP-POLL-001': { severity: 'warn',  message: 'Poll not found' },
+  // Not a mistake a resident can make from the UI: a poll that has closed
+  // offers nothing to close. It fires when a second admin presses the button
+  // on a stale page, or when the cron and a person race for the same poll.
+  'DDP-POLL-002': { severity: 'warn',  message: 'Close attempted on a poll already closed' },
+  'DDP-POLL-003': { severity: 'warn',  message: 'Vote arrived after the poll closed' },
+  'DDP-POLL-004': { severity: 'warn',  message: 'Vote attempted by someone with no vote to cast' },
+  'DDP-POLL-005': { severity: 'warn',  message: 'Poll rejected — see the validation message' },
+  // The options froze when the first vote landed. Reaching this means a stale
+  // edit form, and letting it through would rewrite what people voted for.
+  'DDP-POLL-006': { severity: 'warn',  message: 'Option edit attempted after voting began' },
+  'DDP-POLL-007': { severity: 'warn',  message: 'Publish attempted on a poll still open' },
+  // A closed poll is a record. Editing one after the committee has seen the
+  // count is indistinguishable from editing it BECAUSE of the count.
+  'DDP-POLL-008': { severity: 'warn',  message: 'Edit attempted on a poll that has closed' },
+  // One notice, one poll. The unique index is what makes it true; this is the
+  // sentence the committee gets instead of a constraint violation.
+  'DDP-POLL-009': { severity: 'warn',  message: 'Poll attached to a notice that already has one' },
 };
 
 /** Domains in registry order, for the generated docs. */
-export const DOMAINS = ['AUTH', 'MAIL', 'BILL', 'PAY', 'PROOF', 'RECON', 'NOTICE', 'ATTACH', 'ADMIN', 'SYS'];
+export const DOMAINS = ['AUTH', 'MAIL', 'BILL', 'PAY', 'PROOF', 'RECON', 'NOTICE', 'POLL', 'ATTACH', 'ADMIN', 'SYS'];
 
 export function domainOf(code) {
   return code.split('-')[1];

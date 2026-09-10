@@ -35,6 +35,8 @@ import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { validateStatement, parseStatement, reconcile, bucketReconciliation, sweepAbandonedStatements } from './lib/statement.js';
 import { readReceipt, visionAvailable } from './lib/vision.js';
 import { runScheduled, runLateFees, isLateFeeCron, applyLateFees, staleIntents } from './lib/cron.js';
+import { listPolls, getPoll, createPoll, castVote, closePoll, publishPoll, unpublishPoll,
+         updatePoll, getBallot, queuePollMail, canManagePoll, canSeePoll } from './lib/polls.js';
 import { listNotices, getNotice, addComment, setCommentHidden, markNoticesSeen, NOTICE_SCOPES,
          canSeeAttachment, listArchivedNotices, purgeNotice,
          isCommittee, canManageNotice } from './lib/notices.js';
@@ -208,6 +210,30 @@ export default {
       }
       if (request.method === 'POST' && /^\/api\/notices\/\d+\/comments$/.test(path)) {
         return postComment(request, env, session, path);
+      }
+
+      // ── polls ─────────────────────────────────────────────────────────
+      // Beside the notices, because that is where a resident meets them. A
+      // poll is its own object, though — see migrations/0036_polls.sql for why
+      // it is not a third notice kind.
+      if (route === 'GET /api/polls') {
+        return json({ polls: await listPolls(env, session.subject) });
+      }
+      if (request.method === 'GET' && /^\/api\/polls\/\d+$/.test(path)) {
+        const poll = await getPoll(env, Number(path.split('/')[3]), session.subject);
+        // Same answer for "not yours to see" as for "does not exist". A tenant
+        // probing ids should not be able to learn that an owners-only poll is
+        // running from the shape of the refusal.
+        if (!poll) return problem(404, 'DDP-POLL-001', 'That poll could not be found.');
+        return json({
+          ...poll,
+          // Told to the client rather than inferred by it, so the manage bar
+          // cannot appear for somebody the server would then refuse.
+          canManage: canManagePoll({ created_by: poll.createdBy }, session.actor),
+        });
+      }
+      if (request.method === 'POST' && /^\/api\/polls\/\d+\/vote$/.test(path)) {
+        return castPollVote(request, env, session, path);
       }
 
       // ── attachments ───────────────────────────────────────────────────
@@ -430,6 +456,31 @@ export default {
           return notice ? json(notice) : problem(404, 'DDP-NOTICE-001', 'That notice could not be found.');
         }
         if (route === 'POST /api/admin/notices')  return postNotice(request, env, session, ctx);
+
+        // ── polls ───────────────────────────────────────────────────────
+        if (route === 'POST /api/admin/polls') return postPoll(request, env, session, ctx);
+        if (request.method === 'PATCH' && /^\/api\/admin\/polls\/\d+$/.test(path)) {
+          return patchPoll(request, env, session, path);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/polls\/\d+\/close$/.test(path)) {
+          return managePoll(env, session, path, 'close');
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/polls\/\d+\/publish$/.test(path)) {
+          return managePoll(env, session, path, 'publish');
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/polls\/\d+\/unpublish$/.test(path)) {
+          return managePoll(env, session, path, 'unpublish');
+        }
+        // The ballot is the superadmin's alone, and reading it is recorded.
+        // Gated here rather than in the handler because a missing check on
+        // this one route hands the secret ballot to every admin.
+        if (request.method === 'GET' && /^\/api\/admin\/polls\/\d+\/ballot$/.test(path)) {
+          if (!hasRole(session, 'superadmin')) {
+            await reportError(env, 'DDP-ADMIN-004', { path, actor: session.actor.id });
+            return problem(403, 'DDP-ADMIN-004', 'Not yours to open.');
+          }
+          return pollBallot(env, session, path);
+        }
         if (request.method === 'POST' && /^\/api\/admin\/notices\/\d+\/attachments$/.test(path)) {
           return postNoticeAttachment(request, env, session, path, ctx);
         }
@@ -678,6 +729,17 @@ async function me(env, session, request) {
     // Read from the superadmin's own row, so it follows the role rather than
     // needing an edit here when the committee changes.
     support: await supportContact(env),
+    // How many owners a poll would be emailed. Sent only to the people who can
+    // post one, because it is the only number the poll composer cannot work out
+    // for itself — and without it `deliveryWarnings` returns nothing at all,
+    // which is a warning that silently never fires rather than one that says
+    // there is nothing to warn about.
+    //
+    // Not the flat count: a flat whose owner has no address on file is a flat
+    // the letter never reaches, and the warning is about delivery.
+    ...(hasRole(session, 'committee')
+      ? { mailableOwners: await mailableOwnerCount(env) }
+      : {}),
     impersonation: session.impersonating
       ? { active: true, by: session.actor.name, canWrite: session.canWrite }
       : { active: false },
@@ -1263,6 +1325,188 @@ async function postNotice(request, env, session, ctx) {
   announceNotice(env, session, { id: row.id, title, scope, kind: b?.kind === 'event' ? 'event' : 'notice' }, ctx);
 
   return json({ id: row.id }, { status: 201 });
+}
+
+
+/**
+ * Owners with an address, one per flat — the size of a poll's mailing.
+ *
+ * Deliberately the same shape as `mailableOwners` in lib/polls.js, which
+ * builds the actual queue. If one changes, change both: a warning computed
+ * from a different population than the send is a warning about nothing.
+ */
+async function mailableOwnerCount(env) {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM (
+       SELECT o.flat FROM owners o
+        WHERE o.active = 1 AND o.relationship != 'tenant'
+          AND o.email IS NOT NULL AND TRIM(o.email) != ''
+        GROUP BY o.flat)`
+  ).first();
+  return row?.n ?? 0;
+}
+
+/* ── polls ─────────────────────────────────────────────────────────────── */
+
+/**
+ * Cast or change a flat's vote.
+ *
+ * The subject, never the client, says which flat is voting — invariant 4. A
+ * request carrying `flat` would be a request that can vote as somebody else.
+ */
+async function castPollVote(request, env, session, path) {
+  const pollId = Number(path.split('/')[3]);
+  const b = await readJson(request);
+  const ids = Array.isArray(b?.options) ? b.options : [b?.option];
+
+  try {
+    const cast = await castVote(env, {
+      pollId, optionIds: ids.filter((x) => x != null), viewer: session.subject,
+    });
+    // The flat, not the person: the flat is what voted, and an audit row
+    // naming only the actor would lose which flat's answer changed.
+    await audit(env, session, 'poll.vote', { pollId, flat: session.subject.flat });
+    return json({ ok: true, options: cast });
+  } catch (err) {
+    // The validation message is the useful half — it names what to change.
+    return problem(400, err?.code ?? 'DDP-POLL-005',
+      err?.detail?.message ?? 'That vote could not be recorded.');
+  }
+}
+
+/**
+ * Post a poll, and queue the letter that tells the owners it exists.
+ *
+ * A committee member may reach this (see committeeMayUse) and their own id is
+ * stamped on the row, which is what later lets them manage this poll and no
+ * other.
+ */
+async function postPoll(request, env, session, ctx) {
+  const b = await readJson(request);
+  let id;
+  try {
+    id = await createPoll(env, {
+      title: b?.title, body: b?.body,
+      multi: Boolean(b?.multi), maxChoices: b?.maxChoices ?? null,
+      showTenants: Boolean(b?.showTenants),
+      closesAt: b?.closesAt, options: b?.options ?? [],
+      noticeId: b?.noticeId ?? null,
+      createdBy: session.actor.id,
+    });
+  } catch (err) {
+    return problem(400, err?.code ?? 'DDP-POLL-005',
+      err?.detail?.message ?? 'That poll could not be posted.');
+  }
+
+  await audit(env, session, 'poll.create', { id, title: b?.title });
+  // Fire-and-forget, like a notice announcement: 89 rows must not be written
+  // inside the request that posted the poll, and a queue that failed to fill
+  // is a poll nobody was told about rather than a poll that was not created.
+  ctx?.waitUntil?.(queuePollMail(env, id, 'opened').catch(() => {}));
+  return json({ id }, 201);
+}
+
+/**
+ * Edit an open poll.
+ *
+ * The ownership check is the same one close and publish make, and it is made
+ * here rather than inside updatePoll for the same reason it is in managePoll:
+ * `canManagePoll` asks about the ACTOR, and lib/polls.js is handed a session's
+ * subject nowhere else. Keeping the two apart is what stops a rule about who
+ * may write drifting into a module about what a poll is.
+ */
+async function patchPoll(request, env, session, path) {
+  const id = Number(path.split('/')[4]);
+  const poll = await env.DB.prepare('SELECT id, created_by FROM polls WHERE id = ?')
+    .bind(id).first();
+  if (!poll) return problem(404, 'DDP-POLL-001', 'That poll could not be found.');
+
+  if (!canManagePoll(poll, session.actor)) {
+    await reportError(env, 'DDP-ADMIN-004', { pollId: id, actor: session.actor.id });
+    return problem(403, 'DDP-ADMIN-004', 'You can only manage a poll you posted.');
+  }
+
+  const b = await readJson(request);
+  // Only the keys actually sent are treated as edits. Spreading the whole body
+  // would let an absent field read as "set this to undefined" and quietly wipe
+  // a description the editor never touched.
+  const patch = {};
+  for (const key of ['title', 'body', 'closesAt', 'showTenants', 'multi', 'maxChoices',
+                     'options', 'noticeId']) {
+    if (b?.[key] !== undefined) patch[key] = b[key];
+  }
+  if (!Object.keys(patch).length) return json({ ok: true, changed: false });
+
+  try {
+    await updatePoll(env, id, patch);
+  } catch (err) {
+    const code = err?.code ?? 'DDP-POLL-005';
+    const message = err?.detail?.message
+      ?? (code === 'DDP-POLL-006'
+        ? 'The options froze when the first vote was cast. You can still change the title and the description.'
+        : code === 'DDP-POLL-008'
+          ? 'This poll has closed. A closed poll is a record and cannot be edited.'
+          : 'That change could not be saved.');
+    return problem(code === 'DDP-POLL-005' ? 400 : 409, code, message);
+  }
+
+  // The keys, never the values: a poll's body can be two thousand characters
+  // and the audit log is read by people, not machines.
+  await audit(env, session, 'poll.edit', { id, fields: Object.keys(patch) });
+  return json({ ok: true, changed: true });
+}
+
+/**
+ * Close, publish, or withdraw a published result.
+ *
+ * One handler because the three share their whole preamble — find the poll,
+ * check this actor may manage THIS poll, act, record it. Split into three,
+ * the ownership check is three chances to forget it once.
+ */
+async function managePoll(env, session, path, action) {
+  const id = Number(path.split('/')[4]);
+  const poll = await env.DB.prepare('SELECT id, created_by FROM polls WHERE id = ?')
+    .bind(id).first();
+  if (!poll) return problem(404, 'DDP-POLL-001', 'That poll could not be found.');
+
+  // An admin manages any poll; a committee member manages the ones they
+  // posted. Asked of the ACTOR, because this decides a write.
+  if (!canManagePoll(poll, session.actor)) {
+    await reportError(env, 'DDP-ADMIN-004', { pollId: id, actor: session.actor.id });
+    return problem(403, 'DDP-ADMIN-004', 'You can only manage a poll you posted.');
+  }
+
+  try {
+    if (action === 'close') await closePoll(env, id);
+    else if (action === 'publish') await publishPoll(env, id);
+    else await unpublishPoll(env, id);
+  } catch (err) {
+    return problem(409, err?.code ?? 'DDP-POLL-002',
+      action === 'close'
+        ? 'That poll has already closed.'
+        : 'A poll cannot be published until voting has closed.');
+  }
+  await audit(env, session, `poll.${action}`, { id });
+  return json({ ok: true });
+}
+
+/**
+ * The ballot — which flat voted for what, and which owner cast it.
+ *
+ * THE AUDIT ROW IS WRITTEN BEFORE THE ROWS ARE RETURNED, and that order is the
+ * point. Invariant 7: unlimited power is only safe to hand somebody if the
+ * record of using it is automatic. Written first so a read that fails midway
+ * has still been recorded as an attempt to look.
+ */
+async function pollBallot(env, session, path) {
+  const id = Number(path.split('/')[4]);
+  await audit(env, session, 'poll.ballot.open', { pollId: id });
+  try {
+    return json({ ballot: await getBallot(env, id) });
+  } catch (err) {
+    return problem(409, err?.code ?? 'DDP-POLL-007',
+      'The ballot opens once voting has closed.');
+  }
 }
 
 /**
