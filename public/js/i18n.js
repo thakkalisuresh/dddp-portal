@@ -127,7 +127,20 @@ export function stampLabel(iso, now = new Date()) {
    ────────────────────────────────────────────────────────────────────────── */
 
 const VIEWER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
-const VIEWER_IS_IST = VIEWER_TZ === IST;
+
+/**
+ * Both spellings, for the reason country-hint.js already documents: ICU renamed
+ * this zone and engines still answer with the old name. Chromium is the one
+ * that matters here — it resolves BOTH 'Asia/Kolkata' and 'Asia/Calcutta' to
+ * 'Asia/Calcutta', so a strict comparison against the new name was false for
+ * every Chrome user in India.
+ *
+ * The symptom was a deadline printed twice: "17 Sept, 3:51 am GMT+5:30 · 17
+ * Sept, 3:51 am IST" — the same instant, once labelled with the viewer's zone
+ * and once with the building's, to a reader for whom they are the same zone.
+ * Visible on every poll to most of the building.
+ */
+const VIEWER_IS_IST = VIEWER_TZ === IST || VIEWER_TZ === 'Asia/Calcutta';
 
 const DEADLINE_FMT = new Intl.DateTimeFormat('en-GB', {
   timeZone: IST, day: 'numeric', month: 'short',
