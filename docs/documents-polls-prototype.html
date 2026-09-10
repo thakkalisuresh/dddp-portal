@@ -274,11 +274,15 @@ h1.screen {
 }
 .doc__icon--img { background: linear-gradient(135deg, #cdd8d2, #e8efe9); color: #4a6157; }
 .doc__body { min-width: 0; flex: 1 1 auto; }
+/* Block, because these are <span>s inside a flex child: left inline they run
+   together into one paragraph, and the margins below silently do nothing. */
 .doc__name {
+  display: block;
   font-family: var(--font-ui); font-size: var(--text-sm); font-weight: 600;
   margin: 0 0 2px; overflow-wrap: anywhere;
 }
-.doc__meta { margin: 0; font-size: var(--text-xs); color: var(--ink-muted); }
+.doc__meta { display: block; margin: 0; font-size: var(--text-xs); color: var(--ink-muted); }
+.doc__tags { display: flex; }
 .doc__tags { margin-top: var(--s-2); display: flex; gap: var(--s-1); flex-wrap: wrap; }
 .empty { padding: var(--s-6) var(--s-4); text-align: center; color: var(--ink-muted); font-size: var(--text-sm); }
 
@@ -441,12 +445,12 @@ const POLLS = [
   {
     id: 'wp', title: 'Terrace waterproofing — which quote?',
     body: 'Three quotes are on the noticeboard. The committee will place the order with whichever the owners choose.',
-    showTenants: false, state: 'open', closes: '20 September 2026',
+    showTenants: false, noticeId: 'n1', state: 'open', closes: '20 September 2026',
     options: [
-      { id: 'a', title: 'Shalimar Waterproofing', sub: '₹4,20,000 · 7-year warranty', votes: 21 },
-      { id: 'b', title: 'Deccan Coatings',        sub: '₹3,80,000 · 5-year warranty', votes: 34 },
-      { id: 'c', title: 'KMC Structural',         sub: '₹4,60,000 · 10-year warranty', votes: 12 },
-      { id: 'd', title: 'Defer to the next AGM',  sub: 'No work this season',          votes: 4  },
+      { id: 'a', title: 'Shalimar Waterproofing', votes: 21 },
+      { id: 'b', title: 'Deccan Coatings', votes: 34 },
+      { id: 'c', title: 'KMC Structural', votes: 12 },
+      { id: 'd', title: 'Defer to the next AGM',          votes: 4  },
     ],
     ballots: [
       { flat: '2B', by: 'Anil Kurian',   choice: 'Deccan Coatings',       at: '03 Sep, 9:12pm' },
@@ -458,10 +462,10 @@ const POLLS = [
   {
     id: 'onam', title: 'Onam Sadhya — lunch or dinner?',
     body: 'The hall is booked either way. We need a count before Friday.',
-    showTenants: true, state: 'closed', published: false, closes: '30 August 2026',
+    showTenants: true, noticeId: 'n3', state: 'closed', published: false, closes: '30 August 2026',
     options: [
-      { id: 'a', title: 'Lunch — 12:30pm', sub: '', votes: 48 },
-      { id: 'b', title: 'Dinner — 7:30pm', sub: '', votes: 27 },
+      { id: 'a', title: 'Lunch — 12:30pm', votes: 48 },
+      { id: 'b', title: 'Dinner — 7:30pm', votes: 27 },
     ],
     ballots: [
       { flat: '2B', by: 'Anil Kurian',   choice: 'Lunch — 12:30pm', at: '28 Aug, 6:20pm' },
@@ -471,11 +475,11 @@ const POLLS = [
   {
     id: 'gate', title: 'Main gate — repaint colour',
     body: 'The gate is due for repainting in October.',
-    showTenants: true, state: 'closed', published: true, closes: '15 August 2026',
+    showTenants: true, noticeId: null, state: 'closed', published: true, closes: '15 August 2026',
     options: [
-      { id: 'a', title: 'Charcoal grey', sub: '', votes: 51 },
-      { id: 'b', title: 'Deep green',    sub: '', votes: 19 },
-      { id: 'c', title: 'Keep the cream', sub: '', votes: 8 },
+      { id: 'a', title: 'Charcoal grey', votes: 51 },
+      { id: 'b', title: 'Deep green', votes: 19 },
+      { id: 'c', title: 'Keep the cream', votes: 8 },
     ],
     ballots: [
       { flat: '2B', by: 'Anil Kurian',   choice: 'Charcoal grey', at: '12 Aug, 5:44pm' },
@@ -500,9 +504,12 @@ const POLL_CLOSES = {
    Notices". A poll is not a notice with buttons; it sits beside one. */
 const BOARD = [
   { kind: 'poll',   id: 'wp',    at: '2026-09-08', title: 'Terrace waterproofing — which quote?' },
+  // Owners-only, which is plausible for three quotes with money attached — and
+  // it is what makes the mismatch reachable: turn tenant visibility ON for the
+  // poll that points here and watch the card disappear for them.
   { kind: 'notice', id: 'n1',    at: '2026-09-05', title: 'Three quotes for terrace waterproofing',
     excerpt: 'All three are attached. The committee will place the order with whichever the owners choose.',
-    files: 3 },
+    files: 3, owners: true },
   { kind: 'notice', id: 'n2',    at: '2026-09-01', title: 'Annual General Meeting — 12 October',
     excerpt: 'The agenda is attached. Owners only.', files: 1, owners: true },
   { kind: 'poll',   id: 'onam',  at: '2026-08-26', title: 'Onam Sadhya — lunch or dinner?' },
@@ -518,6 +525,19 @@ const BOARD = [
    can sleep through a deadline — so the countdown leads, the building's time
    is stated and labelled, and the viewer's own time follows only when it
    differs. Nothing is ever shown as a bare unlabelled time. */
+/** The notices a poll can be attached to, newest first. */
+const NOTICES = () => BOARD.filter((it) => it.kind === 'notice');
+const noticeById = (id) => NOTICES().find((n) => n.id === id) ?? null;
+
+/**
+ * May this viewer open the notice a poll points at?
+ *
+ * The two objects scope differently — a notice is owners-only or not, a poll
+ * has its own tenant switch — so a poll a tenant may read can point at a notice
+ * they may not. This is the function that decides what happens then.
+ */
+const canSeeLinkedNotice = (n) => !n || !(n.owners && state.role === 'tenant');
+
 const IST_FMT = new Intl.DateTimeFormat('en-GB', {
   timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short',
   hour: 'numeric', minute: '2-digit', hour12: true,
@@ -587,6 +607,7 @@ const state = {
   query: '',
   openDoc: null,
   poll: 'wp',
+  notice: 'n1',
   showTenants: { wp: false, onam: true, gate: true },
   myVote: { wp: null, onam: 'a', gate: 'a' },   // committed
   pick:   { wp: null, onam: null, gate: null },  // selected, not yet submitted
@@ -594,14 +615,14 @@ const state = {
   docsPlacement: 'me',                           // 'tab' | 'me'
   draft: {
     title: '', body: '', options: ['', ''], multi: false, maxChoices: 2,
-    closesAt: '', showTenants: false,
+    closesAt: '', showTenants: false, noticeId: '',
   },
   published: { onam: false, gate: true },
   showBallots: false,
 };
 
 const WHO = {
-  tenant:     { name: 'Sreeja Pillai · 4A', sub: 'Tenant' },
+  tenant:     { name: 'Sreeja Pillai · 4A' },
   owner:      { name: 'Rohit Varma · 7C',   sub: 'Owner' },
   admin:      { name: 'Hari Menon',         sub: 'Admin' },
   superadmin: { name: 'Sabarish',           sub: 'Superadmin' },
@@ -818,6 +839,7 @@ function openPoll(p) {
       <h2 class="screen" style="font-size:var(--text-lg)">${esc(p.title)}</h2>
       <p class="small">Closes ${closesLine(POLL_CLOSES[p.id])}</p>
       <p class="muted">${esc(p.body)}</p>
+      ${linkedNotice(p)}
 
       ${!canVote() ? `
         <div class="note">
@@ -915,6 +937,7 @@ function closedPoll(p) {
       <h2 class="screen" style="font-size:var(--text-lg)">${esc(p.title)}</h2>
       <p class="muted">${esc(p.body)}</p>
 
+      ${linkedNotice(p)}
       ${canVote() ? `
         <p class="label">The options</p>
         <div class="stack" style="gap:var(--s-3)">
@@ -1041,9 +1064,51 @@ function renderNotes() {
       </div>`;
   }
 
+  if (state.feature === 'notice') {
+    return `
+      <h2>What you are looking at</h2>
+      <div class="note-card">
+        <h3>The link points both ways</h3>
+        <p>A notice that carries a poll says so, with the same &ldquo;your flat
+        hasn&rsquo;t voted&rdquo; chip the board uses. The poll shows the notice as
+        a card above its options. One field on the poll &mdash; a
+        <code>notice_id</code> &mdash; produces both directions.</p>
+      </div>
+      <div class="note-card">
+        <h3>Open “Three quotes for terrace waterproofing”</h3>
+        <p>From the notice board. It carries the waterproofing poll. The gate
+        poll has no notice at all, which is the ordinary case for a question that
+        stands on its own.</p>
+      </div>
+      <div class="note-card note-card--ask">
+        <h3>One notice, one poll — or many?</h3>
+        <p>The prototype assumes one. A notice that ran a poll, closed it, and
+        then ran a second one on the revised quotes is not far-fetched, and
+        one field cannot express it. The alternative is the link living on the
+        poll and the notice showing <em>every</em> poll that points at it &mdash;
+        which is the same column, read the other way.</p>
+      </div>`;
+  }
+
   if (state.feature === 'create') {
     return `
       <h2>What you are looking at</h2>
+      <div class="note-card">
+        <h3>Linking is one dropdown, and optional</h3>
+        <p>&ldquo;No &mdash; this poll stands on its own&rdquo; is the default.
+        The Onam headcount needs no notice; the waterproofing vote is meaningless
+        without one.</p>
+      </div>
+      <div class="note-card">
+        <h3>Pick the AGM notice, then tick “let tenants read this poll”</h3>
+        <p>The line under the picker changes to warn you. That pairing produces a
+        poll a tenant can see pointing at a notice they cannot &mdash; and the
+        person creating it is the one person who would never notice, because
+        they can see both.</p>
+        <p>On the poll itself the card is <strong>hidden</strong> rather than
+        broken for that reader. A link that 404s for exactly the people the
+        visibility switch was meant to include is worse than no link.</p>
+      </div>
       <div class="note-card">
         <h3>The guards are the real ones</h3>
         <p>Type <strong>Yes</strong> and <strong>No</strong> as the two options and
@@ -1224,6 +1289,68 @@ function renderNotes() {
     </div>`;
 }
 
+/**
+ * The notice a poll points at, shown ON the poll.
+ *
+ * A card rather than a bare link: the reader has to decide whether the thing
+ * behind it is worth leaving the vote for, and "see the notice" tells them
+ * nothing. The title and the file count do.
+ *
+ * HIDDEN, NOT BROKEN, when the viewer may not open it. A poll a tenant can read
+ * may point at an owners-only notice; a link that 404s for exactly the people
+ * the visibility switch was meant to include is worse than no link.
+ */
+function linkedNotice(p) {
+  const n = noticeById(p.noticeId);
+  if (!n || !canSeeLinkedNotice(n)) return '';
+  return `
+    <button class="doc" type="button" data-notice-open="${n.id}"
+            style="border-left:3px solid var(--border-strong)">
+      <span class="doc__icon">DOC</span>
+      <span class="doc__body">
+        <span class="doc__meta">The notice behind this poll</span>
+        <span class="doc__name">${esc(n.title)}</span>
+        ${n.files ? `<span class="doc__meta">${n.files} file${n.files > 1 ? 's' : ''} attached</span>` : ''}
+      </span>
+    </button>`;
+}
+
+/* =========================================================================
+   Reading a notice.
+   ========================================================================= */
+function renderNotice() {
+  const n = noticeById(state.notice) ?? NOTICES()[0];
+  const poll = POLLS.find((x) => x.noticeId === n.id && canSeePoll(x));
+
+  return `
+    <div class="stack stack--lg">
+      <button class="appbar__action" type="button" data-feature="board"
+              style="padding:0;text-align:left">&lsaquo; Notices</button>
+      ${n.owners ? '<span class="chip chip--owners">Owners only</span>' : ''}
+      <h1 class="screen">${esc(n.title)}</h1>
+      <p class="muted">${esc(n.at)}</p>
+      <p>${esc(n.excerpt)}</p>
+      ${n.files ? `<p class="small">&#128206; ${n.files} file${n.files > 1 ? 's' : ''} attached</p>` : ''}
+
+      ${poll ? `
+        <hr class="rule">
+        <button class="doc" type="button" data-poll-open="${poll.id}"
+                style="border-left:3px solid var(--accent)">
+          <span class="doc__body">
+            <span class="doc__tags" style="margin:0 0 var(--s-2)">
+              <span class="chip chip--owners">Poll</span>
+              ${poll.state === 'open' && !state.myVote[poll.id] && canVote({ relationship: state.role === 'tenant' ? 'tenant' : 'owner' })
+                ? '<span class="chip chip--awaiting">Your flat hasn&rsquo;t voted</span>' : ''}
+            </span>
+            <span class="doc__meta">There is a poll on this</span>
+            <span class="doc__name">${esc(poll.title)}</span>
+            <span class="doc__meta">${poll.state === 'open'
+              ? countdown(POLL_CLOSES[poll.id]) : 'Voting closed'}</span>
+          </span>
+        </button>` : ''}
+    </div>`;
+}
+
 /* =========================================================================
    Creating a poll.
 
@@ -1365,6 +1492,18 @@ function renderCreate() {
         <p class="small" id="draft-answer-rule"></p>
       </div>
 
+      <div class="stack" style="gap:var(--s-2)">
+        <span class="label">Is this about a notice?</span>
+        <select class="input" data-d="noticeId">
+          <option value="">No &mdash; this poll stands on its own</option>
+          ${NOTICES().map((n) => `
+            <option value="${n.id}" ${d.noticeId === n.id ? 'selected' : ''}>
+              ${esc(n.title)}${n.owners ? ' (owners only)' : ''}
+            </option>`).join('')}
+        </select>
+        <p class="small" id="draft-notice-note"></p>
+      </div>
+
       <label class="stack" style="gap:var(--s-2)">
         <span class="label">Closes &mdash; the building&rsquo;s time (IST)</span>
         <input class="input" type="datetime-local" data-d="closesAt" value="${esc(d.closesAt)}">
@@ -1397,6 +1536,20 @@ function renderFeedback() {
   // Repainted here rather than in the template: the form is not rebuilt on
   // input (that would eat the caret), so anything derived from a field has to
   // be updated by hand or it silently shows the value from the last render.
+  // The picker's consequence, said as it is chosen rather than discovered
+  // later: an owners-only notice and a tenant-visible poll do not agree, and
+  // the reader who loses out is invisible to the person creating it.
+  const nn = document.getElementById('draft-notice-note');
+  if (nn) {
+    const n = noticeById(state.draft.noticeId);
+    nn.textContent = !n
+      ? 'Residents will see the question and nothing behind it.'
+      : n.owners && state.draft.showTenants
+        ? `“${n.title}” is owners-only, but this poll is set to show tenants. `
+          + 'They will see the poll without the notice.'
+        : `The poll will link to “${n.title}”, and that notice will link back.`;
+  }
+
   const rule = document.getElementById('draft-answer-rule');
   if (rule) {
     // Counts the options that will actually EXIST — a blank box is dropped on
@@ -1500,14 +1653,16 @@ function boardPoll(it) {
 }
 
 function boardNotice(it) {
+  const poll = POLLS.find((x) => x.noticeId === it.id && canSeePoll(x));
   return `
-    <button class="doc" type="button">
+    <button class="doc" type="button" data-notice-open="${it.id}">
       <span class="doc__body">
         ${it.owners ? '<span class="doc__tags" style="margin:0 0 var(--s-2)">'
           + '<span class="chip chip--owners">Owners only</span></span>' : ''}
         <span class="doc__name">${esc(it.title)}</span>
         <span class="doc__meta">${esc(it.excerpt)}</span>
-        <span class="doc__meta">${it.at}${it.files ? ` &middot; ${it.files} file${it.files > 1 ? 's' : ''}` : ''}</span>
+        <span class="doc__meta">${it.at}${it.files ? ` &middot; ${it.files} file${it.files > 1 ? 's' : ''}` : ''}${
+          poll ? ' &middot; has a poll' : ''}</span>
       </span>
     </button>`;
 }
@@ -1563,6 +1718,7 @@ function render() {
     <main class="page">${
       state.feature === 'docs' ? renderDocs()
       : state.feature === 'board' ? renderBoard()
+      : state.feature === 'notice' ? renderNotice()
       : state.feature === 'create' ? renderCreate()
       : renderPolls()}</main>
   `;
@@ -1593,6 +1749,9 @@ document.addEventListener('click', (e) => {
   else if (t.dataset.placement) { state.docsPlacement = t.dataset.placement; }
   else if (t.dataset.filter) { state.filter = t.dataset.filter; }
   else if (t.dataset.doc) { state.openDoc = Number(t.dataset.doc); }
+  else if (t.dataset.noticeOpen) {
+    state.notice = t.dataset.noticeOpen; state.feature = 'notice';
+  }
   else if (t.dataset.pollOpen) {
     state.poll = t.dataset.pollOpen; state.feature = 'polls'; state.showBallots = false;
   }
@@ -1648,6 +1807,11 @@ document.addEventListener('click', (e) => {
 });
 
 document.addEventListener('change', (e) => {
+  if (e.target.matches('[data-d="noticeId"]')) {
+    state.draft.noticeId = e.target.value;
+    renderFeedback();
+    return;
+  }
   if (e.target.matches('[data-d="showTenants"]')) {
     state.draft.showTenants = e.target.checked;
     renderFeedback();

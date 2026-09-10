@@ -120,6 +120,7 @@ Ask the bot a code and it will explain it.
 | `DDP-POLL-006` | warn | live | Option edit attempted after voting began |
 | `DDP-POLL-007` | warn | live | Publish attempted on a poll still open |
 | `DDP-POLL-008` | warn | live | Edit attempted on a poll that has closed |
+| `DDP-POLL-009` | warn | live | Poll attached to a notice that already has one |
 
 ## ATTACH
 
@@ -170,7 +171,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-105 codes across 11 domains — 12 fatal, 3 awaiting their call site, 3 retired.
+106 codes across 11 domains — 12 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

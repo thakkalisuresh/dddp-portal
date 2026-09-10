@@ -4,7 +4,7 @@ Decided 2026-09-09 in one sitting, question by question. This is the record of
 what was chosen and why, written before the code so the reasoning survives the
 implementation. Prototype: `docs/documents-polls-prototype.html` (Polls tab).
 
-The companion feature, the document library, is parked as **B28**.
+The companion feature, the document library, is parked as **B30**.
 
 ---
 
@@ -195,11 +195,13 @@ CREATE TABLE polls (
   created_at    TEXT NOT NULL
 );
 
+-- 0036 also gave this a `sub` column for a per-option note. 0037 drops it
+-- again: given a field for it, the answer was that an option is an option and
+-- the description already carries the context.
 CREATE TABLE poll_options (
   id       INTEGER PRIMARY KEY,
   poll_id  INTEGER NOT NULL REFERENCES polls(id),
   label    TEXT NOT NULL,
-  sub      TEXT,                              -- '₹4,20,000 · 7-year warranty'
   sort     INTEGER NOT NULL DEFAULT 0
 );
 

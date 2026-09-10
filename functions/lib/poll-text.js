@@ -18,6 +18,23 @@ const FMT = new Intl.DateTimeFormat('en-GB', {
   hour: 'numeric', minute: '2-digit', hour12: true,
 });
 
+const SHORT = new Intl.DateTimeFormat('en-GB', {
+  timeZone: IST, day: 'numeric', month: 'short',
+  hour: 'numeric', minute: '2-digit', hour12: true,
+});
+
+/**
+ * '20 Sept, 6:00 pm' — for the figure block, which sets 32px type.
+ *
+ * The full sentence below would wrap to three lines at that size and stop
+ * reading as a figure. The word IST is not dropped, it moves to the caption,
+ * because an unlabelled clock is the one thing these must never print.
+ */
+export function deadlineShort(iso) {
+  const when = new Date(iso);
+  return Number.isNaN(when.getTime()) ? 'soon' : SHORT.format(when);
+}
+
 /** 'Sunday 20 September at 6:00 pm IST' */
 export function deadlineText(iso) {
   const when = new Date(iso);

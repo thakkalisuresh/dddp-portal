@@ -474,7 +474,7 @@ The three letters a poll writes, and the drain that sends them.
 |---|---|---|
 | const | `DRAIN_SIZE` |  |
 | const | `MAX_ATTEMPTS` |  |
-| fn | `pollEmail` | NO COUNTS IN ANY OF THESE. |
+| fn | `pollEmail` | NO COUNT LEAVES THE BUILDING BEFORE THE COMMITTEE PUBLISHES ONE. |
 | fn | `drainPollMail` | Send up to `limit` queued letters, for every poll that has any. |
 | fn | `pollMailPending` |  |
 
@@ -484,6 +484,7 @@ A closing time, written for an email.
 
 | | Export | What it does |
 |---|---|---|
+| fn | `deadlineShort` | '20 Sept, 6:00 pm' — for the figure block, which sets 32px type. |
 | fn | `deadlineText` |  |
 
 ### `functions/lib/polls.js`
@@ -496,6 +497,7 @@ Polls — a question the committee puts to the building.
 | fn | `midpoint` | The midpoint of a poll's own life, which is when the reminder goes out. |
 | fn | `canSeePoll` | May this viewer see the poll at all? THE ONE PLACE THE RULE LIVES, for the same reason canSeeNotice is: the list, the single fetch, the vote endpoint and the email recipients all ask this function rather than repeating the condition. |
 | fn | `canVote` | May this viewer cast their flat's vote? Owners only, on every poll, with no per-poll exception — decided 2026-09-09. |
+| fn | `linkedNotice` | The notice behind a poll, as this viewer may see it — or nothing. |
 | fn | `isCommittee` |  |
 | fn | `canManagePoll` | May this person close, publish or edit this poll? The asymmetry 0030 established, applied to a second object: an admin manages the whole board, a committee member manages what they posted. |
 | fn | `canSeeCount` | May this viewer see the count right now? Residents and admins alike see nothing until the poll is closed AND published. |
@@ -978,4 +980,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-530 exports. 243 have no doc comment.
+532 exports. 243 have no doc comment.

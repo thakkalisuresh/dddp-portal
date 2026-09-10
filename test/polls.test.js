@@ -333,6 +333,7 @@ describe('tally', () => {
    ───────────────────────────────────────────────────────────────────────── */
 import {
   getPoll, castVote, publishPoll, getBallot, queuePollReminder, pruneBallots, updatePoll,
+  linkedNotice,
 } from '../functions/lib/polls.js';
 
 const OPEN_POLL = {
@@ -340,8 +341,8 @@ const OPEN_POLL = {
   multi: 0, max_choices: null, show_tenants: 0,
   closes_at: '2026-09-20T12:00:00.000Z', closed_at: null, published_at: null, created_by: 7,
 };
-const OPTIONS = [{ id: 10, label: 'Shalimar', sub: null, sort: 0 },
-                 { id: 11, label: 'Deccan', sub: null, sort: 1 }];
+const OPTIONS = [{ id: 10, label: 'Shalimar', sort: 0 },
+                 { id: 11, label: 'Deccan', sort: 1 }];
 const VOTES = [{ option_id: 10, flat: '2B' }, { option_id: 11, flat: '4A' },
                { option_id: 11, flat: '7C' }];
 
@@ -627,5 +628,44 @@ describe('editing a poll', () => {
     const db = editDb({ poll: reminded, votes: 0 });
     await updatePoll(db, 1, { closesAt: '2026-10-01T00:00:00.000Z' }, { now: NOW });
     expect(db.batches[0][0].args[6]).toBe(OPEN.reminder_at);
+  });
+});
+
+describe('the notice behind a poll', () => {
+  const row = (over = {}) => ({
+    notice_id: 5, notice_title: 'Three quotes for terrace waterproofing',
+    notice_scope: 'all', notice_active: 1, notice_files: 3, ...over,
+  });
+  const tenant = { relationship: 'tenant', role: 'resident' };
+  const owner = { relationship: 'owner', role: 'resident' };
+
+  it('names the notice and how many files it carries', () => {
+    expect(linkedNotice(row(), owner))
+      .toEqual({ id: 5, title: 'Three quotes for terrace waterproofing', attachmentCount: 3 });
+  });
+
+  it('is nothing at all for a poll that stands alone', () => {
+    expect(linkedNotice(row({ notice_id: null }), owner)).toBeNull();
+  });
+
+  it('HIDES the link rather than breaking it when the reader may not open it', () => {
+    // A poll a tenant may read can point at an owners-only notice. A link that
+    // 404s for exactly the people the visibility switch was meant to include is
+    // worse than no link.
+    const owners = row({ notice_scope: 'owners' });
+    expect(linkedNotice(owners, tenant)).toBeNull();
+    expect(linkedNotice(owners, owner)).not.toBeNull();
+  });
+
+  it('drops the link when the notice has been withdrawn', () => {
+    // The notice is off the board; a card pointing at it would be a dead end.
+    expect(linkedNotice(row({ notice_active: 0 }), owner)).toBeNull();
+  });
+
+  it('uses the notice board’s own rule, so the two cannot disagree', () => {
+    // canSeeNotice admits an absent owner, which is exactly who an AGM paper is
+    // for. If this had its own copy, that would be the case it got wrong.
+    const absentOwner = { relationship: 'owner', role: 'resident' };
+    expect(linkedNotice(row({ notice_scope: 'owners' }), absentOwner)).not.toBeNull();
   });
 });

@@ -116,6 +116,7 @@ function draw() {
     el('p', { class: 'small' },
       `${p.closed ? 'Closed' : 'Closes'} ${deadlineLabel(p.closesAt)}`),
     el('p', { class: 'notice__body' }, p.body),
+    noticeCard(p),
 
     // A tenant on a poll the committee chose to show them. Said plainly rather
     // than by greying a control with no explanation beside it.
@@ -145,7 +146,6 @@ function option(o, { voting, p }) {
   };
   const body = el('span', { class: 'option__text' },
     el('span', { class: 'option__title' }, o.label),
-    o.sub ? el('span', { class: 'option__sub' }, o.sub) : null,
     !voting && p.myVotes.includes(o.id)
       ? el('span', { class: 'option__sub' }, el('b', {}, 'Your flat voted for this.'))
       : null);
@@ -261,12 +261,63 @@ function istFieldToIso(value) {
 }
 
 const draft = {
-  title: '', body: '', options: ['', ''], multi: false, maxChoices: 2,
-  closesAt: '', showTenants: false,
+  title: '', body: '',
+  // {label}. An option is an option — the poll's description carries whatever
+  // context the choice needs, and a second line under every one of them was a
+  // form to fill in twice for a question that reads fine without it.
+  options: [{ label: '' }, { label: '' }],
+  multi: false, maxChoices: 2, closesAt: '', showTenants: false,
 };
+
+/**
+ * One option: what it is, and the note underneath.
+ *
+ * Shared by the composer and the edit form, so the two cannot drift into
+ * offering different fields for the same row.
+ */
+function optionRow(list, i, { onChange, onRemove }) {
+  const o = list[i];
+  const label = el('input', {
+    class: 'input', value: o.label ?? '', placeholder: `Option ${i + 1}`, style: 'flex:1',
+  });
+  label.addEventListener('input', () => { o.label = label.value; onChange(); });
+
+  const remove = list.length > 2
+    ? el('button', {
+        class: 'btn btn--quiet btn--sm', type: 'button',
+        'aria-label': `Remove option ${i + 1}`, onclick: () => onRemove(i),
+      }, 'Remove')
+    : null;
+
+  return el('div', { class: 'row row--between', style: 'gap:var(--s-2);align-items:center' },
+    label, remove);
+}
+
+/** The draft's options as the API wants them: trimmed, and empties dropped. */
+const packOptions = (list) => list
+  .filter((o) => (o.label ?? '').trim())
+  .map((o) => ({ label: o.label.trim() }));
 
 function showComposer(me) {
   const feedback = el('div', {});
+  const noticeNote = el('p', { class: 'small' });
+  const noticePicker = el('select', { class: 'input' },
+    el('option', { value: '' }, 'No — this poll stands on its own'));
+  noticePicker.addEventListener('change', () => {
+    draft.noticeId = noticePicker.value;
+    check();
+  });
+
+  // Filled from the board the committee already reads. A notice that another
+  // poll has claimed is offered but labelled, so the refusal is legible before
+  // the server gives it — one notice, one poll.
+  api.notices().then(({ notices }) => {
+    for (const n of notices) {
+      noticePicker.append(el('option', { value: String(n.id) },
+        `${n.title}${n.scope === 'owners' ? ' (owners only)' : ''}`
+        + `${n.pollId ? ' — already has a poll' : ''}`));
+    }
+  }).catch(() => {});
   const closesNote = el('p', { class: 'small' });
   const post = el('button', { class: 'btn btn--block', type: 'button' }, 'Post the poll');
 
@@ -285,26 +336,15 @@ function showComposer(me) {
   function drawOptions() {
     setChildren(optionsBox,
       el('span', { class: 'label' }, 'Options'),
-      ...draft.options.map((value, i) => {
-        const input = el('input', {
-          class: 'input', value, placeholder: `Option ${i + 1}`, style: 'flex:1',
-        });
-        input.addEventListener('input', () => { draft.options[i] = input.value; check(); });
-        const remove = draft.options.length > 2
-          ? el('button', {
-              class: 'btn btn--quiet btn--sm', type: 'button',
-              'aria-label': `Remove option ${i + 1}`,
-              onclick: () => { draft.options.splice(i, 1); drawOptions(); check(); },
-            }, 'Remove')
-          : null;
-        return el('div', { class: 'row row--between', style: 'gap:var(--s-2);align-items:center' },
-          input, remove);
-      }),
+      ...draft.options.map((_, i) => optionRow(draft.options, i, {
+        onChange: check,
+        onRemove: (n) => { draft.options.splice(n, 1); drawOptions(); check(); },
+      })),
       draft.options.length < MAX_OPTIONS
         ? el('button', {
             class: 'btn btn--ghost btn--sm', type: 'button',
             onclick: () => {
-              draft.options.push('');
+              draft.options.push({ label: '' });
               drawOptions();
               check();
               // Focused so the count in the rule line moves as they type,
@@ -342,7 +382,7 @@ function showComposer(me) {
 
   /** The rule in the words the voter will meet it in, not the setting's name. */
   function drawRule() {
-    const filled = draft.options.filter((o) => o.trim()).length;
+    const filled = draft.options.filter((o) => (o.label ?? '').trim()).length;
     const blanks = draft.options.length - filled;
     const of = filled ? ` of the ${filled} option${filled === 1 ? '' : 's'}` : '';
     const cap = Number(draft.maxChoices);
@@ -359,11 +399,23 @@ function showComposer(me) {
 
   function check() {
     drawRule();
+
+    // Said as it is chosen rather than discovered later. The person creating
+    // the poll is the one who would never see the mismatch, because they can
+    // open both halves.
+    const opt = noticePicker.selectedOptions[0];
+    const chosen = draft.noticeId ? opt?.textContent.trim() ?? '' : '';
+    noticeNote.textContent = !draft.noticeId
+      ? 'Residents will see the question and nothing behind it.'
+      : /owners only/.test(chosen) && draft.showTenants
+        ? 'That notice is owners-only, but this poll is set to show tenants. '
+          + 'They will see the poll without the notice.'
+        : 'The poll will link to that notice, and the notice will link back.';
     const closesAt = istFieldToIso(draft.closesAt);
     const verdict = validatePoll({
       title: draft.title, body: draft.body, multi: draft.multi,
       maxChoices: draft.multi ? Number(draft.maxChoices) : null,
-      options: draft.options.filter((o) => o.trim()).map((label) => ({ label })),
+      options: packOptions(draft.options),
       closesAt, now: new Date().toISOString(),
     });
 
@@ -393,7 +445,8 @@ function showComposer(me) {
         maxChoices: draft.multi ? Number(draft.maxChoices) : null,
         showTenants: draft.showTenants,
         closesAt: istFieldToIso(draft.closesAt),
-        options: draft.options.filter((o) => o.trim()).map((label) => ({ label: label.trim() })),
+        noticeId: draft.noticeId ? Number(draft.noticeId) : null,
+        options: packOptions(draft.options),
       });
       trackAction('poll.create');
       location.href = `/polls?id=${id}`;
@@ -407,7 +460,7 @@ function showComposer(me) {
   closes.addEventListener('input', () => { draft.closesAt = closes.value; check(); });
 
   const tenants = el('input', { type: 'checkbox' });
-  tenants.addEventListener('change', () => { draft.showTenants = tenants.checked; });
+  tenants.addEventListener('change', () => { draft.showTenants = tenants.checked; check(); });
 
   setChildren(main,
     el('a', { class: 'linkish', href: '/notices' }, '‹ Notices'),
@@ -418,6 +471,9 @@ function showComposer(me) {
     field('What it is about', 'body', 'textarea', { rows: '3' }),
     optionsBox,
     typeBox,
+    el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+      el('span', { class: 'label' }, 'Is this about a notice?'),
+      noticePicker, noticeNote),
     el('label', { class: 'stack', style: 'gap:var(--s-2)' },
       el('span', { class: 'label' }, 'Closes — the building’s time (IST)'),
       closes, closesNote),
@@ -509,6 +565,24 @@ function editForm(p) {
   const frozen = Boolean(p.optionsFrozen);
   const patch = {};
 
+  // A working copy. Edits must not touch what is on screen until Save, or
+  // Cancel would leave the reader looking at changes the server never took.
+  const opts = p.options.map((o) => ({ label: o.label }));
+  const optionsBox = el('div', { class: 'stack', style: 'gap:var(--s-2)' });
+  const drawOpts = () => setChildren(optionsBox,
+    el('span', { class: 'label' }, 'Options'),
+    ...opts.map((_, i) => optionRow(opts, i, {
+      onChange: () => { patch.options = packOptions(opts); },
+      onRemove: (n) => { opts.splice(n, 1); patch.options = packOptions(opts); drawOpts(); },
+    })),
+    opts.length < MAX_OPTIONS
+      ? el('button', {
+          class: 'btn btn--ghost btn--sm', type: 'button',
+          onclick: () => { opts.push({ label: '' }); drawOpts(); },
+        }, 'Add an option')
+      : null);
+  if (!frozen) drawOpts();
+
   const line = (label, key, value, extra = {}) => {
     const input = el(extra.tag === 'textarea' ? 'textarea' : 'input',
       { class: 'input', ...(extra.attrs ?? {}) });
@@ -549,12 +623,8 @@ function editForm(p) {
       { attrs: { type: 'datetime-local' } }),
     el('label', { class: 'checkline' }, tenants,
       el('span', {}, el('b', {}, 'Let tenants read this poll'))),
-    frozen
-      ? note('The options froze when the first vote was cast. The question, the '
-        + 'description and the closing time can still change.')
-      : el('p', { class: 'small' },
-          'Nobody has voted yet, so the options can still be changed from the '
-          + 'poll’s own screen once this is saved.'),
+    frozen ? note('The options froze when the first vote was cast. The question, '
+      + 'the description and the closing time can still change.') : optionsBox,
     errors, save, cancel);
 }
 
@@ -602,6 +672,29 @@ function ballotPanel(p) {
 
   setChildren(wrap, open);
   return wrap;
+}
+
+
+/**
+ * The notice this poll is about.
+ *
+ * A card rather than a bare link: a voter has to decide whether what is behind
+ * it is worth leaving the vote for, and "see the notice" tells them nothing
+ * while the title and the file count do.
+ *
+ * Absent entirely when the server sent no `notice` — which covers both a poll
+ * that stands alone and a poll whose notice this reader may not open. The
+ * server decides which; the screen cannot tell the two apart, and should not.
+ */
+function noticeCard(p) {
+  if (!p.notice) return null;
+  const files = p.notice.attachmentCount;
+  return el('a', { class: 'card card--linked', href: `/notices?id=${p.notice.id}` },
+    el('p', { class: 'small muted' }, 'The notice behind this poll'),
+    el('b', {}, p.notice.title),
+    files
+      ? el('p', { class: 'small muted' }, `${files} file${files > 1 ? 's' : ''} attached`)
+      : null);
 }
 
 const note = (text, extra = '') =>

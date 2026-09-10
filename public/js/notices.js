@@ -53,6 +53,44 @@ async function init() {
 }
 
 
+
+/**
+ * The poll on this notice, if there is one and this reader may vote in it.
+ *
+ * ASKED OF /api/polls, NOT DECIDED HERE. A notice's own scope does not answer
+ * it: a poll carries `show_tenants`, which is a different rule, so a tenant
+ * reading a public notice may or may not be allowed the poll on it. The poll
+ * list already applies that rule, and an id absent from it is an id this reader
+ * has no business being linked to.
+ */
+function noticePoll(n) {
+  if (!n.pollId) return null;
+  const wrap = el('div', {});
+
+  api.polls().then(({ polls }) => {
+    const p = polls.find((x) => x.id === n.pollId);
+    if (!p) return;                     // not this reader's to see
+    setChildren(wrap,
+      el('a', { class: 'card card--linked', href: `/polls?id=${p.id}` },
+        el('div', { class: 'row--between' },
+          el('span', { class: 'small muted' }, 'There is a poll on this'),
+          p.closed
+            ? null
+            : p.voted
+              ? el('span', { class: 'chip chip--paid' }, 'Voted')
+              : p.canVote
+                ? el('span', { class: 'chip chip--awaiting' }, 'Not voted')
+                : null),
+        el('b', {}, p.title),
+        el('p', { class: 'small muted' },
+          p.closed
+            ? (p.published ? 'Result published' : 'Voting closed')
+            : closesIn(p.closesAt))));
+  }).catch(() => {});                   // a broken poll list must not cost the notice
+
+  return wrap;
+}
+
 /**
  * Open polls, above the notices.
  *
@@ -260,6 +298,7 @@ async function renderOne(id) {
       // preview stays plain text: three clamped lines of a bulleted agenda is
       // not a summary of anything.
       el('div', { class: 'prose' }, ...renderMarkdown(n.body)),
+      noticePoll(n),
       attachmentList(n.attachments, isAdmin || Boolean(n.canManage)),
       // `canManage` comes from the server, which computed it with the same
       // function the PATCH route enforces. Asking the client to work it out

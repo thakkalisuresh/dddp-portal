@@ -380,7 +380,14 @@ A clickable mock-up of both states exists from the 2026-08-24 session
 (artifact "Two Ways In"): the required field, the empty-field refusal, and the
 already-taken-address refusal, against the real tokens.
 
-## B28 — The document library, and admin-managed shelves
+## B30 — The document library, and admin-managed shelves
+
+> **Numbered B28 when it was written, and renumbered 2026-09-10.** PR #68 took
+> B28 for the WhatsApp channel and merged first. Both entries reached main
+> before anybody noticed, which is the thing to take from this: a heading in a
+> shared file is not a lock, and two branches picking "the next number" at the
+> same time will both be right and still collide. Check the file on main, not
+> the one in your branch.
 
 Raised 2026-09-09, designed and prototyped in the same session
 (`docs/documents-polls-prototype.html`, Documents tab). **Parked with the design
@@ -524,11 +531,19 @@ The cost is discoverability: a resident hunting for the bye-laws has to think of
 them as living under "my stuff". Mitigate with a link to the library from the
 notices screen, which is where documents come from anyway.
 
-Note the collision with **B27**: if personal flat documents are ever built, Me
+Note the collision with **B29**: if personal flat documents are ever built, Me
 is exactly where those belong, and the association's library becomes the wrong
-tenant of that tab. Decide B27 first if it is ever seriously proposed.
+tenant of that tab. Decide B29 first if it is ever seriously proposed.
 
-## B27 — Personal flat documents
+## B29 — Personal flat documents
+
+> **Numbered B27 when it was written, and renumbered 2026-09-10.** PR #71 had
+> already claimed B27 for the country-code hint on a branch cut before this
+> landed, so B26 was genuinely the highest number visible here at the time. Two
+> entries sharing a number is the kind of thing that merges cleanly and confuses
+> somebody a year later; the older claim kept it. There is no B27 or B28 gap —
+> B27 is that PR's and B28 is the WhatsApp channel; the document library that
+> was written beside this one is now B30.
 
 Raised 2026-09-09, out of the documents/polls prototype
 (`docs/documents-polls-prototype.html`). **Not rejected — parked, because it is

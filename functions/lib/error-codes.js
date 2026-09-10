@@ -196,6 +196,9 @@ export const ERROR_CODES = {
   // A closed poll is a record. Editing one after the committee has seen the
   // count is indistinguishable from editing it BECAUSE of the count.
   'DDP-POLL-008': { severity: 'warn',  message: 'Edit attempted on a poll that has closed' },
+  // One notice, one poll. The unique index is what makes it true; this is the
+  // sentence the committee gets instead of a constraint violation.
+  'DDP-POLL-009': { severity: 'warn',  message: 'Poll attached to a notice that already has one' },
 };
 
 /** Domains in registry order, for the generated docs. */

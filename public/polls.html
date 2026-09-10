@@ -66,6 +66,11 @@
   }
   .result__bar { height: 100%; background: var(--border-strong); border-radius: 999px; }
   .result__bar.is-top { background: var(--accent); }
+  /* A card that points at the other half of a pair — the notice behind a poll,
+     or the poll on a notice. The left rule is what says "this is elsewhere"
+     without spending a whole icon on it. */
+  .card--linked { border-left: 3px solid var(--border-strong); }
+  .card--linked b { display: block; margin: var(--s-1) 0; font-family: var(--font-ui); }
 </style>
 </head>
 <body>
