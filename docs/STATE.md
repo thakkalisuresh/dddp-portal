@@ -1,4 +1,4 @@
-# Where this is, 9 September 2026
+# Where this is, 10 September 2026
 
 What is built, what is live, what is half-done. Figures read from production
 rather than remembered.
@@ -11,15 +11,10 @@ The portal is **built and deployed**. It has never billed a real month.
 
 ## Production right now
 
-**https://diamondpark.pages.dev** · 1418 tests · `npm run doctor` reports
+**https://diamondpark.pages.dev** · 1430 tests · `npm run doctor` reports
 **0 failing**, 2 warnings.
 
-Figures below read from production on 2026-08-20, **except the two marked
-`repo`**, which are facts about this checkout and were refreshed 2026-09-09.
-
-> **The production figures have not been re-read since 2026-08-20** and at
-> least one has certainly moved — the reset-link work shipped 0035. Run
-> `npm run doctor` before trusting the table rather than this sentence.
+Figures below read from production on **2026-09-10**, after the polls deploy.
 
 > **The Billing tab is live.** Deployed 2026-08-20 with migration
 > `0033_bill_announcements.sql` applied first, since it creates the table
@@ -28,14 +23,14 @@ Figures below read from production on 2026-08-20, **except the two marked
 
 | | |
 |---|---|
-| Flats | 99 — **94 billed**, 5 excluded |
-| People | 105 — **100 of them demo** |
-| Bills | 898 — all demo (0 belong to a real account) |
-| Readings | 990 |
-| Months | 10 — all demo |
-| Migrations applied | 33 — **stale**, see the note above; 36 exist in the repo |
-| Error codes | 105 · `repo` |
-| Tests | 1418 · `repo` |
+| Flats | 99 |
+| People | 111 — **105 of them demo** |
+| Bills | 953 — all demo (0 belong to a real account) |
+| Readings | 1089 |
+| Months | 13 — all demo |
+| Migrations applied | 38 |
+| Error codes | 106 |
+| Tests | 1430 |
 
 > ### The demo data is live
 >
@@ -193,33 +188,40 @@ export.
 `npm run doctor` self-checks, generated error-code and function references with
 drift tests.
 
-**Polls.** Built 2026-09-09 and **verified end to end against a local D1**, not
-only by tests: a poll created through the real composer, voted on, closed,
-published, and its ballot opened, with every gate checked on the wire. One vote
-per flat; owners vote and a per-poll switch decides whether tenants may watch;
-nothing about the count is visible while voting is open except to the
-superadmin, and nothing in the interface says so. Design and the reasoning
+**Polls.** Shipped 2026-09-10 — Pages Production `main | acc85e7`, cron Worker
+version `34db755a`, with migrations 0036, 0037 and 0038 applied to the
+production D1 first. One vote per flat; owners vote and a per-poll switch
+decides whether tenants may watch; nothing about the count is visible while
+voting is open except to the superadmin, and nothing in the interface says so.
+A poll can point at the notice it is about, and the notice points back — one
+notice, one poll, held by a partial unique index. Design and the reasoning
 behind all of it: `docs/POLLS-PLAN.md`. Invariants 8 and 9 in the PRD.
 
-What that verification did **not** cover, and it is worth being exact:
+Verified before and after the deploy, not only by tests: a poll created through
+the real composer, voted on, edited, closed, published and its ballot opened,
+with every gate checked on the wire — a plain owner's payload carries no
+`result` key at all, an admin gets 403 on the ballot and 409 publishing an open
+poll, and opening the ballot is recorded before the rows are returned.
+
+**No poll has existed in production yet.** What that leaves unproven:
 
 * **No poll email has ever been sent.** The three letters and their drain are
   written and tested, but Gmail is still unconfigured — the same blocker
-  `/forgot` has had since phase 8.
-* **The tenant path has never run.** The dev seed has no tenants, so
-  `show_tenants` and the read-only voting state are unit-tested and nothing
-  more.
-* **Nothing is deployed.** No poll has existed in production. `0036_polls.sql`
-  must be applied **before** the code that reads it ships, and both halves
-  deployed — Pages alone leaves the cron on old code.
-* **`GOOGLE_COMMITTEE_FOLDER_ID` must be confirmed separate before this ships.**
-  Ballots ride the nightly CSV bundle once a poll closes, and that bundle is
-  meant for the restricted folder. If the variable is unset it falls back to the
-  folder **shared with the committee**, which hands every committee member the
-  ballot the design keeps from them. `committeeFolderSeparate()` detects it and
-  `doctor` reports it.
+  `/forgot` has had since phase 8. Nothing about polls will reach an inbox
+  until that lands.
+* **The tenant path has never run against real data.** Production's tenants are
+  demo accounts, so `show_tenants` and the read-only voting state are tested and
+  nothing more.
+* **The nightly poll work has never fired.** `sweepClosures`, `sweepReminders`,
+  the mail drain and the ballot prune are wired into the 3am job and have had no
+  poll to act on.
 
-## Built but inert
+**The country-code hint** (B27, PR #71) shipped in the same deploy: `/forgot`
+used to answer a mobile it could not parse with the same "we have sent a code"
+as the success path, so an overseas owner who omitted the `+` was told a code
+was coming and never got one.
+
+## Built but inert## Built but inert
 
 **Self-service password reset** (`/forgot`) — live, accepts requests, sends
 nothing. No Google credentials. `doctor` reports `MAIL-NOT-CONFIGURED`.
@@ -320,9 +322,10 @@ the cutover meter walk.
 **Run `npm run doctor` after generating the first real month and before any
 resident sees a bill.**
 
-Polls are the second gap, and smaller: verified against a local database but
-never against production, never with a tenant, and no poll email has ever left
-the building. See the polls entry under *Built and verified* for the exact list.
+Polls are the second gap, and smaller: deployed, but no poll has been created
+in production, no poll email has ever left the building, and the nightly job has
+had nothing to act on. See the polls entry under *Built and verified* for the
+exact list.
 
 ## What is actually blocking
 
