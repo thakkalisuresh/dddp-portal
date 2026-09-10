@@ -206,6 +206,57 @@ Two things to settle when it is built:
 
 ---
 
+## B27 — Tell an overseas owner about the country code, but only them
+
+Raised 2026-09-04. The login field takes a mobile in E.164 and a bare ten digits
+is read as Indian, which is right for everyone standing in the building and
+silently wrong for the owners in the Gulf. `/forgot` makes it worse than login
+does: an unparseable number returns `neutralReply()` — the same "we have sent a
+code" the success path gives — so an overseas owner who omits the `+` is told a
+code is on its way and simply never receives one.
+
+A permanent hint under the field is the obvious fix and is the wrong one. It is
+noise for the ~95 households who will never need it, sitting under the first
+field of the first screen, which is the most expensive line of copy in the app.
+
+**So show it conditionally, and stop showing it once it has done its job.**
+Three rules, decided 2026-09-04:
+
+1. **Probably outside India → show it.** Use
+   `Intl.DateTimeFormat().resolvedOptions().timeZone !== 'Asia/Kolkata'`, not IP
+   geolocation. It costs no network request on a page that currently makes none
+   before submit, needs no server change to a static page, and asks nothing
+   about where the person is — only what their device is set to. Cloudflare's
+   `request.cf.country` is free at the edge but these pages are static files out
+   of `pages/dist`, so reading it means adding a round trip to the one screen
+   that does not have one.
+2. **Also show it after a failed login**, wherever they are. The timezone guess
+   will miss — an owner abroad on a device still set to Kolkata, a VPN, a
+   borrowed laptop — and the hint is needed exactly when someone is failing. This
+   rule catches every miss of rule 1 and costs nothing.
+3. **Never show it again on a device that has logged in successfully.** They have
+   proved they know their own format. A flag in `localStorage`, set after the
+   first success; absent on a cleared browser, which is the right failure.
+
+Inside India with no failure yet, the field stays clean — which is the ordinary
+case and the whole point.
+
+**Where it goes.** `public/js/login.js` and `public/js/forgot.js`, not the HTML:
+the CSP forbids inline script (see the note at the foot of `forgot.js`). The
+markup already carries the hint span and its `aria-describedby` as of
+2026-09-04; this entry is only the logic that hides it. `/forgot` shows it under
+the same rules, and it is the page that needs it more.
+
+**The rival design, which this does not close off.** `public/js/mobile-field.js`
+already solves this properly — a country picker with search, Gulf codes pinned
+to the top — and its own comment makes the argument: *one box asked to be both
+"your ten digits" and "a full international number" cannot tell which the typist
+meant.* It is used in the admin console and not on login, because login now
+also has to accept an email address (B18), and a country picker welded to a
+field that might hold an address does not work. If B18 is ever answered with
+"no, mobile only", `mobileField()` is the better answer than this entry and this
+entry should be deleted rather than kept.
+
 ---
 
 # Decisions, not code
@@ -298,6 +349,76 @@ The login field was `type="tel" inputmode="numeric"` — a digit keypad with no
 phone. It is now `inputmode="tel"` (`public/login.html`), which `/forgot` had
 right all along. Nothing else in B18 is affected: this was always the one part
 that did not need the list of old usernames to proceed.
+
+### Re-examined 2026-09-04
+
+**The label shipped ahead of the feature, deliberately.** `public/login.html`
+and `public/forgot.html` now read **"Mobile number or email"**, and the lookup
+behind them is still `WHERE mobile = ?` on both pages. An address typed into
+either is rejected on login and silently swallowed by `/forgot`. This was a
+considered call — with only one real account (see below) there is nobody to
+mislead — but it means **the login screen currently promises something the
+server does not do**, and a future session reading the markup will assume
+otherwise. Either build the lookup or change the label back; do not leave it
+here after the roster lands.
+
+`inputmode` on both fields is still `tel`, and there is a comment saying so: the
+tel keypad has no `@`, so the address half of the label is untypeable on a phone
+until the lookup exists. Flip both to `type="text"` with no `inputmode` in the
+same change that ships the lookup, and not before — until then the tel keypad
+serves the only handle that works.
+
+**"2 of 107 accounts have any address at all" is not a fact about the building.**
+It describes the demo seed, which is the same trap B26 already names about
+`npm run doctor` counts. Confirmed by the user 2026-09-04: the portal is
+unpublished, and of the accounts on production **only 4A is a real user** —
+every other row, including the named ones this file and the session notes used
+to treat as real, is a test persona. So the paragraph above calling this "a door
+almost nobody could use on the day it shipped" is drawing a conclusion from seed
+data. Nothing is known about how many real households have an address until C1's
+sheet is read, exactly as B26 says. **There is also no real data to migrate and
+nobody to lock out**, so the schema and identity choices here are still free in
+a way they will not be after cutover — which argues for deciding sooner, not
+later.
+
+**Verification is the control this entry is missing.** B18 currently proposes
+requiring the current password to change your own address, to stop a stolen
+session plus `/forgot` becoming a permanent takeover. An `email_verified_at`
+column is the stronger form of the same idea and is worth weighing against it:
+NULL means *deliverable but not a login handle*, so mail keeps flowing to every
+address exactly as it does now, while only a confirmed one can be typed into the
+login box. Changing an address drops it back to NULL, which closes the takeover
+path by construction rather than by a password prompt, and makes the self-serve
+edit in `patchProfile` safe without routing it through B22's approval flow the
+way a mobile change is. Onboarding is the cheapest place to verify: the resident
+is authenticated at that moment, holding a temporary password they could only
+have got by controlling the mobile. Note the sequencing — `onboard()` destroys
+all sessions and clears the cookie when it completes, so the confirm link lands
+on a logged-out browser and must work without a session, the same shape as the
+reset-link token in migration 0035.
+
+**Two things in the auth path that will be missed.** Neither is visible from the
+schema, and both are security-relevant:
+
+* `login_attempts` keys on the **mobile** (`ix_login_attempts`), so a login by
+  address has to resolve the owner first and then rate-limit on *their* mobile.
+  Rate-limiting on the typed address instead leaves the email path as an
+  unmetered bypass of the limiter guarding the mobile path.
+* The unknown-mobile branch spends a deliberate dummy PBKDF2 derive
+  (`functions/index.js`, the long comment about a 27 ms oracle). The email branch
+  needs the same or it reintroduces a "does this address have an account here"
+  probe, against addresses that are far more guessable than the phone numbers
+  that comment was written about.
+
+**The uniqueness intent is already in the code**, which strengthens the case that
+the index is missing rather than unwanted: `duplicateContact()` in
+`functions/index.js` refuses an email change that would collide
+(`WHERE email = ? AND id <> ?`) before applying it. So the admin path already
+behaves as though addresses are unique while the schema does not require it and
+`patchProfile` does not check at all. That asymmetry — the strictest validation
+on the admin route, none on the route a resident can drive alone — is backwards
+for a field that is about to become a credential, and is worth fixing whatever
+is decided about login.
 
 ## B26 — Email required at onboarding
 

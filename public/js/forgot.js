@@ -14,6 +14,7 @@
 import { api, ApiError } from './api.js';
 import { $, el, showError, withReveal } from './ui.js';
 import { checkPassword, describePolicy } from './password-rules.js';
+import { applyCountryHint, rememberFormatKnown } from './country-hint.js';
 
 const ask = $('#ask');
 const finish = $('#finish');
@@ -38,6 +39,12 @@ let linkToken = '';
 // admin resetting here can pass this check and still be turned down; the
 // server's message explains why, which is the one place it safely can.
 $('#pwHint').textContent = describePolicy('owner');
+
+// B27. Only the load-time half applies here: step 1 answers identically whether
+// or not the number was usable, deliberately, so this page never learns that an
+// attempt failed and has no failure to hang the hint on. That is also why the
+// silent-failure this hint exists to prevent is worse on /forgot than on /login.
+applyCountryHint();
 
 function note(text, tone = '') {
   alertBox.replaceChildren(el('div', { class: `note ${tone}` }, text));
@@ -110,6 +117,9 @@ finish.addEventListener('submit', async (event) => {
   try {
     await (linkToken ? api.resetByLink(linkToken, password)
                      : api.reset(mobile, code, password));
+    // A code or a link that worked means the number was right, whichever way
+    // they got here — nothing left to hint about on this browser.
+    rememberFormatKnown();
     // Straight to login rather than logging them in: they have just chosen a
     // password, and typing it once proves it is the one they think it is.
     finish.hidden = true;

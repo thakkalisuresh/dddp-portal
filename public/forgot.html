@@ -38,10 +38,15 @@
     <p class="small muted">
       We will email a six-digit code to the address on your account.
     </p>
-    <div>
-      <label for="mobile">Mobile number</label>
-      <input class="input" id="mobile" name="mobile" type="tel"
-             autocomplete="username" inputmode="tel" required>
+    <div class="field">
+      <label for="mobile">Mobile number or email</label>
+      <!-- See the note on the same field in login.html: tel until the email
+           lookup exists, text after it. -->
+      <input class="input num" id="mobile" name="mobile" type="tel"
+             autocomplete="username" inputmode="tel" required
+             aria-describedby="mobileHint">
+      <span class="field__hint" id="mobileHint" hidden>Overseas? Include your country
+        code, e.g. +971…</span>
     </div>
     <button class="btn btn--block btn--lg" id="askSubmit" type="submit">Email me a code</button>
   </form>

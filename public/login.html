@@ -21,12 +21,17 @@
     <div id="alert" role="alert" aria-live="polite"></div>
 
     <div class="field">
-      <label for="mobile">Mobile number</label>
+      <label for="mobile">Mobile number or email</label>
       <!-- inputmode="tel", not "numeric": the numeric pad has no '+', so an
            owner abroad could not type their own login on a phone. Same as
-           /forgot, which had it right. -->
+           /forgot, which had it right.
+           WHEN THE EMAIL LOOKUP LANDS this must become type="text" with no
+           inputmode: the tel keypad has no '@', so the address half of the
+           label above is untypeable on a phone until it does. -->
       <input class="input num" id="mobile" name="mobile" type="tel" inputmode="tel"
-             autocomplete="username" required autofocus>
+             autocomplete="username" required autofocus aria-describedby="mobileHint">
+      <span class="field__hint" id="mobileHint" hidden>Overseas? Include your country
+        code, e.g. +971…</span>
     </div>
 
     <div class="field">
