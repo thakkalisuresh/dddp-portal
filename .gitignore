@@ -6,6 +6,3 @@ pages/dist/
 *.log
 .DS_Store
 
-# Built from staging/ sources by build-single.mjs; regenerate rather than commit.
-staging/single.html
-staging/artifact.html
