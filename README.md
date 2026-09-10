@@ -61,7 +61,9 @@ the cron running old code, and shipping only the Worker leaves the site stale.
 | — | Every admin section has a way back to the console | **done** |
 | — | Rate editable on an open month, with the cost stated before it is applied | **done** |
 | — | A locked month refuses the change and names who decides | **done** |
-| 9 | Polls — one vote per flat, secret until the committee publishes | **built, not deployed** |
+| 9 | Polls — one vote per flat, secret until the committee publishes | **done** |
+| — | A poll and its notice point at each other — one notice, one poll | **done** |
+| — | The country-code hint, shown to the overseas owners who need it | **done** |
 
 ### The documents
 
@@ -100,7 +102,7 @@ npm run dev
 
 ```bash
 npm run seed      # local dev data: 6 residents, real readings from the old portal
-npm test          # 1418 tests, no network or D1 needed
+npm test          # 1430 tests, no network or D1 needed
 npm run errdoc    # regenerate docs/ERROR_CODES.md after editing the registry
 npm run doctor    # check the building's invariants against production
 npm run doctor -- --local --md   # ...locally, as markdown you can paste
@@ -195,6 +197,8 @@ functions/
     dashboard.js      the /api/me payload; one round trip, no client identity
     cron.js           late fees; idempotence is the property that matters
     notices.js        comments — opt-in per notice, real names, soft hide
+    polls.js          one vote per flat; the count is absent, not hidden
+    poll-mail.js      the three letters and their resumable drain
     proof.js          upload validation, claim assessment, queue shaping
     public.js         the unauthenticated surface; leaks nothing private
     backup.js         CSV export, Drive upload, retention windows
@@ -205,7 +209,7 @@ functions/
     upi.js            deep links; iOS needs per-app schemes, Android doesn't
 migrations/           D1 schema
 scripts/              doc generation
-test/                1418 tests
+test/                1430 tests
 ```
 
 ## Operating it
