@@ -57,7 +57,7 @@ function render(me) {
         value: me.floor != null ? `${me.flat} (Floor ${me.floor})` : me.flat,
       }),
       el('span', { class: 'field__hint' },
-        `${me.tenancy?.description ?? ''}. If that is wrong, tell an admin.`)),
+        `${me.tenancy?.description ?? ''}. If that is wrong, tell the committee.`)),
     el('div', { class: 'field' }, el('label', { for: 'name' }, 'Name'), name),
     el('div', { class: 'field' }, el('label', { for: 'email' }, 'Email'), email),
     el('div', { class: 'field' },
