@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { dayLabel, timeLabel, stampLabel, deadlineLabel, closesIn } from '../public/js/i18n.js';
 
 /**
@@ -99,6 +99,25 @@ describe('deadlines', () => {
   it('names the building’s clock, always', () => {
     // Whatever zone the test runner is in, IST must be present and labelled.
     expect(deadlineLabel('2026-09-20T12:30:00.000Z')).toMatch(/6:00 pm IST$/);
+  });
+
+  /**
+   * The zone name, not the offset.
+   *
+   * `VIEWER_IS_IST` compared against 'Asia/Kolkata' alone. Chromium resolves
+   * BOTH spellings to 'Asia/Calcutta', so the comparison was false for every
+   * Chrome user in India and the deadline printed twice — once labelled
+   * GMT+5:30 and once IST, to a reader for whom they are the same zone.
+   */
+  it('prints one time, not two, for a reader on the building’s clock', async () => {
+    for (const zone of ['Asia/Kolkata', 'Asia/Calcutta']) {
+      process.env.TZ = zone;
+      vi.resetModules();
+      const { deadlineLabel: label } = await import('../public/js/i18n.js');
+      const out = label('2026-09-20T12:30:00.000Z');
+      expect(out, zone).toBe('20 Sept, 6:00 pm IST');
+      expect(out, zone).not.toContain('·');
+    }
   });
 
   it('says nothing for an unreadable timestamp', () => {
