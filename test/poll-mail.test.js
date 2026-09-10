@@ -8,8 +8,8 @@ const base = { title: 'Which quote?', closesAt: CLOSES, pollId: 4, origin: 'http
 
 describe('the letters', () => {
   const OPTIONS = [
-    { label: 'Shalimar Waterproofing', sub: '₹4,20,000 · 7-year warranty' },
-    { label: 'Deccan Coatings', sub: '₹3,80,000 · 5-year warranty' },
+    { label: 'Shalimar Waterproofing' },
+    { label: 'Deccan Coatings' },
   ];
   const full = { ...base, body: 'Three quotes are on the noticeboard.', options: OPTIONS };
 
@@ -25,7 +25,7 @@ describe('the letters', () => {
     for (const kind of ['opened', 'reminder']) {
       const body = words(pollEmail(kind, full));
       expect(body, kind).toContain('Shalimar Waterproofing');
-      expect(body, kind).toContain('₹3,80,000 · 5-year warranty');
+      expect(body, kind).toContain('Deccan Coatings');
     }
   });
 

@@ -172,7 +172,6 @@ export function tally(options = [], votes = []) {
   const rows = options.map((o) => ({
     id: Number(o.id),
     label: o.label,
-    sub: o.sub ?? null,
     votes: counts.get(Number(o.id)) ?? 0,
   }));
   const top = Math.max(0, ...rows.map((r) => r.votes));
@@ -303,8 +302,8 @@ export async function createPoll(env, {
   ).first();
 
   await env.DB.batch(options.map((o, i) => env.DB.prepare(
-    'INSERT INTO poll_options (poll_id, label, sub, sort) VALUES (?, ?, ?, ?)'
-  ).bind(row.id, String(o.label).trim(), o.sub ? String(o.sub).trim() : null, i)));
+    'INSERT INTO poll_options (poll_id, label, sort) VALUES (?, ?, ?)'
+  ).bind(row.id, String(o.label).trim(), i)));
 
   return row.id;
 }
@@ -350,7 +349,7 @@ export async function getPoll(env, id, viewer, { now = new Date().toISOString() 
   if (!poll || !canSeePoll(poll, viewer)) return null;
 
   const [{ results: options }, { results: mine }] = await Promise.all([
-    env.DB.prepare('SELECT id, label, sub, sort FROM poll_options WHERE poll_id = ? ORDER BY sort')
+    env.DB.prepare('SELECT id, label, sort FROM poll_options WHERE poll_id = ? ORDER BY sort')
       .bind(id).all(),
     env.DB.prepare('SELECT option_id, cast_at FROM poll_votes WHERE poll_id = ? AND flat = ?')
       .bind(id, viewer?.flat ?? '').all(),
@@ -372,7 +371,7 @@ export async function getPoll(env, id, viewer, { now = new Date().toISOString() 
     // The options are always sent. A closed poll still shows a resident what
     // the question was and what their flat chose, whether or not the count was
     // ever published — see docs/POLLS-PLAN.md.
-    options: (options ?? []).map((o) => ({ id: o.id, label: o.label, sub: o.sub })),
+    options: (options ?? []).map((o) => ({ id: o.id, label: o.label })),
     myVotes: (mine ?? []).map((v) => v.option_id),
     votedAt: mine?.[0]?.cast_at ?? null,
   };
@@ -470,7 +469,7 @@ export async function updatePoll(env, id, patch = {}, { now = new Date().toISOSt
   if (isClosed(poll, now)) fail('DDP-POLL-008', { id });
 
   const { results: options } = await env.DB.prepare(
-    'SELECT id, label, sub, sort FROM poll_options WHERE poll_id = ? ORDER BY sort'
+    'SELECT id, label, sort FROM poll_options WHERE poll_id = ? ORDER BY sort'
   ).bind(id).all();
   const cast = await env.DB.prepare(
     'SELECT COUNT(*) AS n FROM poll_votes WHERE poll_id = ?'
@@ -488,7 +487,7 @@ export async function updatePoll(env, id, patch = {}, { now = new Date().toISOSt
     multi: patch.multi ?? Boolean(poll.multi),
     maxChoices: patch.maxChoices !== undefined ? patch.maxChoices : poll.max_choices,
     closesAt: patch.closesAt ?? poll.closes_at,
-    options: patch.options ?? (options ?? []).map((o) => ({ label: o.label, sub: o.sub })),
+    options: patch.options ?? (options ?? []).map((o) => ({ label: o.label })),
   };
   const check = validatePoll({ ...next, now });
   if (!check.ok) fail('DDP-POLL-005', { message: check.message });
@@ -525,8 +524,8 @@ export async function updatePoll(env, id, patch = {}, { now = new Date().toISOSt
   if (patch.options !== undefined) {
     writes.push(env.DB.prepare('DELETE FROM poll_options WHERE poll_id = ?').bind(id));
     patch.options.forEach((o, i) => writes.push(env.DB.prepare(
-      'INSERT INTO poll_options (poll_id, label, sub, sort) VALUES (?, ?, ?, ?)'
-    ).bind(id, String(o.label).trim(), o.sub ? String(o.sub).trim() : null, i)));
+      'INSERT INTO poll_options (poll_id, label, sort) VALUES (?, ?, ?)'
+    ).bind(id, String(o.label).trim(), i)));
   }
 
   await env.DB.batch(writes);

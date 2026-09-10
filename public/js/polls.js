@@ -145,7 +145,6 @@ function option(o, { voting, p }) {
   };
   const body = el('span', { class: 'option__text' },
     el('span', { class: 'option__title' }, o.label),
-    o.sub ? el('span', { class: 'option__sub' }, o.sub) : null,
     !voting && p.myVotes.includes(o.id)
       ? el('span', { class: 'option__sub' }, el('b', {}, 'Your flat voted for this.'))
       : null);
@@ -262,10 +261,10 @@ function istFieldToIso(value) {
 
 const draft = {
   title: '', body: '',
-  // {label, sub}. The note is what lets an option carry the thing that decides
-  // it — a price, a warranty, a time — without stuffing it into the label and
-  // making every option a paragraph.
-  options: [{ label: '', sub: '' }, { label: '', sub: '' }],
+  // {label}. An option is an option — the poll's description carries whatever
+  // context the choice needs, and a second line under every one of them was a
+  // form to fill in twice for a question that reads fine without it.
+  options: [{ label: '' }, { label: '' }],
   multi: false, maxChoices: 2, closesAt: '', showTenants: false,
 };
 
@@ -278,15 +277,9 @@ const draft = {
 function optionRow(list, i, { onChange, onRemove }) {
   const o = list[i];
   const label = el('input', {
-    class: 'input', value: o.label ?? '', placeholder: `Option ${i + 1}`,
+    class: 'input', value: o.label ?? '', placeholder: `Option ${i + 1}`, style: 'flex:1',
   });
   label.addEventListener('input', () => { o.label = label.value; onChange(); });
-
-  const sub = el('input', {
-    class: 'input input--sub', value: o.sub ?? '',
-    placeholder: 'Note — optional. A price, a warranty, a time',
-  });
-  sub.addEventListener('input', () => { o.sub = sub.value; onChange(); });
 
   const remove = list.length > 2
     ? el('button', {
@@ -295,16 +288,14 @@ function optionRow(list, i, { onChange, onRemove }) {
       }, 'Remove')
     : null;
 
-  return el('div', { class: 'optrow' },
-    el('div', { class: 'row row--between', style: 'gap:var(--s-2);align-items:center' },
-      label, remove),
-    sub);
+  return el('div', { class: 'row row--between', style: 'gap:var(--s-2);align-items:center' },
+    label, remove);
 }
 
 /** The draft's options as the API wants them: trimmed, and empties dropped. */
 const packOptions = (list) => list
   .filter((o) => (o.label ?? '').trim())
-  .map((o) => ({ label: o.label.trim(), sub: (o.sub ?? '').trim() || null }));
+  .map((o) => ({ label: o.label.trim() }));
 
 function showComposer(me) {
   const feedback = el('div', {});
@@ -334,12 +325,12 @@ function showComposer(me) {
         ? el('button', {
             class: 'btn btn--ghost btn--sm', type: 'button',
             onclick: () => {
-              draft.options.push({ label: '', sub: '' });
+              draft.options.push({ label: '' });
               drawOptions();
               check();
               // Focused so the count in the rule line moves as they type,
               // rather than after they go hunting for the new box.
-              optionsBox.querySelectorAll('input')[(draft.options.length - 1) * 2]?.focus();
+              optionsBox.querySelectorAll('input')[draft.options.length - 1]?.focus();
             },
           }, 'Add an option')
         : el('p', { class: 'small' }, `${MAX_OPTIONS} options is the maximum.`));
@@ -541,7 +532,7 @@ function editForm(p) {
 
   // A working copy. Edits must not touch what is on screen until Save, or
   // Cancel would leave the reader looking at changes the server never took.
-  const opts = p.options.map((o) => ({ label: o.label, sub: o.sub ?? '' }));
+  const opts = p.options.map((o) => ({ label: o.label }));
   const optionsBox = el('div', { class: 'stack', style: 'gap:var(--s-2)' });
   const drawOpts = () => setChildren(optionsBox,
     el('span', { class: 'label' }, 'Options'),
@@ -552,7 +543,7 @@ function editForm(p) {
     opts.length < MAX_OPTIONS
       ? el('button', {
           class: 'btn btn--ghost btn--sm', type: 'button',
-          onclick: () => { opts.push({ label: '', sub: '' }); drawOpts(); },
+          onclick: () => { opts.push({ label: '' }); drawOpts(); },
         }, 'Add an option')
       : null);
   if (!frozen) drawOpts();

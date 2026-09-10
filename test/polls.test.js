@@ -340,8 +340,8 @@ const OPEN_POLL = {
   multi: 0, max_choices: null, show_tenants: 0,
   closes_at: '2026-09-20T12:00:00.000Z', closed_at: null, published_at: null, created_by: 7,
 };
-const OPTIONS = [{ id: 10, label: 'Shalimar', sub: null, sort: 0 },
-                 { id: 11, label: 'Deccan', sub: null, sort: 1 }];
+const OPTIONS = [{ id: 10, label: 'Shalimar', sort: 0 },
+                 { id: 11, label: 'Deccan', sort: 1 }];
 const VOTES = [{ option_id: 10, flat: '2B' }, { option_id: 11, flat: '4A' },
                { option_id: 11, flat: '7C' }];
 

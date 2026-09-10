@@ -22,7 +22,7 @@
  */
 
 import { mailToken, sendEmail, mailConfigured } from './mailer.js';
-import { renderEmail, para, heading, figure, details, action, aside, SITE }
+import { renderEmail, para, heading, figure, action, aside, SITE }
   from './email-template.js';
 import { deadlineText, deadlineShort } from './poll-text.js';
 // The same counting the portal does, so a letter and the screen can never
@@ -62,12 +62,15 @@ export function pollEmail(kind, {
 }) {
   const url = `${origin}/polls?id=${pollId}`;
 
-  // Option label on the left, its note on the right. An option with no note
-  // leaves that cell empty, which reads as a plain hairline-separated list
-  // rather than as something missing.
+  // One paragraph per option, not a `details` table.
+  //
+  // That block draws a muted label on the left and a bold value on the right,
+  // which is right for a bill's working and wrong for a plain list — with the
+  // per-option note gone there is nothing to put in the second column, and an
+  // empty right cell reads as something missing rather than as a list.
   const optionRows = options.length
     ? [heading(options.length === 2 ? 'The two options' : `The ${options.length} options`),
-       details(options.map((o) => [o.label, o.sub ?? '']))]
+       ...options.map((o) => para(`— ${o.label}`))]
     : [];
 
   if (kind === 'opened') {
@@ -235,7 +238,7 @@ async function pollContent(env, pollIds) {
 
   const [{ results: options }, { results: published }, flats] = await Promise.all([
     env.DB.prepare(
-      `SELECT id, poll_id, label, sub FROM poll_options
+      `SELECT id, poll_id, label FROM poll_options
         WHERE poll_id IN (${marks}) ORDER BY poll_id, sort`
     ).bind(...pollIds).all(),
     env.DB.prepare(
@@ -246,7 +249,7 @@ async function pollContent(env, pollIds) {
 
   for (const id of pollIds) out.set(id, { options: [], result: null });
   for (const o of options ?? []) {
-    out.get(o.poll_id)?.options.push({ label: o.label, sub: o.sub });
+    out.get(o.poll_id)?.options.push({ label: o.label });
   }
 
   const live = (published ?? []).map((r) => r.id);

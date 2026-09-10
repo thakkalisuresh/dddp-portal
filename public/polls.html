@@ -14,12 +14,6 @@
     font-family: var(--font-ui); font-size: var(--text-md); font-weight: 600;
     margin: var(--s-2) 0 var(--s-1); line-height: 1.25;
   }
-  /* An option's note sits under its label in the composer, quieter than the
-     thing it describes. Same box, one step down in weight. */
-  .optrow { display: grid; gap: var(--s-2); padding-bottom: var(--s-3); }
-  .optrow + .optrow { border-top: 1px solid var(--border); padding-top: var(--s-3); }
-  .input--sub { font-size: var(--text-sm); color: var(--ink-muted); }
-
   /* The heading is what earns the underline when the card is hovered — the
      rule in app.css names <b>, and a list row uses a real heading instead. */
   a.card:hover .poll__title, a.card:focus-visible .poll__title { text-decoration: underline; }
