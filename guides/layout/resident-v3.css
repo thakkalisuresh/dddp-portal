@@ -26,9 +26,13 @@
   --amber-wash: #FDF7EC;
   --red: #A8261E;
 
-  --body: 3.5mm;
-  --small: 3.1mm;
-  --tiny: 2.5mm;
+  /* Sized for the phone trim as it lands on a real screen: 1mm of page is about
+     3.16pt on a 6.3" phone. Measured on both simulators on 2026-09-11, the old
+     3.1mm / 2.5mm put most of the guide at 9.8pt and 7.9pt, under iOS's 11pt
+     and Material's 12sp minimums, for a guide whose readers are often older. */
+  --body: 3.8mm;    /* 12pt  */
+  --small: 3.6mm;   /* 11.4pt */
+  --tiny: 3mm;      /* 9.5pt */
   --h1: 7.4mm;
   --h2: 5mm;
   --kick: 2.6mm;
@@ -103,6 +107,11 @@ b, strong { font-weight: 700; }
    block, and nothing in it absorbed the slack — so the page ended at its
    midpoint and the rest was dead paper. This anchors the stamp to the foot. */
 .cover .points { margin-bottom: auto; }
+/* The handbook's index lives on its cover and grows with the document. At
+   nineteen rows the default row padding tipped the cover onto a second sheet,
+   which is the one thing the build refuses. Tightened here rather than in
+   `.c-row`, so the spine's shorter contents keeps its more generous setting. */
+.cover .contents .c-row { padding: 1.05mm 0; }
 .cover .kick { margin-bottom: 2mm; }
 .c-row {
   display: flex; text-decoration: none; color: inherit; gap: 3mm; align-items: baseline;

@@ -20,8 +20,11 @@ const SPEC = {
   'ios-login': {
     device: 'iphone',
     marks: [
-      { n: 1, from: 'rules', pair: [0, 1], what: 'mobile number field (focused, green outline)' },
-      { n: 2, from: 'greyRules', pair: [0, 1], what: 'password field' },
+      // Captured with the field released (Done), so no focus ring: both fields
+      // are grey-outlined now. A focused field puts iOS's form-accessory bar
+      // over Safari's toolbar and the address pill cannot be measured.
+      { n: 1, from: 'greyRules', pair: [0, 1], what: 'mobile number field' },
+      { n: 2, from: 'greyRules', pair: [2, 3], what: 'password field' },
       { n: 3, from: 'filled', band: 0, what: 'Log in button' },
     ],
   },
@@ -55,6 +58,20 @@ const SPEC = {
   'ios-06-me': { device: 'iphone', marks: [] },
   'and-02-stuck': { device: 'android', marks: [] },
   'and-03-fallback': { device: 'android', marks: [] },
+  // Polls (PRs #70, #72). Captured as an OWNER (prep-demo --owner) because
+  // tenants cannot vote, on a simulator booted in Asia/Kolkata so the deadline
+  // shows once, as a resident in India sees it, and not in two timezones.
+  'ios-08-poll': { device: 'iphone', marks: [] },
+  'ios-09-ballot': {
+    device: 'iphone',
+    marks: [
+      { n: 1, from: 'rules', pair: [0, 1], what: 'the chosen option (green outline)' },
+      { n: 2, from: 'filled', band: 0, what: 'Submit my flat’s vote' },
+    ],
+  },
+  'ios-10-voted': { device: 'iphone', marks: [] },
+  // Scrolled past the QR: the UPI ID and the reference, each with a Copy button (PR #65).
+  'and-04-manual': { device: 'android', marks: [] },
 };
 
 const out = {};
