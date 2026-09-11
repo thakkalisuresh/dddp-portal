@@ -39,9 +39,11 @@
       We will email a six-digit code to the address on your account.
     </p>
     <div class="field">
-      <label for="mobile">Mobile number or email</label>
-      <!-- See the note on the same field in login.html: tel until the email
-           lookup exists, text after it. -->
+      <label for="mobile">Mobile number</label>
+      <!-- Mobile only; see the note on the same field in login.html. This page
+           mattered most: /api/forgot answers input it cannot parse with the
+           same neutral reply as a real request, so an address typed under the
+           old "or email" label was told a code was on its way and got nothing. -->
       <input class="input num" id="mobile" name="mobile" type="tel"
              autocomplete="username" inputmode="tel" required
              aria-describedby="mobileHint">

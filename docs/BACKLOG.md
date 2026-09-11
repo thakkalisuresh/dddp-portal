@@ -368,6 +368,21 @@ until the lookup exists. Flip both to `type="text"` with no `inputmode` in the
 same change that ships the lookup, and not before — until then the tel keypad
 serves the only handle that works.
 
+### Decided 2026-09-10 — mobile only
+
+**The label is back to "Mobile number" on both pages, and email sign-in is not
+being built.** The user's call. What forced it was the resident guide: it had
+copied the label and was about to tell 99 flats they could sign in with their
+email. On `/forgot` that was worse than a rejected login, because an address
+gets the same neutral "code sent" reply as a real request and nothing arrives.
+
+Every resident already has a mobile on file, since it is the login ID. Not every
+resident has an email, so the tel keypad keeps serving the handle that always
+works. If email sign-in is ever wanted, it is a feature in its own right, not a
+label change. The `type="text"` note above applies then, and so do two gaps that
+turned up here: email is unique only in app code (`duplicateContact`), not in
+the schema, and rate limiting is keyed on mobile.
+
 **"2 of 107 accounts have any address at all" is not a fact about the building.**
 It describes the demo seed, which is the same trap B26 already names about
 `npm run doctor` counts. Confirmed by the user 2026-09-04: the portal is
