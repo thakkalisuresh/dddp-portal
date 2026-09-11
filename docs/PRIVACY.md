@@ -119,7 +119,17 @@ the new holder, which re-points the upload without moving anything.
 
 **To Telegram, on alerts and the morning digest.** One shared committee chat,
 via `postToTelegram`. It carries error codes, counts and the fact that something
-needs attention. It is deliberately kept clear of resident contact details: the
+needs attention. An instant alert raised by a request also names who hit it —
+**flat, owner or tenant, first name and account id** — plus the device (phone,
+tablet or desktop; OS and browser with their versions; the phone model where
+Chrome volunteers it through Client Hints; and whether it was opened inside
+WhatsApp or Instagram), **the city and country Cloudflare places the request
+in**, the page and route, and the release. City and country, **never the IP**:
+it answers "is this an owner abroad?" without putting a household's connection
+address in a chat nothing can be recalled from. The same facts are kept in
+`error_log.context` so the activity log can show them later; `error_log` is
+never backed up to Drive and is pruned at 365 days. The morning digest stays
+counts only. It is deliberately kept clear of resident contact details: the
 contact-change notification (B22) says a request is waiting and who raised it,
 and does **not** carry the new number or address, because that chat is a wider
 audience than the console and nothing in it can be recalled.

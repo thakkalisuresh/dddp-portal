@@ -14,11 +14,28 @@
  */
 
 import { build } from 'esbuild';
+import { execSync } from 'node:child_process';
 import { cp, mkdir, rm, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * The commit being built, printed on every alert as "Release:". "-dirty" when
+ * the tree has uncommitted changes, because a build nobody can check out again
+ * should not pass for the commit it started from.
+ */
+function release() {
+  try {
+    const sha = execSync('git rev-parse --short HEAD', { cwd: root }).toString().trim();
+    const dirty = execSync('git status --porcelain', { cwd: root }).toString().trim();
+    return dirty ? `${sha}-dirty` : sha;
+  } catch {
+    return 'unknown';
+  }
+}
+const RELEASE = release();
 // Pages rejects --config, so its wrangler.toml lives in pages/ and the
 // build output must sit beside it.
 const out = join(root, 'pages', 'dist');
@@ -40,7 +57,8 @@ await build({
   conditions: ['workerd', 'worker', 'browser'],
   minify: false,          // readable in production stack traces
   sourcemap: false,
+  define: { __RELEASE__: JSON.stringify(RELEASE) },
 });
 
 const files = await readdir(out);
-console.log(`  dist/ built — ${files.length} entries, _worker.js bundled`);
+console.log(`  dist/ built — ${files.length} entries, _worker.js bundled, release ${RELEASE}`);

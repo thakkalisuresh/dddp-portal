@@ -370,6 +370,11 @@ reportError is the ONLY sanctioned path for a failure to leave the system.
 | fn | `episodeDecision` | The suppression policy, as a pure function of what the table remembers. |
 | fn | `shouldAlert` |  |
 | fn | `postToTelegram` | The one place anything is sent to Telegram. |
+| fn | `describeDevice` | Phone/tablet/desktop, OS with version, browser with version — and whether it was opened inside WhatsApp or Instagram, which is how most residents arrive from a forwarded link, and whose webviews break things real browsers do not. |
+| fn | `requestContextFor` | Everything about a request an alert should carry, taken once at the top of fetch. |
+| fn | `topFrames` |  |
+| fn | `alertContext` | What gets stored in error_log.context and printed in the alert. |
+| fn | `describeContext` |  |
 | fn | `assertAlerting` | Call once per request path that can alert. |
 
 ### `functions/lib/flats.js`
@@ -990,4 +995,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-535 exports. 243 have no doc comment.
+540 exports. 245 have no doc comment.
