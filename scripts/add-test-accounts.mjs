@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Two throwaway accounts to test with — one resident, one admin.
+ * Four throwaway accounts to test with — owner, tenant, committee, admin.
  *
  *   node scripts/add-test-accounts.mjs --remote --confirm   # create
  *   node scripts/add-test-accounts.mjs --remote --remove    # undo
@@ -49,9 +49,21 @@ const ITERATIONS = 100_000;
 const SALT_BYTES = 16;
 const KEY_BITS = 256;
 
+/**
+ * One per relationship and role the alerts distinguish, each with a DIFFERENT
+ * first name — an alert prints only the first name, and four accounts all
+ * called "Test" would make every Telegram message read the same. The initial
+ * matches the role (Oommen owner, Thomas tenant, Chacko committee, Anil admin)
+ * so a glance at the chat says which account hit it.
+ *
+ * The tenant goes on a demo-owned flat, beside its owner, because that is what
+ * a tenant is; the other three need a flat nobody active occupies.
+ */
 const ACCOUNTS = [
-  { name: 'Demo User [demo]',  mobile: '+919990000002', role: 'owner', label: 'Resident' },
-  { name: 'Demo Admin [demo]', mobile: '+919990000003', role: 'admin', label: 'Admin' },
+  { name: 'Oommen Test [demo]', mobile: '+919990000010', role: 'owner',     relationship: 'owner',  label: 'Owner' },
+  { name: 'Thomas Test [demo]', mobile: '+919990000011', role: 'owner',     relationship: 'tenant', label: 'Tenant' },
+  { name: 'Chacko Test [demo]', mobile: '+919990000012', role: 'committee', relationship: 'owner',  label: 'Committee' },
+  { name: 'Anil Test [demo]',   mobile: '+919990000013', role: 'admin',     relationship: 'owner',  label: 'Admin' },
 ];
 
 if (!confirmed) {
@@ -241,7 +253,7 @@ function billsFor(flat, ownerId, now) {
 const main = async () => {
   if (remove) return removeAll();
 
-  console.log(`\n  Adding two test accounts to ${local ? 'LOCAL' : 'PRODUCTION'}.\n`);
+  console.log(`\n  Adding ${ACCOUNTS.length} test accounts to ${local ? 'LOCAL' : 'PRODUCTION'}.\n`);
 
   const taken = q(`SELECT mobile FROM owners WHERE mobile IN (${
     ACCOUNTS.map((a) => lit(a.mobile)).join(',')})`);
@@ -253,27 +265,39 @@ const main = async () => {
 
   // An empty flat, always. Putting a test account on an occupied flat gives it
   // two owners, which is the state the doctor's TWO-OWNERS check exists to
-  // catch — and it would be this script that caused it.
+  // catch — and it would be this script that caused it. "Empty" means nobody
+  // ACTIVE: a deactivated resident keeps their row and history but no longer
+  // occupies the flat, which is how test accounts are retired without deleting.
   const free = q(`SELECT f.flat FROM flats f
-                   LEFT JOIN owners o ON o.flat = f.flat
+                   LEFT JOIN owners o ON o.flat = f.flat AND o.active = 1
                    WHERE o.id IS NULL ORDER BY f.floor, f.flat`).map((r) => r.flat);
-  if (free.length < ACCOUNTS.length) {
-    console.error(`  Only ${free.length} empty flats; need ${ACCOUNTS.length}.\n`);
+  // A tenant needs an owner beside it, and only a [demo] one — a tenant's
+  // arrival redirects that flat's bills to them (billingTarget prefers tenants).
+  const letOut = q(`SELECT o.flat FROM owners o JOIN flats f ON f.flat = o.flat
+                     WHERE o.active = 1 AND o.relationship = 'owner' AND o.name LIKE '%[demo]%'
+                       AND NOT EXISTS (SELECT 1 FROM owners t WHERE t.flat = o.flat
+                                         AND t.active = 1 AND t.relationship = 'tenant')
+                     ORDER BY f.floor, o.flat`).map((r) => r.flat);
+  const needFree = ACCOUNTS.filter((a) => a.relationship !== 'tenant').length;
+  const needLet = ACCOUNTS.length - needFree;
+  if (free.length < needFree || letOut.length < needLet) {
+    console.error(`  Need ${needFree} empty flats and ${needLet} demo-owned; `
+                + `found ${free.length} and ${letOut.length}.\n`);
     process.exit(1);
   }
 
   const now = new Date().toISOString();
   const made = [];
 
-  for (const [i, acct] of ACCOUNTS.entries()) {
-    const flat = free[i];
+  for (const acct of ACCOUNTS) {
+    const flat = acct.relationship === 'tenant' ? letOut.shift() : free.shift();
     const pw = oneTimePassword();
     const { hash: h, salt: s } = await hash(pw);
 
     exec(`INSERT INTO owners (flat, name, mobile, pw_hash, pw_salt, must_change_pw,
             role, relationship, active, created_at)
           VALUES (${lit(flat)}, ${lit(acct.name)}, ${lit(acct.mobile)}, ${lit(h)},
-                  ${lit(s)}, 1, ${lit(acct.role)}, 'owner', 1, ${lit(now)});`);
+                  ${lit(s)}, 1, ${lit(acct.role)}, ${lit(acct.relationship)}, 1, ${lit(now)});`);
 
     // Read the row back rather than trusting the insert, and confirm the hash
     // stored is the hash derived — a mismatch means an account nobody can open.
@@ -298,7 +322,8 @@ const main = async () => {
   console.log('  ─────────────────────────────────────────────');
   for (const m of made) {
     console.log(`  ${m.label.padEnd(9)}${m.mobile.replace('+91', '').padEnd(12)}${m.pw}`);
-    console.log(`  ${' '.repeat(9)}flat ${m.flat}${m.role === 'admin' ? ', admin rights' : ''}`);
+    console.log(`  ${' '.repeat(9)}flat ${m.flat} · ${m.relationship}`
+              + `${m.role !== 'owner' ? ` · ${m.role} rights` : ''}`);
   }
   console.log(`\n  ${site}`);
   console.log('  First login lands on /password and asks for a new one.');
