@@ -79,8 +79,10 @@ const SIZES = {
   // foot of an A5 page and take their section onto a second sheet, which is
   // the one failure the build refuses to ship. Sizing those two separately
   // keeps every other figure as large as it can be.
-  a5: { screen: 46, detail: 54, tall: 40, row: 84 },
-  phone: { screen: 42, detail: 50, tall: 36, row: 68 },
+  // `console` carries a badge strip above the phone as well, so on the narrow
+  // phone trim it gets a size of its own rather than shrinking every `tall`.
+  a5: { screen: 46, detail: 54, tall: 40, row: 84, console: 40 },
+  phone: { screen: 42, detail: 50, tall: 36, row: 68, console: 32 },
 };
 
 /**
@@ -130,6 +132,8 @@ const head = (kick, h1, dek) =>
  * different page numbers.
  */
 const SPINE_SECTIONS = [
+  ['What this portal is', 'about-1'],
+  ['What it costs, and what it does not do', 'about-2'],
   ['What the committee can do', 's2'],
   ['The console', 's3'],
   ['The dashboard', 's4'],
@@ -186,6 +190,50 @@ export function spinePages({ version, date, trim }) {
 function bodySections(z) {
   const out = [];
 
+  /* The two pages about the portal itself, straight after the index: what it
+     is and why it exists, then what it costs and what it will not do. Wording
+     agreed with the association's website contact on 2026-09-11. Costs are
+     stated as they stand today; "for as long as it runs" rather than "for a
+     lifetime", because free hosting rests on Cloudflare's own terms. */
+  out.push(sheet(`
+    ${head('About the portal', 'What this portal is',
+      `The association’s own website for billing, payments, notices and polls.
+       It gives the association one place to run these itself, in place of the
+       old gas site and the paid apps other associations use.`)}
+    <h2>Why it was built</h2>
+    ${points([
+      ['Made for our community.', 'Sabarish, from flat 4A, built it for the building and the association, to make the committee’s work easier.'],
+      ['An alternative to paid RWA apps.', 'It covers what this building needs, without a subscription or a third party holding our records.'],
+      ['Built around how the building already works.', 'Residents still pay by UPI into the association’s own account. The portal adds the bill, the proof and the record.'],
+    ])}
+    <h2>How it helps the committee</h2>
+    ${points([
+      ['Every bill comes from a reading and a rate.', 'Any amount can be explained to the resident who questions it.'],
+      ['Payments arrive with their proof.', 'Residents upload the screenshot, and the portal checks the amount before you see it.'],
+      ['Records do not depend on one person.', 'They are backed up every night to Google Drive (once email and Google Drive are set up for the association).'],
+      ['It works on any phone.', 'There is nothing to install, and owners abroad use it as easily as residents in the building.'],
+    ])}`,
+  { id: 'about-1', cls: 'sheet--about' }));
+
+  out.push(sheet(`
+    ${head('About the portal', 'What it costs, and what it does not do', '')}
+    <h2>What it costs</h2>
+    ${points([
+      ['Nothing, today.', 'Hosting, maintenance and running the portal are fully free, and Sabarish takes care of all three.'],
+      ['The hosting stays free.', 'As it is hosted now, at diamondpark.pages.dev, it costs nothing for as long as it runs.'],
+      ['A domain of our own would cost money.', 'If the association wants its own web address, the only cost is the yearly domain fee.'],
+      ['New features are discussed first.', 'Sabarish can say whether a feature can be built for free. If it needs a paid service, he will bring the cost to the association for approval before anything is built.'],
+    ])}
+    <h2>What it does not do</h2>
+    ${points([
+      ['It does not take payments.', 'Residents pay by UPI into the association’s existing account, as before.'],
+      ['It is not the association’s accounts.', 'Maintenance charges, the sinking fund and the audit stay where they are.'],
+      ['It is not an app.', 'It is a web page, opened in the phone’s browser.'],
+      ['It does not manage the gate, visitors or bookings.', 'Other products cover those.'],
+      ['Payment matching is not automatic.', 'UPI gives no reliable signal back, so the committee approves each payment itself.'],
+    ])}`,
+  { id: 'about-2', cls: 'sheet--about' }));
+
   out.push(sheet(`
     ${head('Orientation', 'What the committee can do',
       `Each flat has its own meter. Residents use the supply, and the association
@@ -197,8 +245,8 @@ function bodySections(z) {
     ])}
     ${box('Admin accounts',
       'Committee members hold admin accounts. Every admin sees the same rates, readings and published amounts, and each action is recorded against the account that performed it.')}
-    ${box('Notices are separate',
-      'A member may hold a committee account that posts notices and has no other admin function. The Notices sheet covers it.')}`,
+    ${box('Notices and polls are separate',
+      'Both live on the notice board rather than in this console, and a member may hold a committee account that runs them and nothing else. Their own sheets cover it.')}`,
   { id: 's2' }));
 
   out.push(sheet(`
@@ -219,7 +267,7 @@ function bodySections(z) {
       // reading 5 2 6 3 4.
       // `tall`: the badge strip under the phone costs 8mm that a side rail
       // does not, and this page also carries five numbered steps and a box.
-      fig('ph-console', { screenMm: z.tall, rail: 'above' })}
+      fig('ph-console', { screenMm: z.console, rail: 'above' })}
     ${box('Residents sits past the right edge',
       'The strip is one row and it scrolls. Swipe it sideways to reach Residents, which lists who lives where and who is billed.')}`,
   { id: 's3' }));
@@ -393,7 +441,7 @@ export function fullPages({ version, date, trim }) {
       <span>Kuriachira, Thrissur 680006, Kerala</span>
       <span>${link(WEB, 'diamondpark.pages.dev')}</span>
       <span>Version ${esc(version)} · ${esc(date)}</span>
-    </div>`, { cls: 'cover' });
+    </div>`, { cls: 'cover cover--dense' });
 
   /* Each chapter's first page gets the anchor its contents row points at. */
   const chapterPages = chapters.flatMap((c) => c.pages.map((h, k) =>
@@ -425,6 +473,7 @@ export const SHEETS = [
   { id: 'bills', title: 'Correcting a bill', dek: 'how a published bill is changed' },
   { id: 'residents', title: 'Residents', dek: 'who lives where, and what may be changed' },
   { id: 'notices', title: 'Notices', dek: 'informing the building' },
+  { id: 'polls', title: 'Polls', dek: 'asking the building, one vote per flat' },
 ];
 
 /**
@@ -543,6 +592,45 @@ export function sheetPages(id, { version, date, trim, inline = false }) {
         ${stamp}`),
     ],
 
+    polls: () => [
+      sheet(`
+        ${head(kick, 'Polls',
+          `A question the committee puts to the building. One vote for each
+           flat, and the vote belongs to the owner.`)}
+        ${fig('ph-polls', { screenMm: z.tall, rail: false })}
+        ${points([
+          ['Advisory', 'a poll carries no quorum and no constitutional weight. It records the building’s view.'],
+          ['Owners vote, one to a flat', 'a tenant may be allowed to read a poll, and still cannot vote in it.'],
+          ['Polls sit with the notice board', 'open Notices, then All polls. There is no Polls tab in the admin console.'],
+        ])}
+        ${warn('The count is not shown to the committee either',
+          'While voting is open, nobody sees the running result — not the person who created the poll. It is left out of the data the page receives, rather than hidden on screen.')}
+        ${stamp}`),
+      sheet(`
+        ${head(kick, 'Asking the question', '')}
+        ${fig('ph-poll-new', { screenMm: z.tall, rail: false })}
+        ${points([
+          ['Write the question and what it is about', 'then between two and ten options.'],
+          ['Set when it closes', 'a date and time in the building’s own clock, whoever is typing.'],
+          ['Decide whether tenants may read it', 'leave it off for anything with money attached.'],
+        ])}
+        ${box('What residents receive',
+          'Owners are emailed when a poll opens, again halfway through if their flat has not voted, and again if the result is published.')}
+        ${stamp}`),
+      sheet(`
+        ${head(kick, 'Closing it, and publishing the result',
+          'The committee’s own controls sit at the foot of the poll.')}
+        ${fig('ph-poll-manage', { screenMm: z.row, rail: false })}
+        ${points([
+          ['Close voting', 'when the date arrives, or earlier. A poll may be edited only while it is open.'],
+          ['Then publish the result', 'it reaches residents only when you do, and publishing can be undone.'],
+          ['There is no reopening', 'accepting more votes after the count has been seen would make any result arguable.'],
+        ])}
+        ${box('Who may do this',
+          'An admin manages any poll. A committee account manages the polls that account created.')}
+        ${stamp}`),
+    ],
+
     notices: () => [
       sheet(`
         ${head(kick, 'Notices', 'How the association informs the building.')}
@@ -570,7 +658,7 @@ export function sheetPages(id, { version, date, trim, inline = false }) {
           'Replies: up to 1,200 characters, and a resident may post six in an hour.',
           'Notices themselves are not limited in number.')}
         ${box('Committee accounts',
-          'A member may be elected and given a committee account. It posts notices and edits the notices that account posted, and it has no other admin function: no rates, no readings, no bills, no payments. The admin console does not appear for it.')}
+          'A member may be elected and given a committee account. It posts notices and runs polls, and manages the ones that account created — not the whole board. It has no other admin function: no rates, no readings, no bills, no payments. The admin console does not appear for it.')}
         ${stamp}`),
     ],
   };
