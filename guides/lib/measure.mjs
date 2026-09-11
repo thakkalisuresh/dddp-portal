@@ -123,11 +123,18 @@ export async function bands(file) {
       const { best } = widestWhite(y);
       return best > c.width * 0.22 && best < c.width * 0.75;
     };
+    // The address text runs across the middle of the pill and breaks the white
+    // run on those rows, so walking up until the first non-pill row stopped at
+    // the text and reported the bottom third as the whole pill. Allow a gap the
+    // height of a line of text before deciding the pill has ended.
+    const GAP = Math.round(c.height * 0.02);
     let pill = null;
     for (let y = c.height - 1; y > c.height * 0.78; y--) {
       if (!isPillRow(y)) continue;
-      let top = y;
-      while (top > 0 && isPillRow(top - 1)) top--;
+      let top = y, miss = 0;
+      for (let k = y - 1; k > y - c.height * 0.08 && k > 0; k--) {
+        if (isPillRow(k)) { top = k; miss = 0; } else if (++miss > GAP) break;
+      }
       const mid = (top + y) / 2;
       pill = { top: (mid / c.height) * 100, left: (widestWhite(mid | 0).at / c.width) * 100,
                height: ((y - top) / c.height) * 100 };

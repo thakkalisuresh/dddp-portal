@@ -50,9 +50,9 @@
         "--local-protocol",
         "https",
         "--https-key-path",
-        "/private/tmp/claude-501/-Users-sabarish-Downloads-Claude-dddp-portal/6d9edb8e-8da7-4aaf-a3d0-b53088ba3655/scratchpad/tls/leaf.key",
+        ".wrangler/tls/leaf.key",
         "--https-cert-path",
-        "/private/tmp/claude-501/-Users-sabarish-Downloads-Claude-dddp-portal/6d9edb8e-8da7-4aaf-a3d0-b53088ba3655/scratchpad/tls/leaf.pem"
+        ".wrangler/tls/leaf.pem"
       ],
       "port": 8789,
       "url": "https://localhost:8789"

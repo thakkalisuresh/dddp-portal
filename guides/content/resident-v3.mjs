@@ -87,8 +87,11 @@ const warn = (lab, ...ps) =>
 // The dek is not escaped: it is authored copy, and it is the one slot that
 // routinely carries a built link. Escaping it printed `<a href="...">` on the
 // page of the guide that tells a resident where to sign in.
+// ...but it still gets the one piece of inline markup copy is allowed. When
+// escaping was dropped here, **bold** went with it and "Tap **Notices**" printed
+// its asterisks on two pages. Links pass through; only the bold is converted.
 const head = (kick, h1, dek) =>
-  `<p class="kick">${t(kick)}</p><h1>${t(h1)}</h1>${dek ? `<p class="dek">${dek}</p>` : ''}`;
+  `<p class="kick">${t(kick)}</p><h1>${t(h1)}</h1>${dek ? `<p class="dek">${String(dek).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')}</p>` : ''}`;
 const row = (...figs) => `<div class="dev-row">${figs.join('')}</div>`;
 
 /* ── paying ──────────────────────────────────────────────────────────
@@ -156,9 +159,10 @@ export function pages({ version, date, trim }) {
         ['7', 'Paying in the app, and the receipt', 'p7'],
         ['8', 'If the app does not open', 'p8'],
         ['9', 'Notices from the committee', 'p9'],
-        ['10', 'Correcting your details', 'p10'],
-        ['11', 'Common questions', 'p11'],
-        ['12', 'Who to ask', 'p12'],
+        ['10', 'Voting in a poll', 'p10'],
+        ['11', 'Correcting your details', 'p11'],
+        ['12', 'Common questions', 'p12'],
+        ['13', 'Who to ask', 'p13'],
       ].map(([n, title, id]) =>
         `<a class="c-row" href="#${id}"><span class="c-n">${n}</span><span>${t(title)}</span></a>`).join('')}
     </div>
@@ -170,22 +174,22 @@ export function pages({ version, date, trim }) {
 
   /* 2 · signing in */
   out.push(sheet(`
-    ${head('Getting started', 'Signing in', `Go to ${link(WEB, 'diamondpark.pages.dev')} on your phone. Sign in with the mobile number the association has for your flat, or with your email.`)}
+    ${head('Getting started', 'Signing in', `Go to ${link(WEB, 'diamondpark.pages.dev')} on your phone. Sign in with the mobile number the association has for your flat.`)}
     ${device(shot('ios-login'), { screenMm: single - 9, railMm: 11, url: 'diamondpark.pages.dev' })}
     <div class="after">
     ${steps([
-      ['Enter your mobile number or email.', 'The number on the association list for your flat.'],
+      ['Enter your mobile number.', 'The number on the association list for your flat.'],
       ['Enter your password.', 'Tap Show to check what you entered.'],
       ['Tap Log in.', ''],
     ])}</div>
     ${box('The first time',
       'You receive a temporary password. Use it soon, because it expires.',
-      'Living outside India? Include your country code, as the screen suggests.')}`, { id: 'p2' }));
+      'Living outside India? Include your country code, for example +971.')}`, { id: 'p2' }));
 
   /* 3 · the bill screen */
   out.push(sheet(`
     ${head('Your bill', 'What the bill screen shows', 'This is the first screen after you sign in. The amount at the top is what you owe this month.')}
-    ${device(shot('ios-01-bill-pay'), { screenMm: single, rail: false, url: 'diamondpark.pages.dev' })}
+    ${device(shot('ios-01-bill-pay'), { screenMm: single - 5, rail: false, url: 'diamondpark.pages.dev' })}
     <div class="after">
     ${points([
       ['The month', 'which bill you are looking at.'],
@@ -229,14 +233,18 @@ export function pages({ version, date, trim }) {
   /* 8 · the failure path */
   out.push(sheet(`
     ${head('If the app does not open', 'Nothing happened when I tapped', 'Some UPI apps refuse a link that comes from a browser. The portal notices and shows two routes that always work.')}
-    ${device(shot('and-03-fallback'), { screenMm: single, rail: false })}
+    ${row(
+      device(shot('and-03-fallback'), { screenMm: pair, rail: false }),
+      device(shot('and-04-manual'), { screenMm: pair, rail: false }),
+    )}
+    <p class="cap">Left, the warning and the QR code. Right, further down: the UPI ID and the reference, each with its own Copy button.</p>
     <div class="after">
     ${points([
       ['Scan the QR code', 'with any UPI app. You can also screenshot it and scan from your gallery.'],
       ['Or copy the UPI ID and the reference', 'each has a Copy button. Paste both into your own app.'],
     ])}</div>
     ${warn('The reference matters',
-      'Under "Pay another way" there is a short reference such as (2B_09_08_26). Copy it exactly. It is how your flat is matched to the payment.')}`, { id: 'p8' }));
+      'Under "Pay another way" there is a short reference: your flat, then the date, such as (2B_10_09_26). Copy it exactly. It is how your flat is matched to the payment.')}`, { id: 'p8' }));
 
   /* 9 · notices */
   out.push(sheet(`
@@ -244,10 +252,30 @@ export function pages({ version, date, trim }) {
     ${device(shot('ios-05-notices'), { screenMm: single, rail: false, url: 'diamondpark.pages.dev' })}
     <div class="after">
     ${points([
+      ['Open polls come first', 'a poll the committee wants your answer on sits at the top, marked Not voted until your flat has answered. Page 10 explains voting.'],
       ['Parking, maintenance, celebrations', 'anything that used to go on the notice board.'],
       ['Some notices accept a reply', 'when they do, a reply box appears at the bottom of the notice.'],
-      ['Nothing expires', 'an old notice stays readable, so you can check what was agreed.'],
     ])}</div>`, { id: 'p9' }));
+
+  /* 10 · voting. Captured as an owner, because a tenant is never shown a
+     ballot; the rules below are quoted from what the portal itself says. */
+  out.push(sheet(`
+    ${head('Polls', 'Voting in a poll', 'When the committee needs a decision from the building, it asks in a poll. Tap the poll at the top of Notices.')}
+    ${steps([
+      ['Choose one answer.', 'It turns green.'],
+      ['Tap Submit my flat’s vote.', 'The page confirms it straight away.'],
+    ])}
+    ${row(
+      device(shot('ios-09-ballot'), { screenMm: pair, railMm: 9, url: 'diamondpark.pages.dev' }),
+      device(shot('ios-10-voted'), { screenMm: pair, rail: false, url: 'diamondpark.pages.dev' }),
+    )}
+    <p class="cap">Before and after. The results stay hidden until voting closes.</p>
+    <div class="after">
+    ${points([
+      ['One vote per flat', 'if two people in the flat vote, the last vote is the one that counts.'],
+      ['You can change it', 'until the poll closes. Tap Change this vote.'],
+      ['Only owners vote', 'the committee may let tenants see a poll, but not answer it.'],
+    ])}</div>`, { id: 'p10' }));
 
   /* 10 · details */
   out.push(sheet(`
@@ -260,7 +288,7 @@ export function pages({ version, date, trim }) {
       ['Change password', 'further down the same screen.'],
     ])}</div>
     ${box('Add your email',
-      'Without an email on your account, the portal cannot reset your password for you. The committee has to do it instead.')}`, { id: 'p10' }));
+      'Without an email on your account, the portal cannot reset your password for you. The committee has to do it instead.')}`, { id: 'p11' }));
 
   /* 11 · FAQ */
   out.push(sheet(`
@@ -282,7 +310,7 @@ export function pages({ version, date, trim }) {
         ['I think the reading is wrong.',
          'Every reading is listed with the date it was taken. Quote that date and number to the committee.'],
       ].map(([q, a]) => `<div class="faq-item"><div class="q">${t(q)}</div><div class="a">${a}</div></div>`).join('')}
-    </div>`, { id: 'p11' }));
+    </div>`, { id: 'p12' }));
 
   /* 12 · who to ask */
   out.push(sheet(`
@@ -300,7 +328,7 @@ export function pages({ version, date, trim }) {
     </div>
     ${box('Corrections take a few days',
       'A change to a bill needs two other committee members to agree. The late fee is paused while everyone decides.')}
-    ${box('Where to find it', html(`${link(WEB, 'diamondpark.pages.dev')} — the same address every month. Save it once.`))}`, { id: 'p12' }));
+    ${box('Where to find it', html(`${link(WEB, 'diamondpark.pages.dev')} — the same address every month. Save it once.`))}`, { id: 'p13' }));
 
   return out;
 }

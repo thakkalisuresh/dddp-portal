@@ -3,6 +3,12 @@
  *
  *   node guides/build-guide.mjs            # all trims
  *   node guides/build-guide.mjs phone      # just one
+ *   node guides/build-guide.mjs --pages    # also one PNG per page, to review
+ *
+ * --pages writes guides/out/pages-v3/<file>-NN.png. A PDF is hard to look at
+ * from a script, and "it built" is not "it is right": a figure can overflow its
+ * row or a badge land on the wrong control while every check passes. This used
+ * to be a scratchpad helper, and it went when the scratchpad was cleared.
  *
  * HTML -> paged.js -> PDF. paged.js rather than Chrome's own print, because
  * Chrome implements `@page` size but not the margin BOXES, so a running foot
@@ -17,7 +23,7 @@
  */
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { resolve, join, extname, normalize } from 'node:path';
 import { pages, cardPages, useShots } from './content/resident-v3.mjs';
 import { DEVICE_CSS } from './lib/device.mjs';
@@ -55,8 +61,8 @@ const doc = (trim, key) => {
   size: ${trim.size};
   margin: ${trim.margin};
   ${trim.card ? '' : `
-  @bottom-left { content: string(runfoot); font-family:"Figtree",sans-serif; font-size:7pt; color:#8A9891; }
-  @bottom-right { content: counter(page); font-family:"Figtree",sans-serif; font-weight:700; font-size:7.5pt; color:#101E18; }`}
+  @bottom-left { content: string(runfoot); font-family:"Figtree",sans-serif; font-size:8.5pt; color:#6F7E77; }
+  @bottom-right { content: counter(page); font-family:"Figtree",sans-serif; font-weight:700; font-size:9pt; color:#101E18; }`}
 }
 @page :first { @bottom-left { content: none } @bottom-right { content: none } }
 .sheet h1 { string-set: runfoot content(text); }
@@ -106,7 +112,9 @@ if (!process.env.GUIDE_WHATSAPP) {
   console.warn('      GUIDE_WHATSAPP=919567791515 node guides/build-guide.mjs\n');
 }
 
-const only = process.argv[2];
+const args = process.argv.slice(2);
+const SHOTS = args.includes('--pages');
+const only = args.find((a) => !a.startsWith('--'));
 const chosen = Object.entries(TRIMS).filter(([k]) => !only || k === only);
 // Registered under /out/ so the relative paths in the document are the same
 // whether it is served by this build or opened from guides/out/ on disk. When
@@ -115,7 +123,10 @@ const chosen = Object.entries(TRIMS).filter(([k]) => !only || k === only);
 for (const [key, trim] of chosen) docs.set(`/out/${key}.html`, doc(trim, key));
 
 const browser = await chromium.launch();
-const page = await browser.newPage();
+// Scale 2 only matters for the review PNGs; the PDF is vector either way.
+const page = await browser.newPage({ deviceScaleFactor: 2 });
+const PNG_DIR = join(OUT, 'pages-v3');
+if (SHOTS) mkdirSync(PNG_DIR, { recursive: true });
 let failed = 0;
 
 for (const [key, trim] of chosen) {
@@ -137,6 +148,27 @@ for (const [key, trim] of chosen) {
   writeFileSync(html, docs.get(`/out/${key}.html`));
   await page.pdf({ path: join(OUT, `${trim.file}.pdf`), printBackground: true,
     width: trim.size.split(' ')[0], height: trim.size.split(' ')[1], margin: { top: 0, right: 0, bottom: 0, left: 0 } });
+
+  if (SHOTS) {
+    // Clear this document's old pages first: a guide that shrank by a page
+    // would otherwise leave its last PNG behind, looking current.
+    for (const f of readdirSync(PNG_DIR)) if (f.startsWith(trim.file + '-')) unlinkSync(join(PNG_DIR, f));
+    const sheets = await page.$$('.pagedjs_page');
+    for (const [i, el] of sheets.entries()) {
+      await el.screenshot({ path: join(PNG_DIR, `${trim.file}-${String(i + 1).padStart(2, '0')}.png`) });
+    }
+  }
+
+  // Markup that reached the page as text: literal **bold** or an escaped
+  // <a href>. Both have shipped once, silently, because the PDF still builds.
+  const leaked = await page.evaluate(() => {
+    const txt = document.body.innerText;
+    return [...new Set([...(txt.match(/\*\*[^*]+\*\*/g) || []), ...(txt.match(/<a href[^>]*>/g) || [])])];
+  });
+  if (leaked.length) {
+    failed++;
+    console.log(`  ${key.padEnd(9)} RAW MARKUP ON THE PAGE: ${leaked.slice(0, 4).join('  ')}`);
+  }
 
   const broken = await page.evaluate(() =>
     [...document.images].filter((i) => !i.complete || i.naturalWidth === 0).map((i) => i.getAttribute('src')));

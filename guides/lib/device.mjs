@@ -36,10 +36,14 @@ export function device(shot, {
 
   const visible = 100 - trimTop - trimBottom;
   const rescale = (pct) => ((pct - trimTop) / visible) * 100;
-  const urlTop = rescale(urlAt === 'top' ? 7.3 : (shot.pill?.top ?? 90.3));
+  // Chrome's omnibox, measured off the capture on 2026-09-11: the toolbar strip
+  // runs from 6.5% to 11.9% of the screen, so the pill is centred at 9.2%. The
+  // 7.3% this used to say was read off a scaled-down preview and applied to the
+  // full-size image, which left the dev host showing beneath the patch.
+  const urlTop = rescale(urlAt === 'top' ? 9.2 : (shot.pill?.top ?? 90.3));
   // Cover the whole pill, not just its middle. A fixed padding left a sliver of
   // the dev host showing above the patch on the taller toolbar.
-  const urlH = urlAt === 'top' ? 0 : (shot.pill?.height ?? 0) * (100 / (100 - trimTop - trimBottom));
+  const urlH = urlAt === 'top' ? 4.4 : (shot.pill?.height ?? 0) * (100 / (100 - trimTop - trimBottom));
 
   const marks = (shot.marks ?? []).filter((m) => !only || only.includes(m.n));
 
@@ -133,7 +137,7 @@ export function androidChooser(apps = [
  * Every figure and name on the screen is the association's own example data.
  */
 export function gpayScreen({ amount = '312', payee = 'DD DIAMOND PARK RWA',
-  vpa = 'qr.ddwelfare@sib', note = '(2B_09_08_26)' } = {}) {
+  vpa = 'qr.ddwelfare@sib', note = '(2B_10_09_26)' } = {}) {
   return `<div class="gpay">
     <div class="gpay__bar">
       <span class="gpay__back">‹</span>
@@ -180,7 +184,7 @@ export const DEVICE_CSS = `
   box-shadow:0 0 0 .6mm #fff}
 /* Chrome's omnibox sits at the top of the window, Safari's at the bottom.
    Its vertical position is set inline, because a cropped capture moves it. */
-.dev-url--top{left:38%;background:#E9E7F0;box-shadow:0 0 0 .5mm #E9E7F0}
+.dev-url--top{left:38%;min-width:53%;background:#E9E7F0;box-shadow:0 0 0 .6mm #E9E7F0}
 
 .dev-rail{position:relative;flex:0 0 var(--rail);width:var(--rail);
   height:calc(var(--sh) + var(--bz)*2)}
