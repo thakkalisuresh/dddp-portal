@@ -158,7 +158,8 @@ export function mergeTimeline({ audits = [], activities = [], errors = [] }) {
     })),
     ...errors.map((e) => ({
       at: e.at, kind: 'error', name: e.code,
-      severity: e.severity, detail: e.detail ?? e.message, source: 'error',
+      severity: e.severity, detail: e.detail ?? e.message, context: e.context ?? null,
+      source: 'error',
     })),
   ];
 

@@ -42,6 +42,12 @@ export const SECURITY_HEADERS = {
   'x-frame-options': 'DENY',
   'permissions-policy': 'geolocation=(), microphone=(), payment=(), interest-cohort=()',
   'strict-transport-security': 'max-age=31536000; includeSubDomains',
+  // Not security — it rides here because this is the map every response gets.
+  // Chrome on Android reports "Android 10; K" whatever the phone runs; these
+  // hints are the only way to learn the real version and model for an alert
+  // (describeDevice in lib/errors.js). Chromium only, and from the second
+  // request of a visit, since the first is what tells the browser to send them.
+  'accept-ch': 'Sec-CH-UA-Platform-Version, Sec-CH-UA-Model',
 };
 
 export function withSecurityHeaders(response) {

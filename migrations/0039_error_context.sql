@@ -1,0 +1,15 @@
+-- Who hit an error, from what and where — the same facts the Telegram alert
+-- now carries, kept so the activity log can show them after the message has
+-- scrolled away.
+--
+-- One JSON column rather than eight: the shape will grow (it already went from
+-- nothing to flat, device, location, page, route, release, request id and
+-- stack in one change), and a column per field is a migration per idea.
+--
+-- error_log is in NEVER_BACKUP and pruned at 365 days, so none of this reaches
+-- the nightly Drive export. Never mobile, email or IP — see docs/PRIVACY.md.
+--
+-- APPLY BEFORE DEPLOYING the code that writes it. reportError falls back to
+-- the old column list if this is missing, so the order is not fatal, but the
+-- context is lost for as long as the two disagree.
+ALTER TABLE error_log ADD COLUMN context TEXT;

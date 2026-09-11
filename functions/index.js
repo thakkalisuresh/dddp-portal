@@ -5,7 +5,7 @@
  */
 
 import { json, problem, readJson, audit, rateLimit, clearRateLimit, guard, withSecurityHeaders } from './lib/http.js';
-import { reportError, assertAlerting, postToTelegram } from './lib/errors.js';
+import { reportError, assertAlerting, postToTelegram, requestContextFor } from './lib/errors.js';
 import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex, derive,
          DEFAULT_ITERATIONS } from './lib/crypto.js';
 import { dashboardPayload } from './lib/dashboard.js';
@@ -115,8 +115,19 @@ export default {
       return withSecurityHeaders(await env.ASSETS.fetch(request));
     }
 
+    // Who, from what, on which route — for any alert this request raises.
+    //
+    // A per-request child of env, not a module variable: one isolate serves
+    // many requests at once, and a shared slot would print one resident's flat
+    // on another resident's crash. Every reportError already receives this
+    // env, so all of them carry it without a single call site changing, and
+    // Object.create leaves each binding reachable through the prototype.
+    const requestContext = requestContextFor(request);
+    env = Object.create(env, { requestContext: { value: requestContext } });
+
     return withSecurityHeaders(await guard(env, ctx, async () => {
       const session = await resolveSession(env, request);
+      requestContext.session = session;
       const route = `${request.method} ${path}`;
 
       // ── public ────────────────────────────────────────────────────────
@@ -2374,7 +2385,7 @@ async function timeline(env, url) {
     flat
       ? { results: [] }
       : env.DB.prepare(
-          'SELECT at, code, severity, message, detail FROM error_log WHERE at > ? ORDER BY at DESC LIMIT ?'
+          'SELECT at, code, severity, message, detail, context FROM error_log WHERE at > ? ORDER BY at DESC LIMIT ?'
         ).bind(since, limit).all(),
   ]);
 
@@ -2550,7 +2561,7 @@ async function exportLogs(env, session, url) {
            FROM activity v LEFT JOIN owners o ON o.id = v.owner_id
           ORDER BY v.at DESC LIMIT 20000`).all(),
       env.DB.prepare(
-        'SELECT at, code, severity, message, detail FROM error_log ORDER BY at DESC LIMIT 20000').all(),
+        'SELECT at, code, severity, message, detail, context FROM error_log ORDER BY at DESC LIMIT 20000').all(),
     ]);
     rows = mergeTimeline({
       audits: audits.results ?? [],
@@ -2559,7 +2570,7 @@ async function exportLogs(env, session, url) {
     }).map((r) => ({
       at_ist: r.atIST, kind: r.kind, event: r.name,
       actor: r.actor ?? '', subject: r.subject ?? '', flat: r.flat ?? '',
-      severity: r.severity ?? '', detail: r.detail ?? '',
+      severity: r.severity ?? '', detail: r.detail ?? '', context: r.context ?? '',
     }));
     name = `diamond-park-activity-${stamp}.csv`;
   }

@@ -69,6 +69,7 @@ export async function resolveSession(env, request) {
   const row = await env.DB.prepare(
     `SELECT s.token, s.actor_id, s.subject_id, s.mode, s.expires_at,
             a.name  AS actor_name,  a.role AS actor_role, a.flat AS actor_flat,
+            a.relationship AS actor_relationship,
             b.name  AS subject_name, b.role AS subject_role, b.flat AS subject_flat,
             b.mobile AS subject_mobile, b.email AS subject_email,
             b.must_change_pw AS subject_must_change_pw,
@@ -96,7 +97,10 @@ export async function resolveSession(env, request) {
     mode: row.mode,
     impersonating: row.mode !== 'normal',
     canWrite: row.mode !== 'impersonate_ro',
-    actor: { id: row.actor_id, name: row.actor_name, role: row.actor_role, flat: row.actor_flat },
+    actor: {
+      id: row.actor_id, name: row.actor_name, role: row.actor_role, flat: row.actor_flat,
+      relationship: row.actor_relationship ?? 'owner',
+    },
     subject: {
       id: row.subject_id,
       name: row.subject_name,
