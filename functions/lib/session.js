@@ -69,6 +69,7 @@ export async function resolveSession(env, request) {
   const row = await env.DB.prepare(
     `SELECT s.token, s.actor_id, s.subject_id, s.mode, s.expires_at,
             a.name  AS actor_name,  a.role AS actor_role, a.flat AS actor_flat,
+            a.active AS actor_active,
             b.name  AS subject_name, b.role AS subject_role, b.flat AS subject_flat,
             b.mobile AS subject_mobile, b.email AS subject_email,
             b.must_change_pw AS subject_must_change_pw,
@@ -87,6 +88,23 @@ export async function resolveSession(env, request) {
     return null;
   }
   if (new Date(row.expires_at) < new Date()) {
+    await destroySession(env, token);
+    return null;
+  }
+
+  // A deactivated ACTOR has no session, whatever the row says. Deactivation
+  // sites also delete sessions, but that is a second write that can be missed
+  // (nine accounts kept 30 live sessions on 2026-09-11); this is the check that
+  // cannot be. Only this token goes — destroyAllSessionsFor would also end an
+  // admin's god-mode session that happens to be viewing this person.
+  //
+  // An inactive SUBJECT is deliberately allowed. For a normal session subject
+  // and actor are the same row, so the check above already covers it; the only
+  // way to reach one is an active admin impersonating a departed resident,
+  // which is how their history is read. billAccess and the tenancy rules act on
+  // subject.active from there.
+  if (Number(row.actor_active ?? 1) !== 1) {
+    await reportError(env, 'DDP-AUTH-019', { actorId: row.actor_id, tokenPrefix: token.slice(0, 6) });
     await destroySession(env, token);
     return null;
   }

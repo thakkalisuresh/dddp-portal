@@ -47,6 +47,10 @@ export const ERROR_CODES = {
   // screen. 018 means they reached back for one they had abandoned, which is
   // a different habit and worth being able to count separately.
   'DDP-AUTH-018': { severity: 'warn',  message: 'New password rejected — used before, still within the history depth' },
+  // Every deactivation deletes the account's sessions, so one of these means a
+  // path that flipped `active` without doing so. The session is ended either
+  // way; the warning is how the missed path gets found.
+  'DDP-AUTH-019': { severity: 'warn',  message: 'Session presented by a deactivated account — ended' },
 
   // ── BILL ───────────────────────────────────────────────────────────────
   'DDP-BILL-001': { severity: 'error', message: 'Bill generation found no reading for an active flat' },
