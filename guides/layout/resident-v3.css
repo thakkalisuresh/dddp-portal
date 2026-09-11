@@ -107,11 +107,13 @@ b, strong { font-weight: 700; }
    block, and nothing in it absorbed the slack — so the page ended at its
    midpoint and the rest was dead paper. This anchors the stamp to the foot. */
 .cover .points { margin-bottom: auto; }
-/* The handbook's index lives on its cover and grows with the document. At
-   nineteen rows the default row padding tipped the cover onto a second sheet,
-   which is the one thing the build refuses. Tightened here rather than in
-   `.c-row`, so the spine's shorter contents keeps its more generous setting. */
+/* Both committee covers carry their index, and the default row padding tipped
+   them onto a second sheet once the index grew. This applies to BOTH covers —
+   an earlier comment here claimed it spared the spine, and it never did. */
 .cover .contents .c-row { padding: 1.05mm 0; }
+/* The handbook's index is the long one — every section plus every chapter,
+   twenty rows once the two About pages arrived. Denser still, and only there. */
+.cover--dense .contents .c-row { padding: .55mm 0; }
 .cover .kick { margin-bottom: 2mm; }
 .c-row {
   display: flex; text-decoration: none; color: inherit; gap: 3mm; align-items: baseline;
@@ -236,6 +238,16 @@ body.card .rule { border-left: .3mm solid var(--line); padding-left: 6mm; }
 body.card .rule .ask { margin-bottom: auto; }
 .url { font-family: "Bricolage Grotesque", sans-serif; font-weight: 800;
        font-size: calc(var(--body) * 1.2); color: var(--green); }
+
+/* ── the two pages about the portal: text only, no figure ──────────── */
+/* A subheading straight after a list read as the list's last bullet. */
+.sheet--about h2 { margin-top: var(--gap); }
+/* The only pages without a figure. At the list's usual small size a third of
+   an A5 sheet stayed empty, so A5 alone gets body-size text and a looser
+   list; the phone trim already fills its page and is left as it is. */
+body.a5 .sheet--about h2 { margin-top: var(--gap-l); }
+body.a5 .sheet--about .points { gap: 3mm; }
+body.a5 .sheet--about .points li { font-size: var(--body); }
 
 /* ── a stack of one-row figures, each with its own line of copy ─────── */
 .rows { display: flex; flex-direction: column; gap: var(--gap); }

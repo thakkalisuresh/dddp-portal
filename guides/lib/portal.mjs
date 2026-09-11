@@ -42,6 +42,13 @@ export async function session(br, { mobile, password, viewport, scale = 2, touch
   // it shows the real thing. It fails silently: the shot looks like a phone.
   const ctx = await br.newContext({
     viewport, deviceScaleFactor: scale, hasTouch: touch, isMobile: touch,
+    // The building's clock and the building's locale, not the machine that
+    // happens to be running the capture. A poll row prints the reader's own
+    // zone beside IST, so a shot taken in California read "16 Sept, 3:20 pm
+    // PDT · 17 Sept, 3:50 am IST" in a guide whose every reader is in Kerala.
+    // Dates and numbers elsewhere format from the locale for the same reason.
+    timezoneId: 'Asia/Kolkata',
+    locale: 'en-IN',
   });
   const page = await ctx.newPage();
 

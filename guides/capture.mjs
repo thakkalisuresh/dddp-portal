@@ -500,6 +500,56 @@ function restoreProofMismatch(row) {
   exec(`UPDATE bills SET total = ${row.total} WHERE id = ${row.id}`);
 }
 
+/**
+ * An open poll to photograph.
+ *
+ * The seed has none, and a guide page about polls showing "There are no polls
+ * right now" teaches nothing. Created for the run and deleted in a finally.
+ *
+ * No votes are cast. While voting is open the count is absent from the payload
+ * for everybody except the superadmin, so ballots would not change the picture
+ * — and casting them would put rows in poll_votes that the backup only carries
+ * after a poll closes.
+ */
+function stashPoll() {
+  const admin = query("SELECT id FROM owners WHERE mobile = '+919990000001'")[0];
+  if (!admin) return null;
+  const now = new Date().toISOString();
+  const closes = new Date(Date.now() + 6 * 86_400_000).toISOString();
+  exec(`INSERT INTO polls (title, body, multi, show_tenants, opens_at, closes_at, created_by, created_at)
+        VALUES ('Terrace waterproofing — which quote?',
+                'Three quotes came in for the terrace. The committee would like the building''s view before deciding.',
+                0, 0, '${now}', '${closes}', ${admin.id}, '${now}')`);
+  const id = query('SELECT max(id) AS id FROM polls')[0]?.id;
+  if (id == null) return null;
+  const options = ['Quote A — the lowest, five-year guarantee',
+                   'Quote B — mid-priced, ten-year guarantee',
+                   'Quote C — the highest, fifteen-year guarantee'];
+  options.forEach((label, i) =>
+    exec(`INSERT INTO poll_options (poll_id, label, sort) VALUES (${id}, '${label.replace(/'/g, "''")}', ${i})`));
+  return id;
+}
+
+function restorePoll(id) {
+  if (id == null) return;
+  exec(`DELETE FROM poll_options WHERE poll_id = ${id}`);
+  exec(`DELETE FROM poll_votes WHERE poll_id = ${id}`);
+  exec(`DELETE FROM polls WHERE id = ${id}`);
+}
+
+/** The three poll screens. Routed by query string, so no clicking. */
+const pollShots = (id) => [
+  { name: 'ph-polls', url: '/polls.html', ...SCREEN },
+  { name: 'ph-poll-new', url: '/polls.html?new=1', target: 'main', clipTo: 820 },
+  // The committee's own controls, which sit below the options and are the
+  // reason an admin opens a poll at all. No class of their own, so addressed
+  // by the label they carry.
+  {
+    name: 'ph-poll-manage', url: `/polls.html?id=${id}`,
+    target: '.stack:has(> p.label:text-is("Committee"))', clipTo: 420,
+  },
+];
+
 /** Blank the demo flag so unfinished months, and their warning panel, go away. */
 function stashDemoFlag() {
   const row = query("SELECT value FROM settings WHERE key = 'demo_seed_ids'")[0];
@@ -625,10 +675,15 @@ async function run() {
       viewport: ADMIN_PHONE ? MOBILE : DESKTOP,
       touch: ADMIN_PHONE,
     });
+    const stashedPoll = ADMIN_PHONE ? stashPoll() : null;
+    if (stashedPoll) console.log(`  poll ${stashedPoll} opened, to photograph the poll screens`);
     const stashedProof = ADMIN_PHONE ? stashProofMismatch() : null;
     if (stashedProof) console.log(`  bill ${stashedProof.id} temporarily raised, to photograph an underpaid row`);
     try {
-    for (const spec of (ADMIN_PHONE ? ADMIN_PHONE_SHOTS : ADMIN_SHOTS)) {
+    const specs = ADMIN_PHONE
+      ? [...ADMIN_PHONE_SHOTS, ...(stashedPoll ? pollShots(stashedPoll) : [])]
+      : ADMIN_SHOTS;
+    for (const spec of specs) {
       try {
         const r = await capture(admin.page, spec, vp);
         manifest[spec.name] = r;
@@ -642,6 +697,8 @@ async function run() {
     } finally {
       restoreProofMismatch(stashedProof);
       if (stashedProof) console.log('  bill total restored');
+      restorePoll(stashedPoll);
+      if (stashedPoll) console.log('  poll removed');
     }
 
     // The Billing tab, in its two states. Both passes run against the same open
