@@ -227,8 +227,14 @@ export function checkOwnership(bills, proofs) {
   return out;
 }
 
-/** Rows pointing at things that no longer exist. */
-export function checkIntegrity({ owners, flats, readings }) {
+/**
+ * Rows pointing at things that no longer exist.
+ *
+ * `periods` is here only for FLAT-BILLED-NO-OWNER, whose severity depends on
+ * whether any month has ever been billed. Defaulted so a caller that has not
+ * loaded periods still gets every other finding.
+ */
+export function checkIntegrity({ owners, flats, readings, periods = [] }) {
   const known = new Set(flats.map((f) => f.flat));
   const out = [];
 
@@ -262,13 +268,38 @@ export function checkIntegrity({ owners, flats, readings }) {
   const occupied = new Set(owners.filter((o) => o.active).map((o) => o.flat));
   const empty = flats.filter((f) => f.active && !occupied.has(f.flat));
   if (empty.length) {
-    out.push(finding('fail', 'FLAT-BILLED-NO-OWNER', 'Flats being billed with nobody on file',
-      'Each needs a meter reading before ANY month can be generated — generation '
-      + 'refuses a partial month, so one of these blocks billing for the whole '
-      + 'building while the grid only says how many flats are still to enter. '
-      + 'Set the flat to "no owner" on the Residents tab and stop billing it, or '
-      + 'add the owner.',
-      empty.map((f) => ({ flat: f.flat, floor: f.floor }))));
+    // BEFORE ANY MONTH EXISTS, NONE OF THIS IS A FAILURE, and saying it is
+    // costs more than it sounds. The consequence above is entirely about
+    // generation refusing a partial month; with no periods, there is no month
+    // to block. The launch rebuild produced exactly that state -- 99 flats and
+    // one account -- and the check reported 98 flats as a hard failure with
+    // advice ("set the flat to no owner, or add the owner") that is nonsense
+    // applied to a building nobody has been enrolled in yet.
+    //
+    // A check that is routinely red is a check people stop reading, which is
+    // the same reasoning that keeps the digest off the midnight cron: the cost
+    // is not the noise, it is the finding nobody looks at afterwards. Order of
+    // operations is roster, then meters, then generate (BACKLOG C3), so zero
+    // periods reliably means the roster has not landed.
+    //
+    // Deliberately NOT keyed on "no active owners". A building whose only
+    // owner moved out has none either, and that IS a failure -- the departed
+    // owner case is the test directly below this one in the suite.
+    const billingStarted = periods.length > 0;
+    out.push(billingStarted
+      ? finding('fail', 'FLAT-BILLED-NO-OWNER', 'Flats being billed with nobody on file',
+        'Each needs a meter reading before ANY month can be generated — generation '
+        + 'refuses a partial month, so one of these blocks billing for the whole '
+        + 'building while the grid only says how many flats are still to enter. '
+        + 'Set the flat to "no owner" on the Residents tab and stop billing it, or '
+        + 'add the owner.',
+        empty.map((f) => ({ flat: f.flat, floor: f.floor })))
+      : finding('info', 'ROSTER-NOT-IMPORTED', 'The building has flats but no residents yet',
+        `${empty.length} of ${flats.length} flats have nobody on file, and no month `
+        + 'has been billed. That is the expected state before the roster import — '
+        + 'it becomes a failure once billing starts, because generation refuses a '
+        + 'partial month. Import the roster, walk the meters, then generate.',
+        empty.slice(0, 5).map((f) => ({ flat: f.flat, floor: f.floor }))));
   }
 
   // Meters do not run backwards. A lower reading is a typo or a replaced meter.
@@ -618,7 +649,15 @@ function runAvailable(data, have) {
     ...(have('periods') ? checkPeriods(data.periods ?? []) : []),
     ...(have('bills', 'payment_proofs') ? checkOwnership(data.bills ?? [], data.proofs ?? []) : []),
     ...(have('owners', 'flats', 'readings')
-      ? checkIntegrity({ owners: data.owners ?? [], flats: data.flats ?? [], readings: data.readings ?? [] })
+      ? checkIntegrity({
+        owners: data.owners ?? [],
+        flats: data.flats ?? [],
+        readings: data.readings ?? [],
+        // Not in the `have` list: a caller without periods still wants every
+        // other integrity finding, and an absent table reads the same as an
+        // empty one here -- no month billed.
+        periods: data.periods ?? [],
+      })
       : []),
     ...checkConfig(data.config ?? {}),
     ...(have('owners') ? checkResetPath(data.config ?? {}, data.owners ?? []) : []),

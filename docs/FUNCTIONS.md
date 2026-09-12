@@ -306,7 +306,7 @@ Self-checks — the building's invariants, written down as assertions.
 | fn | `checkBills` | A bill whose total does not match its components is either corruption or an acknowledged override. |
 | fn | `checkPeriods` | A rate silently carried forward is the worst failure available here: every bill looks normal and every one is wrong. |
 | fn | `checkOwnership` |  |
-| fn | `checkIntegrity` |  |
+| fn | `checkIntegrity` | Rows pointing at things that no longer exist. |
 | fn | `checkTenancy` | Tenancy gaps — the ones that are invisible until money is owed. |
 | fn | `checkDemoData` | Is generated demo data still sitting in the database? Put here rather than only in a document because a document goes stale the day the data is removed, and a stale warning is worse than none — it trains people to ignore the next one. |
 | fn | `checkExemptions` | Who is currently exempt from late fees. |
@@ -999,4 +999,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-544 exports. 246 have no doc comment.
+544 exports. 245 have no doc comment.

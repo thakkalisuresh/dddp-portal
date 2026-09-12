@@ -25,7 +25,10 @@ preview_database_id = "adf039cd-4cec-4e66-9395-fd4a548cd01c"  # dddp-migtest
 
 [[r2_buckets]]
 binding = "PROOFS"
-bucket_name = "dddp-proofs"
+# Renamed from `dddp-proofs` on 2026-09-12 to move it from WNAM to APAC, which
+# is only possible via a new name — see the full note in ../wrangler.toml. This
+# is the copy that matters for residents: the upload runs here.
+bucket_name = "dddp-payment-proofs"
 # Same reasoning as the D1 preview binding above. Without this, a test payment
 # proof uploaded while trying a feature out lands in the real bucket, mixed in
 # with residents' actual payment screenshots and backed up to Drive at 3am
