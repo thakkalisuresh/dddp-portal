@@ -534,12 +534,36 @@ function flatCard(group, status, open = false, reload = async () => {}) {
       group.billed === false ? el('span', { class: 'chip chip--neutral' }, 'Not billed') : null,
       current.some((p) => p.must_change_pw)
         ? el('span', { class: 'chip chip--awaiting' }, 'Temp password') : null),
-    occupancyControl(group, status, reload),
+    // Same rule as the person cards: an admin may not change who lives in a
+    // flat where another admin (or the superadmin) is active -- putFlatOccupancy
+    // refuses it with a 403 via canEditResident. Hidden for every such flat,
+    // not just the superadmin's, so that flat does not stand out.
+    me.role !== 'superadmin'
+      && group.people.some((x) => x.active !== 0 && (x.role === 'admin' || x.role === 'superadmin'))
+      ? null
+      : occupancyControl(group, status, reload),
     ...group.people.map((p) => personCard(p, status)));
 }
 
 function personCard(p, status) {
   const inactive = p.active === 0;
+  // An admin looking at another admin -- or at the superadmin, whom the API
+  // already lists to them as an admin -- gets a card with nothing to press.
+  // Mirrors canEditResident and canResetPassword, which refuse exactly this
+  // row to an admin on the server. The screen used to draw Edit, Request and
+  // Reset password here anyway, each of which failed with a 403 when pressed.
+  //
+  // Both kinds of row are drawn identically ON PURPOSE. A superadmin card that
+  // was read-only while the other admins' cards were not would give away the
+  // very role roleAsSeenBy hides.
+  const lockedToMe = me.role !== 'superadmin'
+    && (p.role === 'admin' || p.role === 'superadmin');
+  // The superadmin's own password cannot be reset from the portal by anybody,
+  // themselves included (canResetPassword); the break-glass script does it.
+  const noReset = inactive || lockedToMe || p.role === 'superadmin';
+  const staticCell = (label, value) => el('div', { class: 'dircell' },
+    el('span', { class: 'dircell__label' }, label),
+    el('span', { class: 'dircell__static' }, value));
 
   return el('div', { class: `person ${inactive ? 'person--past' : ''}` },
     el('div', { class: 'person__head' },
@@ -562,21 +586,19 @@ function personCard(p, status) {
         el('span', { class: 'dircell__static' }, `${p.flat} · floor ${p.floor}`)),
       // A past resident is a record, not a person to contact. Editing their
       // number or handing them a password is never the right thing to do.
-      inactive ? el('div', { class: 'dircell' },
-                     el('span', { class: 'dircell__label' }, 'Mobile'),
-                     el('span', { class: 'dircell__static' }, p.mobile))
-               : editable(p, 'mobile', 'Mobile', status),
-      inactive ? el('div', { class: 'dircell' },
-                     el('span', { class: 'dircell__label' }, 'Email'),
-                     el('span', { class: 'dircell__static' }, p.email || '—'))
-               : editable(p, 'email', 'Email', status, { type: 'email', placeholder: 'none' })),
+      inactive || lockedToMe
+        ? staticCell('Mobile', p.mobile)
+        : editable(p, 'mobile', 'Mobile', status),
+      inactive || lockedToMe
+        ? staticCell('Email', p.email || '—')
+        : editable(p, 'email', 'Email', status, { type: 'email', placeholder: 'none' })),
 
     // Resetting is the superadmin's alone as of 2026-08-12. An admin who could
     // reset 7B could log in AS 7B, so the button is not merely hidden — the
     // endpoint refuses them too (canResetPassword). What replaces it for an
     // admin is the sentence, because they are the one standing in front of the
     // resident and they need to know what to say.
-    inactive ? null : el('div', { style: 'margin-top:var(--s-3)' },
+    noReset ? null : el('div', { style: 'margin-top:var(--s-3)' },
       // Superadmin always; an admin only while there is no mailbox, which is
       // exactly when the sentence below would be a lie. Kept in step with
       // canResetPassword — if these two disagree the admin meets a button that

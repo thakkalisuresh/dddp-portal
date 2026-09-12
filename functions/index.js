@@ -47,6 +47,7 @@ import { validateAttachment, validateThumb, safeFilename, r2Key as attachmentKey
 import { submitMessage, fingerprintOf, AMENITIES, OFFICE_HOURS, MESSAGE_SUBJECTS, CONTACT } from './lib/public.js';
 import {
   transferFlat, canChangeRole, canResetPassword, canEditResident, canEditField, waLink,
+  roleAsSeenBy,
   planHandover, outstandingFor,
   mergeTimeline, toIST, isRelationship, occupantOf, landlordOf, isTenanted,
   billAccess, describeRelationship, ADMINISTRATOR,
@@ -975,7 +976,10 @@ async function listResidents(env, session, url) {
   // admin is shown a button that refuses them — or, worse, told to send someone
   // to `/forgot` when nothing can be sent. It is the mailbox that decides, so
   // the mailbox is what gets reported.
-  return json({ residents: results, mailConfigured: mailConfigured(env) });
+  // The superadmin is listed to admins as an admin -- see roleAsSeenBy for why
+  // this is masked here, in the data, and not only in the page.
+  const residents = results.map((r) => ({ ...r, role: roleAsSeenBy(session.actor, r.role) }));
+  return json({ residents, mailConfigured: mailConfigured(env) });
 }
 
 async function resetPassword(request, env, session, path) {
