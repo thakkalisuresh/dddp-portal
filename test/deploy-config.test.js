@@ -103,7 +103,7 @@ describe('staging points at staging, and nowhere near production', () => {
     return next === -1 ? rest : rest.slice(0, next);
   };
 
-  const PROD_DB = '56951152-d3c7-4476-a779-9ef9afe0b4d8';
+  const PROD_DB = 'ce528f06-5898-408f-b303-c8c02b725a13';
   const STAGING_DB = 'adf039cd-4cec-4e66-9395-fd4a548cd01c';
 
   it('binds the staging database, not the production one', () => {
@@ -149,7 +149,7 @@ describe('the site keeps previews off production', () => {
   // that line looks right and serves production data to the staging site, which
   // is how it shipped the first time. Both are asserted, for different reasons:
   // [env.preview] covers deploys, preview_database_id covers `pages dev`.
-  const PROD_DB = '56951152-d3c7-4476-a779-9ef9afe0b4d8';
+  const PROD_DB = 'ce528f06-5898-408f-b303-c8c02b725a13';
 
   it('has an [env.preview] block, which is the part Pages actually reads', () => {
     expect(pages, 'no [env.preview] -- deployed previews will read PRODUCTION').toContain(

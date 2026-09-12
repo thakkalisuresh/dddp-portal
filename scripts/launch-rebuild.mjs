@@ -5,8 +5,17 @@
  *
  *   node scripts/launch-rebuild.mjs capture --confirm   # BEFORE the delete
  *   node scripts/launch-rebuild.mjs migrate --confirm   # only if `apply` refuses
- *   node scripts/launch-rebuild.mjs seed    --confirm   # after create + migrate
+ *   node scripts/launch-rebuild.mjs seed    --confirm   # 99 flats, no accounts
+ *   node scripts/launch-rebuild.mjs account --confirm   # the superadmin, when asked
  *   node scripts/launch-rebuild.mjs verify              # read-only, any time
+ *
+ * EVERY ACCOUNT GOES, INCLUDING THE SUPERADMIN'S. That is deliberate and it is
+ * what makes this a rebuild rather than a prune with an exception in it: there
+ * is no row carried across by hand, no hash smuggled from the old database, and
+ * the state in between is the honest one -- a building with flats and nobody
+ * enrolled. `account` puts the superadmin back afterwards, with no working
+ * password, and `reset-my-password.mjs` sets one without it passing through
+ * anybody's terminal or an assistant's context.
  *
  * Add --local to rehearse the whole sequence against the local dev database
  * first. That is worth doing once: every step below is cheap locally and the
@@ -103,6 +112,36 @@ function requireConfirm(what) {
 const migrationFiles = () =>
   readdirSync(join(root, 'migrations')).filter((f) => f.endsWith('.sql')).sort();
 
+/** Synchronous pause. This script is deliberately sequential; no event loop to yield to. */
+function pause(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Retry, for 7403 only.
+ *
+ * `The given account is not valid or is not authorized to access this service
+ * [code: 7403]` hits this account's D1 commands unpredictably -- which command
+ * it lands on moves between invocations, sometimes within the hour, and a plain
+ * retry has cleared it every time. It hit `d1 export` on the first real run of
+ * this script and the retry produced a complete 1,008,234-byte file.
+ *
+ * Deliberately narrow: only 7403 is retried, and only three times. A retry loop
+ * around a genuine authorisation failure or a malformed statement would turn a
+ * clear error into a slow one.
+ */
+function retry7403(fn, { attempts = 3, label = 'command' } = {}) {
+  for (let i = 1; ; i += 1) {
+    try {
+      return fn();
+    } catch (err) {
+      if (!/7403/.test(err.message) || i >= attempts) throw err;
+      console.log(`  ${label} returned 7403 (attempt ${i}/${attempts}) — retrying`);
+      pause(2000);
+    }
+  }
+}
+
 /* ── 1. capture ───────────────────────────────────────────────────────────── */
 
 /**
@@ -126,7 +165,8 @@ function capture() {
   const stamp = new Date().toISOString().slice(0, 10);
   const archive = join(OUT, `pre-launch-${stamp}.sql`);
   console.log(`\n  exporting ${DB} ...`);
-  wrangler(['d1', 'export', DB, target(), '-y', '--output', archive]);
+  retry7403(() => wrangler(['d1', 'export', DB, target(), '-y', '--output', archive]),
+    { label: 'export' });
 
   // Checked, not trusted. An export that failed halfway still leaves a file,
   // and a file is exactly what makes people feel safe enough to run the delete.
@@ -213,11 +253,17 @@ function migrate() {
   if (!todo.length) return console.log('  nothing to do.\n');
 
   for (const file of todo) {
-    wrangler(['d1', 'execute', DB, target(), '--yes', '--file', join(root, 'migrations', file)]);
+    retry7403(
+      () => wrangler(['d1', 'execute', DB, target(), '--yes', '--file', join(root, 'migrations', file)]),
+      { label: file });
     // The ledger row is a SEPARATE statement on purpose: if the migration
     // itself fails, the run above throws and this never records a success.
-    wrangler(['d1', 'execute', DB, target(), '--yes', '--command',
-      `INSERT INTO d1_migrations (name, applied_at) VALUES (${lit(file)}, CURRENT_TIMESTAMP)`]);
+    // Retried too: a migration applied without its ledger row means a later
+    // `apply` re-runs it against tables that already exist.
+    retry7403(
+      () => wrangler(['d1', 'execute', DB, target(), '--yes', '--command',
+        `INSERT INTO d1_migrations (name, applied_at) VALUES (${lit(file)}, CURRENT_TIMESTAMP)`]),
+      { label: `${file} ledger` });
     console.log(`  ✓ ${file}`);
   }
   console.log(`\n  ledger now at ${q('SELECT max(name) m FROM d1_migrations')[0].m}\n`);
@@ -250,17 +296,105 @@ function seed() {
   const flats = allFlats();
   const values = flats.map((f) => `(${lit(f)}, ${floorOfFlat(f)}, 1)`).join(',\n  ');
   execFile(`INSERT INTO flats (flat, floor, active) VALUES\n  ${values};\n`, 'seed-flats');
-  console.log(`\n  ${flats.length} flats`);
+  console.log(`\n  ${flats.length} flats, no accounts.`);
+  console.log('  NEXT: `account` when you are ready to be let back in.\n');
+}
 
-  // Parent first, then the child: D1 will not defer the foreign key check.
-  const ownerPath = join(OUT, 'keep-owner.sql');
-  if (!existsSync(ownerPath)) {
-    throw new Error(`${ownerPath} is missing -- run \`capture\` before the delete, not after`);
+/* ── 3b. account ──────────────────────────────────────────────────────────── */
+
+/**
+ * Put the superadmin back, with NO working password.
+ *
+ * WHY THE ACCOUNT IS A SEPARATE STEP FROM THE FLATS. The rebuild deletes every
+ * account including this one, so for a while the database has none at all --
+ * which is the honest state of a building nobody has been enrolled in yet, and
+ * it makes the purge uniform instead of carrying one row across it by hand.
+ *
+ * THIS IS THE ONLY WAY IN. Every route that creates a resident lives under
+ * /api/admin/ and needs a session, and a session needs an account, so account
+ * number one cannot come from the portal. It is a direct write by whoever holds
+ * the database credentials, exactly as the roster import will be.
+ *
+ * IDENTITY IS REUSED, CREDENTIALS ARE NOT. Name, flat, mobile and email come
+ * from the row `capture` lifted out, so nothing is retyped and the account is
+ * recognisably the same person to the audit trail. `pw_hash` and `pw_salt` are
+ * replaced with values that are not valid base64, so the account exists and
+ * cannot be logged into.
+ *
+ * The password is then set by `scripts/reset-my-password.mjs`, which asks for it
+ * with echo off, hashes it locally and sends only the hash. That is the whole
+ * reason this step writes an unusable credential rather than a temporary one:
+ * a password nobody has to invent, print or transmit is a password that cannot
+ * leak, and the assistant running this never sees it.
+ */
+function account() {
+  requireConfirm('This creates the superadmin account');
+
+  const existing = q('SELECT id, flat, role FROM owners');
+  if (existing.length) {
+    throw new Error(
+      `refusing: ${existing.length} account(s) already exist `
+      + `(${existing.map((o) => `${o.flat}/${o.role}`).join(', ')})`);
   }
-  wrangler(['d1', 'execute', DB, target(), '--yes', '--file', ownerPath]);
+  if (counts().flats === 0) {
+    // owners.flat REFERENCES flats(flat) and D1 will not defer the check.
+    throw new Error('no flats yet -- run `seed` first, or the foreign key refuses this row');
+  }
 
-  const [owner] = q('SELECT id, flat, role, active FROM owners');
-  console.log(`  owner id ${owner.id}, ${owner.flat}, ${owner.role}\n`);
+  const captured = join(OUT, 'keep-owner.sql');
+  if (!existsSync(captured)) {
+    throw new Error(
+      `${captured} is missing -- it carries the name, mobile and email to reuse. `
+      + 'Copy it back from the archive folder, or pass the details by hand.');
+  }
+
+  // Parsed rather than replayed: the captured row carries the OLD password
+  // hash, and the point of this step is that it does not come back.
+  const text = readFileSync(captured, 'utf8');
+  const cols = text.match(/INSERT INTO owners \(([^)]+)\)/)?.[1].split(',').map((c) => c.trim());
+  const vals = text.match(/VALUES \(([\s\S]+)\);/)?.[1];
+  if (!cols || !vals) throw new Error(`cannot parse ${captured}`);
+  const parsed = splitValues(vals);
+  const row = Object.fromEntries(cols.map((c, i) => [c, parsed[i]]));
+
+  const insert = `INSERT INTO owners
+  (id, flat, name, mobile, email, pw_hash, pw_salt, must_change_pw, role,
+   created_at, active, relationship, pw_iterations)
+VALUES
+  (1, ${row.flat}, ${row.name}, ${row.mobile}, ${row.email},
+   'pending-reset-not-a-hash', 'pending-reset-not-a-salt', 0, 'superadmin',
+   ${lit(new Date().toISOString())}, 1, 'owner', 100000);\n`;
+  execFile(insert, 'seed-account');
+
+  const [who] = q('SELECT id, flat, name, role, active FROM owners');
+  console.log(`\n  account ${who.id}: ${who.flat}, ${who.role}, active=${who.active}`);
+  console.log('  It has NO usable password by design. Set yours with:\n');
+  console.log('    node scripts/reset-my-password.mjs\n');
+}
+
+/**
+ * Split a VALUES list on top-level commas only, so a comma inside a quoted
+ * name does not shift every later column. The values come from `lit()` two
+ * steps earlier, so the only quoting in play is single quotes doubled.
+ */
+function splitValues(text) {
+  const out = [];
+  let cur = '';
+  let inStr = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inStr) {
+      if (ch === "'" && text[i + 1] === "'") { cur += "''"; i += 1; continue; }
+      if (ch === "'") { inStr = false; cur += ch; continue; }
+      cur += ch;
+      continue;
+    }
+    if (ch === "'") { inStr = true; cur += ch; continue; }
+    if (ch === ',') { out.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
 }
 
 /* ── 4. verify ────────────────────────────────────────────────────────────── */
@@ -291,11 +425,19 @@ function verify() {
   const [su] = q("SELECT id, flat, role, active FROM owners WHERE role = 'superadmin'");
   const [cfg] = q("SELECT value FROM settings WHERE key = 'click_capture'");
 
+  // The account is created in its own step, so BOTH of these are correct
+  // states and verify has to tell them apart rather than picking one. Nothing
+  // is wrong with a rebuilt database that nobody has been let into yet; what
+  // would be wrong is a second account, or an account that is not this one.
+  const enrolled = c.owners === 1;
+
   const checks = [
     ['99 flats', c.flats === 99, c.flats],
-    ['exactly one account', c.owners === 1, c.owners],
-    ['that account is the 4A superadmin', su?.flat === KEEP_FLAT && su?.role === 'superadmin', `${su?.flat}/${su?.role}`],
-    ['it is active', su?.active === 1, su?.active],
+    ['at most one account', c.owners <= 1, c.owners],
+    ...(enrolled ? [
+      ['that account is the 4A superadmin', su?.flat === KEEP_FLAT && su?.role === 'superadmin', `${su?.flat}/${su?.role}`],
+      ['it is active', su?.active === 1, su?.active],
+    ] : []),
     ['no periods, so month one starts at the meter walk', c.periods === 0, c.periods],
     ['no bills', c.bills === 0, c.bills],
     ['no readings', c.readings === 0, c.readings],
@@ -313,18 +455,25 @@ function verify() {
     if (!ok) failed += 1;
     console.log(`  ${ok ? '✓' : '✗'} ${label}${ok ? '' : `  — got ${actual}`}`);
   }
-  console.log(failed
-    ? `\n  ${failed} check${failed === 1 ? '' : 's'} failed. Do not deploy.\n`
-    : '\n  Ready. Swap database_id in both wrangler.toml files and in\n'
-      + '  test/deploy-config.test.js, then deploy both from main.\n');
-  if (failed) process.exitCode = 1;
+  if (failed) {
+    console.log(`\n  ${failed} check${failed === 1 ? '' : 's'} failed. Do not deploy.\n`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(enrolled
+    ? '\n  Ready, and the superadmin is in place.\n'
+    : '\n  Ready, with NO accounts — correct if you have not run `account` yet.\n'
+      + '  `doctor` will report SUPERADMIN-NONE until you do, which is true.\n');
+  console.log('  Swap database_id in both wrangler.toml files and in\n'
+    + '  test/deploy-config.test.js, then deploy both from main.\n');
 }
 
 /* ── dispatch ─────────────────────────────────────────────────────────────── */
 
-const steps = { capture, migrate, seed, verify };
+const steps = { capture, migrate, seed, account, verify };
 if (!steps[step]) {
-  console.error('\n  usage: launch-rebuild.mjs <capture|migrate|seed|verify> [--confirm] [--local]\n');
+  console.error('\n  usage: launch-rebuild.mjs '
+    + '<capture|migrate|seed|account|verify> [--confirm] [--local]\n');
   process.exit(1);
 }
 
