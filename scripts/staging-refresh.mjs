@@ -12,15 +12,24 @@
 // migrated up from where it is: migtest was originally created from a raw
 // schema dump and has no ledger of its own.
 //
-// NOTE: this copies REAL resident data -- names, flat numbers, phone numbers,
-// payment history. Same committee either way, but it is real. There is no
-// scrubbing step here; if one is wanted it belongs after the import, as its own
-// SQL file, so it can be reviewed rather than buried in this script.
+// The import copies REAL resident data -- names, mobiles, emails, payment
+// history, bank references, ballots. It does not STAY that way: the load is
+// followed immediately by scripts/scrub-staging.sql, which rewrites every
+// identifying field and deletes every credential, and by a check that refuses
+// to report success if the scrub did not take.
+//
+// Bills, readings, due dates and the announcement outbox survive untouched,
+// because they are what staging is for -- rehearsing the late-fee cron wants
+// real money shapes and no names at all. That file documents each decision.
 
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// The repo, so the scrub is found whatever directory this is invoked from.
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const PROD = 'dddp';
 const STAGING = 'dddp-migtest';
@@ -161,6 +170,40 @@ try {
     );
   }
 
+  // ── scrub ─────────────────────────────────────────────────────────────────
+  //
+  // NOT OPTIONAL, and not behind a flag. A scrub somebody has to remember is a
+  // scrub that does not happen on the night it matters, and the window between
+  // the import above and this statement is the only moment staging holds real
+  // resident data. See scripts/scrub-staging.sql for what goes and what stays.
+  //
+  // After this, no account in staging has a working password -- deliberately.
+  // Cron rehearsal needs no login. To get a session here on purpose, set a
+  // password for one account yourself; do not reintroduce a shared one, because
+  // staging is a faithful copy of the real building's structure and a known
+  // password over real flat numbers is a worse thing than an unusable database.
+  console.log(`scrubbing resident data from ${STAGING} ...`);
+  wrangler(['d1', 'execute', STAGING, '--remote', '--yes',
+    '--file', join(root, 'scripts', 'scrub-staging.sql')]);
+
+  // Checked, not trusted. A scrub that silently did nothing looks exactly like
+  // a scrub that worked -- the import succeeded either way and the row counts
+  // are identical. These three questions are the ones whose wrong answer means
+  // real resident data is sitting in the disposable database.
+  const [{ named, credentialed, logins }] = query(
+    STAGING,
+    `SELECT (SELECT count(*) FROM owners WHERE name NOT LIKE 'Resident %') AS named,
+            (SELECT count(*) FROM owners
+              WHERE pw_hash <> 'scrubbed-not-a-hash') AS credentialed,
+            (SELECT count(*) FROM sessions) AS logins`
+  );
+  if (named > 0 || credentialed > 0 || logins > 0) {
+    throw new Error(
+      `scrub did not take: ${named} real names, ${credentialed} live password hashes, `
+      + `${logins} sessions still in ${STAGING}`
+    );
+  }
+
   const [{ tables, mig, owners }] = query(
     STAGING,
     `SELECT (SELECT count(*) FROM sqlite_master WHERE type='table') AS tables,
@@ -168,7 +211,8 @@ try {
             (SELECT count(*) FROM owners) AS owners`
   );
   console.log(`\n${STAGING} rebuilt: ${tables} tables, ${owners} owners, ledger at ${mig}`);
-  console.log('staging now mirrors production. Test users you create here are wiped by the next refresh.');
+  console.log('bills, readings and due dates mirror production; names, numbers and');
+  console.log('credentials do not. Test users you create here are wiped by the next refresh.');
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }
