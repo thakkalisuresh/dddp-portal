@@ -7,9 +7,24 @@ None of it is real, none of it should meet the real roster, and the building
 has never billed a genuine month.
 
 So production is not pruned, it is **replaced**: a new D1 database, born from
-`migrations/`, holding 99 flats, the published committee, and exactly one
-account — the superadmin at 4A. Month one then starts where it was always
+`migrations/`, holding 99 flats and the published committee — and **no accounts
+at all**, including the superadmin's. Month one then starts where it was always
 going to start, at the cutover meter walk.
+
+Every account going, with no exceptions, is what makes this a rebuild rather
+than a prune with a special case in it. No row is carried across by hand and no
+password hash is smuggled out of the old database. The state in between is the
+honest one: a building with flats and nobody enrolled.
+
+The superadmin goes back afterwards, as a separate step, **with no working
+password** — `reset-my-password.mjs` then sets one with echo off, hashing
+locally and sending only the hash, so it never passes through a terminal, a
+shell history or an assistant's context.
+
+There is no way around that being a direct database write. Every route that
+creates a resident lives under `/api/admin/` and needs a session, and a session
+needs an account, so account number one cannot come from the portal — exactly
+as the roster import will be a direct write by whoever holds the credentials.
 
 `scripts/launch-rebuild.mjs` does the fiddly parts. It deliberately does **not**
 delete or create a database; those two commands are the irreversible edge and
@@ -49,10 +64,15 @@ file before calling it a backup — size, `CREATE TABLE`, and real `INSERT INTO
 owners` rows. An export that failed halfway still leaves a file, and a file is
 exactly what makes people feel safe enough to run step 3.
 
-It also lifts the 4A row out intact, including `pw_hash`, `pw_salt` and
-`pw_iterations`, so **your existing password keeps working** and nobody has to
-choose, type or transmit a new one. That file is `0600` and gitignored. Delete
-`.launch/` once step 8 passes.
+It also lifts the 4A row out whole, into `.launch/keep-owner.sql`. Step 5b reads
+the **identity** back out of it — name, mobile, email — so none of it is
+retyped, and deliberately leaves the password hash behind.
+
+That file is `0600` and gitignored because it does still contain the old
+`pw_hash` and `pw_salt`. Nothing replays them, but they are in the file, so
+delete `.launch/` once step 9 passes. Keeping it until then is the insurance: if
+the rebuild has to be abandoned, that row plus the archive puts the old account
+back exactly as it was.
 
 Finally it records the R2 keys, because once the database is gone nothing knows
 which objects belonged to it.
@@ -103,19 +123,46 @@ applied:
 node scripts/launch-rebuild.mjs migrate --confirm
 ```
 
-## 5. Seed
+## 5. Seed the building
 
 ```bash
 node scripts/launch-rebuild.mjs seed --confirm
 ```
 
-99 flats from `building.js`, then the 4A row — parent first, because D1 refuses
-to defer foreign key checks (`rebuild-flats.mjs` proves it three ways). Refuses
-to run unless the database is empty, which is what stops it being pointed at
-the wrong one.
+99 flats from `building.js`, and nothing else. Refuses to run unless the
+database is empty, which is what stops it being pointed at the wrong one.
 
 The committee and `click_capture=off` are **not** seeded here: a fresh database
 is born with them, from migrations `0003`, `0007` and `0004`.
+
+At this point the portal has a building and no people. `doctor` will report
+`SUPERADMIN-NONE`, and that is true rather than broken.
+
+## 5b. Let yourself back in
+
+```bash
+node scripts/launch-rebuild.mjs account --confirm
+node scripts/reset-my-password.mjs
+```
+
+The first command recreates the 4A superadmin, reusing the name, mobile and
+email from the row `capture` lifted out — so nothing is retyped — while
+**discarding the old password hash**. The account exists and cannot be logged
+into: `pw_hash` is set to a value that is not valid base64.
+
+The second sets your password. It asks with echo off, hashes on your machine
+and sends only the hash, so the password is never an argument, never in shell
+history and never in anybody's context.
+
+Flats must exist first — `owners.flat` references `flats(flat)` and D1 will not
+defer the check. The step refuses if any account already exists, so it cannot
+quietly create a second superadmin.
+
+Note it sets `must_change_pw = 0`, because you are choosing the password
+yourself. To exercise the real first-time-resident flow — temporary password,
+forced change, onboarding — create a throwaway resident from the admin console
+once you are in. That tests what 99 people will actually meet, which is the
+version worth testing.
 
 ## 6. The R2 buckets
 
@@ -181,18 +228,20 @@ node scripts/launch-rebuild.mjs verify
 npm run doctor
 ```
 
-`verify` asserts rather than prints: 99 flats, exactly one account, that it is
-the active 4A superadmin, no periods, bills, readings, notices, audit rows or
-sessions, committee published, click capture off, and all 39 migrations in the
-ledger. It exits non-zero if any of that is wrong.
+`verify` asserts rather than prints: 99 flats, **at most** one account and — if
+one exists — that it is the active 4A superadmin, no periods, bills, readings,
+notices, audit rows or sessions, committee published, click capture off, and
+all 39 migrations in the ledger. It exits non-zero if any of that is wrong, and
+distinguishes "no accounts yet" (correct before step 5b) from "the wrong
+account" (never correct).
 
 `doctor` should now be quiet where it was noisy: `DEMO-DATA-PRESENT` gone,
 `FLAT-BILLED-NO-OWNER` gone, `SUPERADMIN-NONE` **must not** appear.
 `BACKUP-NEVER` and `DIGEST-NEVER` will show as info until the crons run once —
 that is honest, not a regression.
 
-Last: log in as 4A with your existing password. That is the check that the
-carried-over hash survived the move.
+Last: log in as 4A with the password you set in step 5b. That is the check that
+the account and your new credential agree.
 
 Then delete `.launch/`.
 
