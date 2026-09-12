@@ -9,3 +9,11 @@ pages/dist/
 # Built from staging/ sources by build-single.mjs; regenerate rather than commit.
 staging/single.html
 staging/artifact.html
+
+# Local CSV snapshots pulled by scripts/query.mjs. Real resident data when
+# taken with --remote; never committed.
+.query/
+
+# Pre-launch archive, the carried-over account row (password material, 0600)
+# and the rebuild manifest. Never committed; delete once verify passes.
+.launch/

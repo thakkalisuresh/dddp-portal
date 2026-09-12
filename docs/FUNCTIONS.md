@@ -144,6 +144,10 @@ Nightly backup, and retention.
 | fn | `backupAttachments` | Copy notice and comment attachments, the same way and for the same reason as the proofs. |
 | fn | `backupNotices` | Every notice, as a Doc beside its own attachments. |
 | const | `BACKUP_SETTING` |  |
+| fn | `archiveConfigured` | A second copy of the nightly bundle, in R2, owned by the ASSOCIATION. |
+| fn | `archiveKey` | Sorted by year so a decade of snapshots does not arrive as one flat list, and named by the month it covers rather than the day it was taken — the day is an implementation detail of when the cron fired. |
+| const | `ARCHIVE_SETTING` |  |
+| fn | `writeMonthlyArchive` | Writes this month's snapshot unless it is already there. |
 | const | `BACKUP_CRON` | The backup has its own cron, and runs on nothing else. |
 | fn | `isBackupCron` |  |
 | fn | `runBackup` |  |
@@ -995,4 +999,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-540 exports. 245 have no doc comment.
+544 exports. 246 have no doc comment.

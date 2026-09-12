@@ -32,6 +32,22 @@ bucket_name = "dddp-proofs"
 # alongside them. Staging uploads go somewhere disposable instead.
 preview_bucket_name = "dddp-proofs-staging"
 
+# The association's own archive. Bound here as well as in ../wrangler.toml
+# because these two configs must agree on every binding the shared code reads —
+# the same premise as the D1 above. The nightly write happens on the cron
+# Worker, but backup.js is one module serving both entry points, and a binding
+# present in one deployment and absent in the other is how this project's
+# worst class of bug starts.
+#
+# NO preview_bucket_name, and no bucket in [env.preview] at the bottom, ON
+# PURPOSE — unlike PROOFS above, which needs a disposable target because
+# previews genuinely upload. Nothing in a preview should ever write a monthly
+# snapshot, so the right preview target is no bucket at all: archiveConfigured()
+# then reads it as unconfigured and skips.
+[[r2_buckets]]
+binding = "ARCHIVE"
+bucket_name = "dddp-archive"
+
 [vars]
 UPI_VPA = "qr.ddwelfare@sib"
 UPI_PAYEE = "DD Diamond Park RWA"
