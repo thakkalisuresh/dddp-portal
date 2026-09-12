@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "seed": "node scripts/seed-dev.mjs",
+    "query": "node scripts/query.mjs",
     "build:pages": "node scripts/build-pages.mjs",
     "deploy:pages": "npm run build:pages && cd pages && wrangler pages deploy",
     "deploy:cron": "wrangler deploy --define \"__RELEASE__:'$(git rev-parse --short HEAD)'\"",
