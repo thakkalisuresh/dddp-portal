@@ -174,3 +174,48 @@ describe('the site keeps previews off production', () => {
     expect(pages).toMatch(/^preview_bucket_name\s*=\s*"dddp-proofs-staging"/m);
   });
 });
+
+describe('the archive bucket is bound once, and only to production', () => {
+  // The archive holds the building's whole billing history, one object per
+  // month, and it is the copy the association itself owns. Two things must
+  // stay true of it, and neither is visible in any other test:
+  //
+  //   - both deployments bind it, because backup.js is one module serving both
+  //     and a binding on one side only is the shape of bug this file exists for
+  //   - NOTHING ELSE binds it. A staging or preview deployment with a route to
+  //     this bucket can write a snapshot of scrubbed test data over a real
+  //     month, and the write would look exactly like a successful backup.
+  const occurrences = (toml) => toml.match(/^binding\s*=\s*"ARCHIVE"/gm)?.length ?? 0;
+  const bucketAfter = (toml) => {
+    const at = toml.indexOf('binding = "ARCHIVE"');
+    return at === -1 ? null : toml.slice(at).match(/^bucket_name\s*=\s*"([^"]*)"/m)?.[1];
+  };
+
+  it('is bound in both wrangler.toml files', () => {
+    expect(occurrences(worker), 'ARCHIVE missing from wrangler.toml').toBe(1);
+    expect(occurrences(pages), 'ARCHIVE missing from pages/wrangler.toml').toBe(1);
+  });
+
+  it('names the same bucket in both', () => {
+    expect(bucketAfter(pages)).toBe(bucketAfter(worker));
+    expect(bucketAfter(worker)).toBe('dddp-archive');
+  });
+
+  it('is bound exactly once per file, so no env inherits a route to it', () => {
+    // Deliberately a count and not a search of the env blocks. An
+    // [[env.staging.r2_buckets]] carrying ARCHIVE is the failure being
+    // prevented, and counting catches it wherever somebody adds it — including
+    // an env block that does not exist yet.
+    expect(occurrences(worker), 'a second deployment binds ARCHIVE').toBe(1);
+    expect(occurrences(pages), 'a second deployment binds ARCHIVE').toBe(1);
+  });
+
+  it('has no preview target, because previews must not archive at all', () => {
+    // Unlike PROOFS, which needs a disposable bucket because previews really
+    // do upload. The only preview_bucket_name in the file should still be the
+    // proofs one; a second would mean somebody gave previews an archive.
+    const previewBuckets = pages.match(/^preview_bucket_name\s*=/gm) ?? [];
+    expect(previewBuckets).toHaveLength(1);
+    expect(pages).not.toMatch(/^preview_bucket_name\s*=\s*"dddp-archive"/m);
+  });
+});

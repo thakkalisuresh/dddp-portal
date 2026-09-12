@@ -26,6 +26,26 @@ migrations_dir = "migrations"
 binding = "PROOFS"
 bucket_name = "dddp-proofs"
 
+# The association's own off-site copy of the nightly bundle — see the archive
+# section of functions/lib/backup.js for why a second copy exists at all.
+#
+# A SEPARATE BUCKET FROM PROOFS, not a prefix in it. PROOFS is reachable by
+# every resident upload path and its objects are deleted when a proof is
+# withdrawn; the archive is written once a month by one cron and read by nobody
+# until something has gone badly wrong. Sharing a bucket would put the
+# building's entire billing history one bad key-prefix bug away from the code
+# that handles user uploads.
+#
+# DELIBERATELY ABSENT FROM [env.staging] BELOW, and from [env.preview] in
+# pages/wrangler.toml. Wrangler does not inherit bindings into an env, which is
+# usually the hazard this file warns about and is exactly the behaviour wanted
+# here: staging must have no route to the association's archive, so a rehearsed
+# cron cannot write a snapshot of test data over a real month. archiveConfigured()
+# reads a missing binding as "not set up" and skips.
+[[r2_buckets]]
+binding = "ARCHIVE"
+bucket_name = "dddp-archive"
+
 [vars]
 UPI_VPA = "qr.ddwelfare@sib"
 UPI_PAYEE = "DD Diamond Park RWA"

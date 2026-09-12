@@ -735,6 +735,94 @@ export async function backupNotices(env, token) {
 /** Watermark key. Mirrors `last_digest_at`, and for the same reason. */
 export const BACKUP_SETTING = 'last_backup_at';
 
+/* ── the association's own archive ─────────────────────────────────────── */
+
+/**
+ * A second copy of the nightly bundle, in R2, owned by the ASSOCIATION.
+ *
+ * WHY THIS EXISTS WHEN THE DRIVE BACKUP ALREADY DOES. The Drive copy lives in
+ * a committee member's personal Google account, deliberately — files are
+ * charged to whoever creates them, and the association's quota is for its own
+ * documents (see wrangler.toml). The consequence nobody chose is that the
+ * building's entire billing history has one custodian: one forgotten password,
+ * one closed account, one falling-out, and the only off-site copy is
+ * unreachable by the committee that owns the data.
+ *
+ * This is not a replacement for that copy. It is the one the association
+ * controls, in its own Cloudflare account, and it is deliberately dumber: no
+ * OAuth, no refresh token that expires after seven days in Testing mode, no
+ * folder tree. A bucket and a key.
+ *
+ * MONTHLY, NOT NIGHTLY, and the check is the object's own existence rather
+ * than a watermark. A nightly full bundle is 365 copies a year of a database
+ * that changes by about 99 bills a month — the storage is trivial and the
+ * clutter is not, and "which of these 3,650 files do I open" is a real
+ * question in a real emergency. Writing only when the month's object is
+ * absent also makes the job idempotent for free: it can run every night, be
+ * retried, or be invoked by hand, and the month still has exactly one
+ * snapshot.
+ *
+ * NOT GATED ON DRIVE. The point of a second copy is that it survives the
+ * first one's failure, so a night where the refresh token is dead must still
+ * produce this file. `runBackup` is arranged so the dump happens before the
+ * Drive path and this write cannot be skipped by it.
+ */
+export function archiveConfigured(env) {
+  return Boolean(env.ARCHIVE);
+}
+
+/**
+ * Sorted by year so a decade of snapshots does not arrive as one flat list,
+ * and named by the month it covers rather than the day it was taken — the day
+ * is an implementation detail of when the cron fired.
+ */
+export function archiveKey(now = new Date()) {
+  const yyyy = now.getUTCFullYear();
+  const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+  return `snapshots/${yyyy}/${yyyy}-${mm}.csv`;
+}
+
+/** Watermark for the archive, so a silently-stopped archive is observable. */
+export const ARCHIVE_SETTING = 'last_archive_at';
+
+/**
+ * Writes this month's snapshot unless it is already there.
+ *
+ * Returns what it did rather than throwing on the ordinary cases, because
+ * "already written" and "not configured" are both correct outcomes and only a
+ * genuine R2 failure is worth an error row.
+ */
+export async function writeMonthlyArchive(env, content, { now = new Date() } = {}) {
+  if (!archiveConfigured(env)) return { skipped: 'archive-not-configured' };
+
+  const key = archiveKey(now);
+  // HEAD rather than a watermark: the bucket is the record of what exists, and
+  // a watermark can disagree with it. One HEAD a night is free next to a dump.
+  const existing = await env.ARCHIVE.head(key);
+  if (existing) return { skipped: 'exists', key };
+
+  await env.ARCHIVE.put(key, content, {
+    httpMetadata: { contentType: 'text/csv; charset=utf-8' },
+    // Readable from `wrangler r2 object get` without parsing the file, which
+    // is what somebody restoring at 3am actually wants to know.
+    customMetadata: {
+      generatedAt: now.toISOString(),
+      bytes: String(content.length),
+    },
+  });
+  // After the put, for the same reason the Drive watermark is: a timestamp
+  // written before the object lands is reassurance without the copy.
+  await setArchiveWatermark(env, now.toISOString());
+  return { written: true, key, bytes: content.length };
+}
+
+async function setArchiveWatermark(env, at) {
+  await env.DB.prepare(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).bind(ARCHIVE_SETTING, at).run();
+}
+
 /**
  * The backup has its own cron, and runs on nothing else.
  *
@@ -754,13 +842,40 @@ export function isBackupCron(cron) {
 }
 
 export async function runBackup(env, ctx) {
+  // THE DUMP COMES FIRST, AHEAD OF THE DRIVE CHECK, and that ordering is the
+  // whole of the R2 archive's value. This function used to return immediately
+  // when Drive was unconfigured, which meant the one night the credentials
+  // expired was a night nothing was written anywhere. The association's own
+  // copy must not depend on the custodian's account being healthy.
+  let files;
+  let content;
+  try {
+    files = await dumpAll(env);
+    content = bundle(files, { generatedAt: new Date().toISOString() });
+  } catch (err) {
+    // Nothing downstream can run without the bundle, so this one is fatal to
+    // the night and reported as such.
+    await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);
+    return { failed: true };
+  }
+
+  // In its own try, before Drive, and never allowed to fail the night: a
+  // bucket having a bad hour is no reason to skip the Drive copy, exactly as
+  // the reverse is true.
+  let archive;
+  try {
+    archive = await writeMonthlyArchive(env, content);
+  } catch (err) {
+    await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);
+    archive = { failed: true };
+  }
+
   if (!driveConfigured(env)) {
-    // Not an error worth alerting on — it simply hasn't been set up yet.
-    return { skipped: 'drive-not-configured' };
+    // Not an error worth alerting on — it simply hasn't been set up yet. The
+    // archive above has already run, so this is no longer a silent no-op.
+    return { skipped: 'drive-not-configured', archive };
   }
   try {
-    const files = await dumpAll(env);
-    const content = bundle(files, { generatedAt: new Date().toISOString() });
     const token = await refreshAccessToken(env, backupCredentials(env));
     const parentId = await ensureMonthFolder(env, token);
     const uploaded = await uploadToDrive(env, {
@@ -794,7 +909,7 @@ export async function runBackup(env, ctx) {
 
     return {
       uploaded: uploaded.name, tables: Object.keys(files).length,
-      bytes: content.length, proofs, attachments, notices,
+      bytes: content.length, proofs, attachments, notices, archive,
     };
   } catch (err) {
     await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);

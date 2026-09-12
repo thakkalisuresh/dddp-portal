@@ -5,6 +5,7 @@ import {
   monthFolderName, ensureMonthFolder, uploadToDrive, BACKUP_CRON, isBackupCron,
   backupProofs, proofBackupName, PROOF_BATCH, backupAttachments,
   committeeFolder, committeeFolderSeparate, noticeFolderName, NEVER_BACKUP,
+  archiveConfigured, archiveKey, writeMonthlyArchive, ARCHIVE_SETTING,
 } from '../functions/lib/backup.js';
 import { mailConfigured } from '../functions/lib/mailer.js';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -523,5 +524,82 @@ describe('one folder per month', () => {
     expect(body).toContain('"parents":["AUG"]');
     expect(body).not.toContain('"parents":["PARENT"]');
     expect(body).toContain('a,b\n1,2\n');
+  });
+});
+
+describe("the association's own archive", () => {
+  /**
+   * A fake bucket and a fake D1, because the two behaviours worth testing are
+   * both about what is NOT written: no second object for a month that already
+   * has one, and no watermark when the put never happened.
+   */
+  const fakeEnv = ({ objects = {} } = {}) => {
+    const puts = [];
+    const heads = [];
+    const written = [];
+    return {
+      puts,
+      heads,
+      written,
+      env: {
+        ARCHIVE: {
+          head: async (key) => { heads.push(key); return objects[key] ?? null; },
+          put: async (key, body, opts) => {
+            puts.push({ key, body, opts });
+            objects[key] = { size: body.length };
+          },
+        },
+        DB: {
+          prepare: (sql) => ({
+            bind: (...args) => ({ run: async () => { written.push({ sql, args }); } }),
+          }),
+        },
+      },
+    };
+  };
+
+  it('names one object per month, filed under its year', () => {
+    expect(archiveKey(new Date('2026-09-11T22:00:00Z'))).toBe('snapshots/2026/2026-09.csv');
+    expect(archiveKey(new Date('2027-01-31T22:00:00Z'))).toBe('snapshots/2027/2027-01.csv');
+  });
+
+  it('reads a missing binding as not configured rather than throwing', async () => {
+    expect(archiveConfigured({})).toBe(false);
+    // The staging deploy has no ARCHIVE binding at all, so this is the path
+    // every rehearsed cron takes. It must be quiet, not an error row.
+    const result = await writeMonthlyArchive({}, 'anything');
+    expect(result).toEqual({ skipped: 'archive-not-configured' });
+  });
+
+  it('writes the month that is missing', async () => {
+    const { env, puts, written } = fakeEnv();
+    const at = new Date('2026-09-11T22:00:00Z');
+    const result = await writeMonthlyArchive(env, 'a,b\n1,2\n', { now: at });
+
+    expect(result.written).toBe(true);
+    expect(puts).toHaveLength(1);
+    expect(puts[0].key).toBe('snapshots/2026/2026-09.csv');
+    expect(puts[0].opts.customMetadata.generatedAt).toBe(at.toISOString());
+    // Watermark only after the put, so a failed write cannot report success.
+    expect(written).toHaveLength(1);
+    expect(written[0].args[0]).toBe(ARCHIVE_SETTING);
+  });
+
+  it('does not overwrite a month it already has', async () => {
+    const { env, puts, heads, written } = fakeEnv({
+      objects: { 'snapshots/2026/2026-09.csv': { size: 999 } },
+    });
+    const result = await writeMonthlyArchive(env, 'newer content', {
+      now: new Date('2026-09-30T22:00:00Z'),
+    });
+
+    // This is the whole of "append-only". The cron runs 30 nights a month and
+    // the 29 after the first must leave the snapshot alone -- an overwrite on
+    // the 30th would silently replace a month's record with a later copy of a
+    // database that has since been edited.
+    expect(result).toEqual({ skipped: 'exists', key: 'snapshots/2026/2026-09.csv' });
+    expect(heads).toHaveLength(1);
+    expect(puts).toHaveLength(0);
+    expect(written, 'a skipped write moved the watermark').toHaveLength(0);
   });
 });
