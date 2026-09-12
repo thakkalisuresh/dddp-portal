@@ -24,7 +24,25 @@ migrations_dir = "migrations"
 
 [[r2_buckets]]
 binding = "PROOFS"
-bucket_name = "dddp-proofs"
+# RENAMED FROM `dddp-proofs` on 2026-09-12, and the rename IS the fix.
+#
+# The original bucket was created in WNAM while D1 sits in APAC, so every
+# resident's payment screenshot crossed the Pacific to be stored and crossed
+# back to be reviewed. R2 buckets cannot be relocated, so the only moment that
+# is cheap to correct is while the bucket is empty — which the launch rebuild
+# made true exactly once.
+#
+# Deleting it and recreating it under the SAME NAME does not work. Tried, with
+# `--location apac`, and the new bucket came back WNAM: Cloudflare appears to
+# keep placement against a recently-used bucket name. That is not a stale
+# reading — a probe bucket created seconds later under a fresh name reported
+# APAC correctly, which is what proves the difference. A new name is therefore
+# the only reliable way to land in a chosen region.
+#
+# Not called `-apac`: a bucket named after its region tells a lie the day it
+# moves. `dddp-proofs-staging` keeps its name — it is disposable and its
+# latency is nobody's problem.
+bucket_name = "dddp-payment-proofs"
 
 # The association's own off-site copy of the nightly bundle — see the archive
 # section of functions/lib/backup.js for why a second copy exists at all.

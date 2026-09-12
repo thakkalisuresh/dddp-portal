@@ -109,6 +109,10 @@ describe('the checks catch the bugs that actually happened', () => {
       owners: [owner({ flat: '4A' })],
       flats: [{ flat: '4A', floor: 4, active: 1 }, { flat: '12F', floor: 12, active: 1 }],
       readings: [],
+      // A billed month is the premise, not decoration: with no period there is
+      // nothing for the unsold flat to block, and this is reported as the
+      // pre-roster state instead. See ROSTER-NOT-IMPORTED below.
+      periods: [{ period: '2026-08' }],
     });
     const hit = f.find((x) => x.id === 'FLAT-BILLED-NO-OWNER');
     expect(hit.severity).toBe('fail');
@@ -132,8 +136,51 @@ describe('the checks catch the bugs that actually happened', () => {
       owners: [owner({ flat: '4A', active: 0 })],
       flats: [{ flat: '4A', floor: 4, active: 1 }],
       readings: [],
+      periods: [{ period: '2026-08' }],
     });
     expect(f.map((x) => x.id)).toContain('FLAT-BILLED-NO-OWNER');
+  });
+
+  it('calls an unenrolled building a note, not a failure', () => {
+    // The state the launch rebuild produces: every flat on the register, one
+    // account, no month ever billed. Reporting 98 hard failures here trains
+    // people to ignore the whole report -- and the advice attached to the
+    // failure ("set the flat to no owner, or add the owner") is nonsense
+    // applied to a building whose roster has not arrived.
+    const flats = Array.from({ length: 99 }, (_, i) => ({
+      flat: `${i + 1}X`, floor: i + 1, active: 1,
+    }));
+    const f = checkIntegrity({
+      owners: [owner({ flat: '1X' })],
+      flats,
+      readings: [],
+      periods: [],
+    });
+
+    expect(f.map((x) => x.id)).not.toContain('FLAT-BILLED-NO-OWNER');
+    const hit = f.find((x) => x.id === 'ROSTER-NOT-IMPORTED');
+    expect(hit.severity).toBe('info');
+    expect(hit.detail).toContain('98 of 99');
+    // A sample, not all 98. The point is the count, and 98 rows of it buries
+    // every other finding in the report.
+    expect(hit.rows).toHaveLength(5);
+  });
+
+  it('turns the same building into a failure the moment a month is billed', () => {
+    // Same flats, same single owner -- the ONLY difference is that billing has
+    // started, which is exactly when an empty flat begins blocking generation.
+    const flats = Array.from({ length: 99 }, (_, i) => ({
+      flat: `${i + 1}X`, floor: i + 1, active: 1,
+    }));
+    const f = checkIntegrity({
+      owners: [owner({ flat: '1X' })],
+      flats,
+      readings: [],
+      periods: [{ period: '2026-08' }],
+    });
+
+    expect(f.map((x) => x.id)).not.toContain('ROSTER-NOT-IMPORTED');
+    expect(f.find((x) => x.id === 'FLAT-BILLED-NO-OWNER').severity).toBe('fail');
   });
 
   it('catches a resident whose flat is not on the register', () => {

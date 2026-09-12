@@ -261,6 +261,100 @@ entry should be deleted rather than kept.
 
 # Decisions, not code
 
+## B31 — Read replication, for the owners who are not in Thrissur
+
+**Deferred. Trigger: anybody reports the portal feeling slow from outside
+India.** Raised 2026-09-12 when the launch rebuild pinned the new database to
+APAC and the question came back: what about residents abroad?
+
+D1's location hint places the single **writable primary**, and every query goes
+there. Kerala has a large overseas diaspora and absentee owners are
+disproportionately the people who use a portal instead of walking to the notice
+board, so this is a real population, not a hypothetical one. For them the Worker
+still runs at their nearest edge while each query round-trips to Asia — order of
+a couple of hundred milliseconds, multiplied by however many sequential queries
+a page makes.
+
+**A compromise region was considered and rejected.** Moving the primary to
+somewhere "between" penalises ninety-odd residents in Thrissur, where every
+write and the overwhelming majority of reads originate, to help a handful
+abroad. No single location is good for both, which is what makes replication
+rather than placement the answer.
+
+**D1 read replication is the fix and it is free** — read-only replicas placed
+globally, writes still forwarded to the primary, no extra storage or compute
+charge. It is a dashboard toggle.
+
+**What stops it being toggle-and-forget:** the Sessions API. Without it a
+resident who has just paid can read a replica that has not caught up and see
+their bill still unpaid, which is worse than slow — it is the portal appearing
+to lose a payment. Adopting it means deciding, per read path, which ones need
+read-your-own-writes. That is the work, and it is why this waits for evidence
+that anybody is actually suffering the latency.
+
+## B32 — A data warehouse, and the arithmetic that says not yet
+
+**Deferred. Triggers: a second building, or smart meters.** Raised 2026-09-12
+as a lake/warehouse/lakehouse proposal, and worth recording precisely because
+the instinct behind it was sound while the mechanism was not.
+
+The database is **under 1 MB**. About 3,200 application rows at roughly 0.3 KB
+each. The building generates ~99 bills and ~99 readings a month, so call it
+10,000 rows and 3-4 MB a year, generously. D1's ceiling is 500 MB on the free
+tier and 10 GB on Workers Paid. That is somewhere between a century and never.
+
+A lake is for data that does not fit and queries that will not finish. Neither
+is true here, and the infrastructure would be orders of magnitude larger than
+the data inside it — with every piece of it something that can break at 3am on
+a night the late-fee cron runs.
+
+**The three real needs underneath it were each met separately, and more
+cheaply:**
+
+- *Testing without corrupting resident data* — `scripts/scrub-staging.sql`,
+  applied unconditionally by `staging-refresh.mjs`, with a check that refuses
+  to report success if the scrub did not take.
+- *Ad-hoc querying* — `npm run query` dumps every table to CSV for DuckDB. A
+  file cannot be written to by accident, cannot drift from production, and
+  cannot be fixed in the wrong place.
+- *Permanent history* — the monthly R2 snapshot in `backup.js`, in a bucket the
+  association owns rather than a committee member's personal Drive.
+
+**The trap worth remembering**, since it is the reason a downstream query
+database was rejected rather than merely deemed unnecessary: a copy fed by a
+sync job is **not** where data can be fixed. A correction applied there is
+destroyed by the next refresh, and the query used to verify it reads the same
+stale rows, so the fix appears to work and silently is not. Writes belong in
+the system of record; the copy earns its safety by being disposable.
+
+**What would flip it.** Multiple buildings, where cross-tenant reporting is a
+genuine warehouse question. Or smart meters: hourly sampling instead of a
+monthly manual walk is ~870,000 readings a year and a real time-series problem,
+which is the case where R2 Data Catalog — managed Iceberg, queryable from
+DuckDB or Spark, billed on catalog operations and compaction since August 2026
+— starts earning its keep. For portal *usage* analytics specifically the right
+tool is Analytics Engine, not a warehouse; `analytics.js` counting rows in
+`activity` is a long way from needing either.
+
+## B33 — Doctor should notice when the archive stops
+
+**Small, and the shape of bug this project keeps having.** The monthly R2
+archive writes `last_archive_at` into `settings` after a successful put, exactly
+as the Drive backup writes `last_backup_at`. Nothing reads it.
+
+`checkBackup` already turns that watermark into `BACKUP-NEVER` and
+`BACKUP-STALE`; the archive has no equivalent, so an archive that silently
+stopped would look identical to one that is working. That is the same failure
+mode as vision staying dead in production for weeks because `DDP-PROOF-007` was
+severity `warn` and nothing alerted — the copy exists precisely for the day
+something has gone badly wrong, and finding out then that it stopped in March
+is the worst possible moment.
+
+Stale is different from the Drive copy's, and needs its own threshold: this
+writes once a month, so "nothing for 48 hours" means nothing. Somewhere past
+~35 days is the honest line, plus a note when the current month has no snapshot
+yet and the month is nearly over.
+
 ## B3 — Buy a domain
 
 Currently `diamondpark.pages.dev`. A domain costs money, which is the one
