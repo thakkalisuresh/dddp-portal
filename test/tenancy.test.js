@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   outstandingFor, canChangeRole, mergeTimeline, toIST, canResetPassword,
   canEditResident, waLink,
+  roleAsSeenBy,
 } from '../functions/lib/tenancy.js';
 
 describe('what the outgoing owner leaves behind', () => {
@@ -308,5 +309,44 @@ describe('waLink', () => {
 
   it('encodes the message exactly once', () => {
     expect(waLink('+919846466511', 'a b&c')).toBe('https://wa.me/919846466511?text=a%20b%26c');
+  });
+});
+
+describe('the superadmin is listed to admins as an admin', () => {
+  it('shows an admin the superadmin as an admin', () => {
+    expect(roleAsSeenBy({ role: 'admin' }, 'superadmin')).toBe('admin');
+  });
+
+  it('masks it from every rung below superadmin, not just admins', () => {
+    // A committee member never reaches the directory today, but the mask is a
+    // rule about the viewer's rung, and should not quietly depend on that.
+    for (const role of ['owner', 'committee', 'admin']) {
+      expect(roleAsSeenBy({ role }, 'superadmin')).toBe('admin');
+    }
+  });
+
+  it('shows the superadmin their own real role', () => {
+    expect(roleAsSeenBy({ role: 'superadmin' }, 'superadmin')).toBe('superadmin');
+  });
+
+  it('leaves every other role exactly as it is', () => {
+    for (const role of ['owner', 'committee', 'admin']) {
+      expect(roleAsSeenBy({ role: 'admin' }, role)).toBe(role);
+    }
+  });
+
+  it('is only safe because an admin can do nothing to either row', () => {
+    // The mask rests on this: an admin is refused the superadmin's row and
+    // another admin's row identically. If that ever diverges, the masked card
+    // behaves differently from a real admin card and gives the role away.
+    const actor = { id: 9, role: 'admin' };
+    const onAdmin = canEditResident({ actor, target: { id: 3, role: 'admin' } });
+    const onSuper = canEditResident({ actor, target: { id: 1, role: 'superadmin' } });
+    expect(onAdmin.ok).toBe(false);
+    expect(onSuper.ok).toBe(false);
+    const resetAdmin = canResetPassword({ actor, target: { id: 3, role: 'admin' }, mailConfigured: false });
+    const resetSuper = canResetPassword({ actor, target: { id: 1, role: 'superadmin' }, mailConfigured: false });
+    expect(resetAdmin.ok).toBe(false);
+    expect(resetSuper.ok).toBe(false);
   });
 });

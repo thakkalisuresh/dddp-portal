@@ -186,6 +186,32 @@ export function mergeTimeline({ audits = [], activities = [], errors = [] }) {
 export const ADMINISTRATOR = { name: 'Sabarish' };
 
 /**
+ * The role an admin is shown for somebody in the directory.
+ *
+ * The superadmin appears to admins as an admin. That is a decision about what
+ * the directory displays, made 2026-09-12, and it is deliberately NOT a claim
+ * that nobody can work out who holds the top rung: the copy throughout the
+ * console still names ADMINISTRATOR as the person who approves and resets, on
+ * purpose, because an admin standing in front of a locked-out resident needs to
+ * know who to ring.
+ *
+ * Masked in the API response and not only in the page. A badge hidden by the
+ * browser is one devtools tab away from reading "superadmin" in the JSON.
+ *
+ * The masking is only safe because nothing an admin can DO depends on telling
+ * the two apart. canEditResident and canResetPassword already refuse an admin
+ * on any admin-or-superadmin row, identically, and the console mirrors that by
+ * drawing both as read-only — so the two cards are indistinguishable in
+ * behaviour as well as in label. If an admin ever gains a power over other
+ * admins that it does not have over the superadmin, this stops being a label
+ * and starts being a lie, and the card will give it away.
+ */
+export function roleAsSeenBy(viewer, role) {
+  if (role === 'superadmin' && viewer?.role !== 'superadmin') return 'admin';
+  return role;
+}
+
+/**
  * Who may reset whose password. The superadmin, and nobody else.
  *
  *   resident  -> the superadmin only

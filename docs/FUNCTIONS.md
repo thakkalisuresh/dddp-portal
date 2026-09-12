@@ -707,6 +707,7 @@ Ownership changes: a flat is sold, or the builder hands one to a new buyer.
 | fn | `toIST` |  |
 | fn | `mergeTimeline` | One timeline from three tables. |
 | const | `ADMINISTRATOR` | Who the one person with full control IS, by name, for anything a resident or an admin reads. |
+| fn | `roleAsSeenBy` | The role an admin is shown for somebody in the directory. |
 | fn | `canResetPassword` | Who may reset whose password. |
 | fn | `canEditResident` | Who may edit somebody's row at all — the same ladder as canResetPassword. |
 | const | `REQUESTABLE_FIELDS` | The two columns an admin may no longer write directly (B22). |
@@ -999,4 +1000,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-544 exports. 245 have no doc comment.
+545 exports. 245 have no doc comment.
