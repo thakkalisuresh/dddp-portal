@@ -14,7 +14,7 @@ pages_build_output_dir = "dist"
 [[d1_databases]]
 binding = "DB"
 database_name = "dddp"
-database_id = "56951152-d3c7-4476-a779-9ef9afe0b4d8"
+database_id = "ce528f06-5898-408f-b303-c8c02b725a13"
 # LOCAL `wrangler pages dev` only. This key does NOT affect deployed previews
 # -- see the [env.preview] block at the bottom, which is what does. Keeping it
 # means a local dev session also stays off production.
