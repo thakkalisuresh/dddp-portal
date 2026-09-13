@@ -242,6 +242,10 @@ export default {
           // Told to the client rather than inferred by it, so the manage bar
           // cannot appear for somebody the server would then refuse.
           canManage: canManagePoll({ created_by: poll.createdBy }, session.actor),
+          // The ballot route is the superadmin's alone. Said here so the button
+          // is never drawn for anybody it would refuse -- an admin used to be
+          // offered it on every closed poll and told, on pressing, whose it was.
+          canOpenBallot: session.actor.role === 'superadmin',
         });
       }
       if (request.method === 'POST' && /^\/api\/polls\/\d+\/vote$/.test(path)) {
@@ -536,7 +540,7 @@ export default {
       if (path.startsWith('/api/god/')) {
         if (!hasRole(session, 'superadmin')) {
           await reportError(env, 'DDP-ADMIN-004', { path, actor: session.actor.id });
-          return problem(403, 'DDP-ADMIN-004', 'Superadmin only.');
+          return problem(403, 'DDP-ADMIN-004', 'Not available.');
         }
         if (route === 'GET /api/god/residents') {
           const r = await env.DB.prepare(
@@ -962,7 +966,7 @@ async function listResidents(env, session, url) {
   const wantsPast = url.searchParams.get('include') === 'past';
   if (wantsPast && !hasRole(session, 'superadmin')) {
     await reportError(env, 'DDP-ADMIN-004', { path: url.pathname, actor: session.actor.id });
-    return problem(403, 'DDP-ADMIN-004', 'Past residents are superadmin-only.');
+    return problem(403, 'DDP-ADMIN-004', 'Past residents are not available.');
   }
 
   const { results } = await env.DB.prepare(
@@ -2621,7 +2625,7 @@ async function exportData(env, session, url) {
   if (table) {
     if (!TABLES.includes(table)) return problem(400, 'DDP-SYS-003', 'No such table.');
     await audit(env, session, 'export.table', { table });
-    return new Response(await dumpTable(env, table), {
+    return new Response(await dumpTable(env, table, { viewer: session.actor }), {
       headers: {
         'content-type': 'text/csv; charset=utf-8',
         'content-disposition': `attachment; filename="diamond-park-${table}-${stamp}.csv"`,
@@ -2630,7 +2634,7 @@ async function exportData(env, session, url) {
     });
   }
 
-  const files = await dumpAll(env);
+  const files = await dumpAll(env, { viewer: session.actor });
   await audit(env, session, 'export.all', { tables: Object.keys(files).length });
   return new Response(bundle(files, { generatedAt: new Date().toISOString() }), {
     headers: {

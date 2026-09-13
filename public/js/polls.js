@@ -541,7 +541,7 @@ function manageBar(p) {
     // Superadmin only. Not gated on a role read from /api/me but on the
     // server's own answer: the route is 403 for everybody else, so a button
     // rendered in error would fail loudly rather than leak anything.
-    p.closed ? ballotPanel(p) : null);
+    p.closed && p.canOpenBallot ? ballotPanel(p) : null);
 }
 
 
@@ -666,7 +666,7 @@ function ballotPanel(p) {
     } catch (err) {
       // A 403 here is the ordinary case for an admin who is not the
       // superadmin, and it is not worth a red banner.
-      setChildren(wrap, note('The ballot is the superadmin’s to open.'));
+      setChildren(wrap, note('The ballot cannot be opened from this account.'));
     }
   });
 

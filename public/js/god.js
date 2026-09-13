@@ -36,7 +36,9 @@ async function init() {
   try {
     const me = await api.me();
     if (me.role !== 'superadmin') {
-      main.replaceChildren(el('div', { class: 'note note--bad' }, 'Superadmin only.'));
+      // Sent somewhere useful rather than told the page is somebody else's.
+      // A refusal naming the rung it needs is a label for that rung.
+      location.replace(me.role === 'admin' ? '/admin' : '/dashboard');
       return;
     }
     $('#who').innerHTML = `God mode <span>· ${esc(me.name)}</span>`;

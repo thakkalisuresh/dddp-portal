@@ -8,6 +8,13 @@ import { $, el, showError, setChildren } from './ui.js';
 
 const main = $('#main');
 try {
+    // Checked before anything is fetched, for the same reason as god.js: the
+    // alternative is the server's refusal rendered on screen.
+    const me = await api.me();
+    if (me.role !== 'superadmin') {
+      location.replace(me.role === 'admin' ? '/admin' : '/dashboard');
+      throw new Error('redirecting');
+    }
     const state = await api.captureState();
     const { clicks } = await api.god.clicks();
     setChildren(main,
@@ -26,4 +33,7 @@ try {
               el('span', {}, c.label ?? '(no label)'),
               el('div', { class: 'c__target' }, `${c.page} · ${c.target}`))))
         : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nothing captured.')]));
-} catch (err) { showError(main, err); }
+} catch (err) {
+  if (err?.status === 401) location.href = '/login';
+  else if (err?.message !== 'redirecting') showError(main, err);
+}

@@ -9,6 +9,7 @@
 
 import { reportError, fail } from './errors.js';
 import { noticeHtml, noticeSignature } from './notice-doc.js';
+import { roleAsSeenBy } from './tenancy.js';
 
 /**
  * Every table carried off-site, in dependency order — restore reads top to
@@ -138,16 +139,62 @@ export const DUMP_QUERIES = {
       ORDER BY v.id`,
 };
 
-export async function dumpTable(env, table) {
+export async function dumpTable(env, table, { viewer = null } = {}) {
   if (!TABLES.includes(table)) fail('DDP-SYS-003', { table });
   const rows = await env.DB.prepare(DUMP_QUERIES[table] ?? `SELECT * FROM ${table}`).all();
-  return toCsv(stripSecrets(rows.results ?? []));
+  return toCsv(maskForViewer(table, stripSecrets(rows.results ?? []), viewer));
 }
 
-export async function dumpAll(env) {
+export async function dumpAll(env, { viewer = null } = {}) {
   const files = {};
-  for (const table of TABLES) files[`${table}.csv`] = await dumpTable(env, table);
+  for (const table of TABLES) files[`${table}.csv`] = await dumpTable(env, table, { viewer });
   return files;
+}
+
+/**
+ * What an admin's download says about the top rung: nothing by that name.
+ *
+ * The console already lists the superadmin to admins as an admin (see
+ * roleAsSeenBy). A download that then read "superadmin" in the owners file, or
+ * "god.edit.owner.role" in the audit log, undid that for anybody who opened the
+ * CSV -- and the download is offered to every admin on purpose.
+ *
+ * WHAT IS NOT MASKED, and why that matters. The nightly backup calls dumpAll
+ * with no viewer at all, and so does the superadmin's own download: both stay
+ * byte-for-byte faithful, because a copy that rewrites rows is a copy that
+ * does not restore them. Only a download requested by somebody below the top
+ * rung is rewritten, and it is never the restore source.
+ *
+ * The audit log is RELABELLED, not thinned. Every row an admin could download
+ * before is still there, with the same actor, subject and timestamp, so the
+ * committee can still check what administrators did. Only the vocabulary
+ * changes: a `god.` prefix is dropped, `superadmin.handover` reads
+ * `role.handover`, and the word `superadmin` inside a detail becomes `admin`.
+ * That last one is lossy -- a role change to the top rung reads as a change to
+ * admin -- and that is the decision, made 2026-09-12.
+ *
+ * Rows other people wrote (notices, comments, messages) are left alone. If a
+ * resident types the word into a notice, that is their content, not a label
+ * this code chose.
+ */
+export function maskForViewer(table, rows, viewer) {
+  if (!viewer || viewer.role === 'superadmin') return rows;
+  const word = (s) => (typeof s === 'string'
+    ? s.replace(/\bsuperadmin\b/gi, 'admin').replace(/\bgod\b\.?/gi, '')
+    : s);
+  if (table === 'owners') {
+    return rows.map((r) => ({ ...r, role: roleAsSeenBy(viewer, r.role) }));
+  }
+  if (table === 'audit_log') {
+    return rows.map((r) => ({
+      ...r,
+      action: typeof r.action === 'string'
+        ? r.action.replace(/^god\./, '').replace(/^superadmin\./, 'role.')
+        : r.action,
+      detail: word(r.detail),
+    }));
+  }
+  return rows;
 }
 
 /**
