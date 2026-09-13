@@ -122,6 +122,7 @@ Nightly backup, and retention.
 | const | `DUMP_QUERIES` | Tables that are NOT dumped whole, and why the exception earns its place. |
 | fn | `dumpTable` |  |
 | fn | `dumpAll` |  |
+| fn | `maskForViewer` | What an admin's download says about the top rung: nothing by that name. |
 | fn | `bundle` | One readable file rather than a zip: Workers have no zip primitive, adding a library for it is silly at this size, and a single annotated CSV bundle is something a treasurer can actually scroll through. |
 | const | `RETENTION_DAYS` | Activity and click rows are the highest-volume, lowest-value data here, and the most invasive. |
 | fn | `cutoffFor` |  |
@@ -1000,4 +1001,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-545 exports. 245 have no doc comment.
+546 exports. 245 have no doc comment.

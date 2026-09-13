@@ -5,7 +5,7 @@ import {
   monthFolderName, ensureMonthFolder, uploadToDrive, BACKUP_CRON, isBackupCron,
   backupProofs, proofBackupName, PROOF_BATCH, backupAttachments,
   committeeFolder, committeeFolderSeparate, noticeFolderName, NEVER_BACKUP,
-  archiveConfigured, archiveKey, writeMonthlyArchive, ARCHIVE_SETTING,
+  archiveConfigured, archiveKey, writeMonthlyArchive, ARCHIVE_SETTING, maskForViewer,
 } from '../functions/lib/backup.js';
 import { mailConfigured } from '../functions/lib/mailer.js';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -601,5 +601,73 @@ describe("the association's own archive", () => {
     expect(heads).toHaveLength(1);
     expect(puts).toHaveLength(0);
     expect(written, 'a skipped write moved the watermark').toHaveLength(0);
+  });
+});
+
+describe("an admin's download does not name the top rung", () => {
+  const owners = [
+    { id: 1, flat: '4A', role: 'superadmin' },
+    { id: 2, flat: '10A', role: 'admin' },
+    { id: 7, flat: '7B', role: 'owner' },
+  ];
+  const audit = [
+    { id: 1, action: 'god.edit.owner.role', detail: '{"from":"admin","to":"superadmin"}' },
+    { id: 2, action: 'god.view-as', detail: '{"flat":"10A"}' },
+    { id: 3, action: 'superadmin.handover', detail: '{"from":1,"to":2}' },
+    { id: 4, action: 'export.table', detail: '{"table":"bills"}' },
+  ];
+
+  it('leaves the nightly backup exactly as the database has it', () => {
+    // No viewer is how runBackup calls it. A backup that rewrote rows would be
+    // a backup that does not restore them.
+    expect(maskForViewer('owners', owners, null)).toEqual(owners);
+    expect(maskForViewer('audit_log', audit, null)).toEqual(audit);
+  });
+
+  it("leaves the superadmin's own download exactly as it is", () => {
+    const viewer = { role: 'superadmin' };
+    expect(maskForViewer('owners', owners, viewer)).toEqual(owners);
+    expect(maskForViewer('audit_log', audit, viewer)).toEqual(audit);
+  });
+
+  it('lists the superadmin to an admin as an admin, and nobody else changes', () => {
+    const out = maskForViewer('owners', owners, { role: 'admin' });
+    expect(out.map((r) => r.role)).toEqual(['admin', 'admin', 'owner']);
+  });
+
+  it('relabels the audit log without dropping a single row', () => {
+    const out = maskForViewer('audit_log', audit, { role: 'admin' });
+    expect(out).toHaveLength(audit.length);
+    expect(out.map((r) => r.action))
+      .toEqual(['edit.owner.role', 'view-as', 'role.handover', 'export.table']);
+    expect(out[0].detail).toBe('{"from":"admin","to":"admin"}');
+    // The rows still say who did what and when -- only the words move.
+    expect(out.map((r) => r.id)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('never names either word anywhere in what an admin receives', () => {
+    const text = JSON.stringify([
+      maskForViewer('owners', owners, { role: 'admin' }),
+      maskForViewer('audit_log', audit, { role: 'admin' }),
+    ]);
+    expect(text).not.toMatch(/superadmin|\bgod\b/i);
+  });
+
+  it("leaves other people's words alone", () => {
+    // A resident who writes the word into a notice wrote it. That is content,
+    // not a label this code chose, and rewriting it would be tampering.
+    const notices = [{ id: 1, body: 'Ask the superadmin' }];
+    expect(maskForViewer('notices', notices, { role: 'admin' })).toEqual(notices);
+  });
+
+  it('is applied to the download and kept off the backup, in the source', () => {
+    // Handlers are not driven by tests here, so the wiring is asserted where it
+    // lives. Getting either side wrong is silent: an unmasked download looks
+    // like a download, and a masked backup looks like a backup.
+    const index = readFileSync(join(root, 'functions/index.js'), 'utf8');
+    const backup = readFileSync(join(root, 'functions/lib/backup.js'), 'utf8');
+    expect(index).toMatch(/dumpTable\(env, table, \{ viewer: session\.actor \}\)/);
+    expect(index).toMatch(/dumpAll\(env, \{ viewer: session\.actor \}\)/);
+    expect(backup).toMatch(/files = await dumpAll\(env\);/);
   });
 });
