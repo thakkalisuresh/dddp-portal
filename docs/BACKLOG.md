@@ -261,6 +261,41 @@ entry should be deleted rather than kept.
 
 # Decisions, not code
 
+## B34 — The payment screenshots the privacy policy promises to delete
+
+**Deferred 2026-09-15, deliberately and with a date on it. Revisit by
+2027-09-15 — and before 2028-09, which is when the promise first comes due.**
+
+`docs/PRIVACY.md:156` says payment screenshots are deleted after 24 months.
+Nothing deletes them. There is no retention job for the R2 objects, for
+`payment_proofs`, or for the nightly Drive backups that carry copies of both.
+It was raised by an outside review as a live privacy failure; it is not one
+today, and the reason is arithmetic rather than luck. Production was rebuilt
+empty on 2026-09-12 ([[launch-rebuild]] — see docs/LAUNCH-REBUILD.md), so the
+oldest screenshot the building will ever hold cannot predate the first billed
+month. Nothing is deletable under this policy until roughly September 2028.
+
+**What makes it a decision rather than a task.** Writing the job means choosing
+what "deleted" means, and two of the choices are not obvious:
+
+- **The image hash must outlive the image.** `payment_proofs.image_sha256` is
+  what catches the same screenshot being submitted twice — last month's payment
+  sent again for this month's bill. Delete the row wholesale and that check goes
+  with it. The likely answer is to keep a tombstone: hash, UTR, bill, timestamps,
+  and no image.
+- **24 months may be the wrong number.** It was written before the building had
+  a single real payment. A dispute over a bill from two years ago is exactly when
+  somebody wants the evidence, and the association — not the portal — should say
+  how long that evidence is worth keeping.
+
+Then the mechanical parts, which are the easy half: deletion has to span D1, R2
+and Drive, be retryable, be audited, and leave a reconciliation report for
+objects with no row and rows with no object.
+
+**Until then the honest options are to implement it or to amend the policy**, and
+amending a privacy promise to match an unwritten job is the wrong order. The
+committee has a year to decide what it actually wants to keep.
+
 ## B31 — Read replication, for the owners who are not in Thrissur
 
 **Deferred. Trigger: anybody reports the portal feeling slow from outside
