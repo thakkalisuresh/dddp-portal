@@ -87,6 +87,7 @@
  */
 
 import { createServer } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { execFileSync } from 'node:child_process';
 import { stdin, stdout } from 'node:process';
@@ -134,12 +135,45 @@ async function ask(rl, question, fallback) {
  * out-of-band copy-paste flow Google used to offer was switched off in 2022,
  * and the code now only ever arrives as a query parameter.
  */
-function waitForCode() {
+/**
+ * The one-time value that ties the redirect back to THIS run.
+ *
+ * Without it the listener on 127.0.0.1 accepts whatever arrives first. Anything
+ * able to make the operator's browser open a URL — a page in another tab, a
+ * link in a chat window — can deliver its own `code` while this is waiting, and
+ * the script would exchange it and store a refresh token for SOMEBODY ELSE'S
+ * Google account. The building's backups would then be written to a stranger's
+ * Drive, and its email sent from their mailbox, with nothing on screen looking
+ * wrong. Google asks for this for exactly that reason.
+ */
+function newState() {
+  return randomBytes(32).toString('base64url');
+}
+
+function waitForCode(expectedState) {
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       const url = new URL(req.url, REDIRECT);
       const code = url.searchParams.get('code');
       const error = url.searchParams.get('error');
+      const state = url.searchParams.get('state');
+
+      // Compared before the code is looked at, and a mismatch is fatal to the
+      // run rather than something to retry: the redirect did not come from the
+      // link this script printed, and the only safe reading of that is that
+      // somebody else's consent just arrived.
+      if (!error && (!state || state !== expectedState)) {
+        res.writeHead(400, { 'content-type': 'text/html; charset=utf-8' });
+        res.end('<!doctype html><meta charset="utf-8"><title>DD Diamond Park</title>'
+          + '<body style="font:16px system-ui;padding:3rem;max-width:32rem">'
+          + '<h1>Refused.</h1><p>That redirect did not come from this run. '
+          + 'Nothing has been stored. Go back to the terminal.</p>');
+        server.close();
+        reject(new Error('state did not match — the redirect did not come from the link '
+          + 'this script printed. Nothing was exchanged or stored. Start again, and open '
+          + 'the link yourself rather than following one from anywhere else.'));
+        return;
+      }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(`<!doctype html><meta charset="utf-8"><title>DD Diamond Park</title>
 <body style="font:16px system-ui;padding:3rem;max-width:32rem">
@@ -264,12 +298,15 @@ const main = async () => {
       ? await ask(rl, 'Drive folder id for backups: ')
       : await ask(rl, 'Address to send from (MAIL_FROM): ');
 
+    const state = newState();
     const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     authUrl.search = new URLSearchParams({
       client_id: clientId,
       redirect_uri: REDIRECT,
       response_type: 'code',
       scope: mode.scope,
+      // Comes back on the redirect and is checked there — see waitForCode.
+      state,
       // offline is what produces a refresh token at all; consent forces one to
       // be re-issued even if this client has been approved before.
       access_type: 'offline',
@@ -280,7 +317,7 @@ const main = async () => {
     console.log(`${authUrl}\n`);
     console.log(`${C.dim}Waiting for the redirect back to ${REDIRECT} …${C.off}`);
 
-    const code = await waitForCode();
+    const code = await waitForCode(state);
     const token = await exchange({ clientId, clientSecret, code });
     console.log(`\n${C.ok}Consent granted.${C.off}`);
 
