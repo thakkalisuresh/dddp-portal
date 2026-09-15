@@ -99,7 +99,12 @@ const NEVER_EXPORT = new Set(['pw_hash', 'pw_salt']);
  */
 export function toCsvValue(value) {
   if (value == null) return '';
-  const s = String(value);
+  let s = String(value);
+  // A cell opening with = + - @ is a formula to Excel and Sheets, and these
+  // files are opened in exactly those, holding names and comments residents
+  // typed. The apostrophe makes it text. Number-shaped values are left alone:
+  // every mobile is +91…, and credits are negative, and neither can run.
+  if (/^[=+\-@\t\r]/.test(s) && !/^[+-]?\d[\d\s.]*$/.test(s)) s = `'${s}`;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
