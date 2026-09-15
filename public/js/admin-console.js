@@ -1513,6 +1513,38 @@ async function lateFeesPanel() {
     const save = el('button', { class: 'btn', type: 'button', disabled: true }, 'Exempt');
     let checked = null;
 
+    // Checked before it is applied. "all" is one keystroke away from a flat
+    // number, and exempting 99 people by accident is reversible but awkward.
+    const check = el('button', { class: 'btn btn--ghost', type: 'button' }, 'Check');
+    check.addEventListener('click', async () => {
+      status.replaceChildren();
+      save.disabled = true;
+      try {
+        const r = await api.admin.bulkExemption(flats.value, '', '', true);
+        checked = r.ok ? flats.value : null;
+        save.disabled = !r.ok;
+        status.replaceChildren(el('div', { class: r.ok ? 'note' : 'note note--bad' },
+          r.unknown.length
+            ? `${r.unknown[0].flat}: ${r.unknown[0].reason}`
+            : r.targets.length
+              ? `${r.targets.length} ${r.targets.length === 1 ? 'resident' : 'residents'}: `
+                + r.targets.map((t) => `${t.flat} ${t.name}`).join(', ')
+                + (r.already.length ? ` — ${r.already.length} already exempt, this replaces it.` : '')
+                + (r.empty.length ? ` — ${r.empty.join(', ')} vacant, skipped.` : '')
+              : 'No flats matched.'));
+      } catch (err) { showError(status, err); }
+    });
+
+    save.addEventListener('click', async () => {
+      status.replaceChildren();
+      try {
+        await api.admin.bulkExemption(checked, until.value, why.value);
+        flats.value = ''; until.value = ''; why.value = '';
+        checked = null; save.disabled = true;
+        await draw();
+      } catch (err) { showError(status, err); }
+    });
+
     // Tick people instead of typing flat numbers. Picking six out of ninety-nine
     // by hand is where a typo becomes somebody billed who should not have been,
     // and the field and the list stay in step so either way of working is fine.
@@ -1535,6 +1567,14 @@ async function lateFeesPanel() {
       const wanted = new Set(flats.value.toUpperCase().split(/[\s,;]+/).filter(Boolean));
       for (const box of picker.querySelectorAll('input')) box.checked = wanted.has(box.value);
     };
+
+    // Re-checking is required after any edit, typed or ticked, so the button
+    // can never apply a list the treasurer has not seen resolved.
+    flats.addEventListener('input', () => {
+      save.disabled = true;
+      checked = null;
+      syncPicker();
+    });
 
     rows.push(el('div', { class: 'panel stack' },
       el('h2', {}, 'Exempt residents'),

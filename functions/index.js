@@ -1305,8 +1305,14 @@ async function patchProfile(request, env, session) {
   }
   const body = await readJson(request);
   const name = String(body?.name ?? '').trim();
-  const email = String(body?.email ?? '').trim() || null;
+  const typed = String(body?.email ?? '').trim();
   if (!name) return problem(400, 'DDP-NOTICE-003', 'Your name cannot be blank.');
+  // Onboarding validates the address and this used to write it raw. It ends up
+  // in a To: header, so a line break in it is a Bcc: of the resident's choosing.
+  const email = typed ? normaliseEmail(typed) : null;
+  if (typed && !email) {
+    return problem(400, 'DDP-NOTICE-003', 'That email address looks wrong. Check it, or leave it blank.');
+  }
 
   await env.DB.prepare('UPDATE owners SET name = ?, email = ? WHERE id = ?')
     .bind(name, email, session.actor.id).run();

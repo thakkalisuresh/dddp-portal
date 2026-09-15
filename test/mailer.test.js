@@ -14,6 +14,25 @@ const mail = (over = {}) => buildRawMessage({
   to: 'a@b.com', from: 'ddp@gmail.com', subject: 'Hello', text: 'Body', ...over,
 });
 
+/* ── header injection ────────────────────────────────────────────────────── */
+
+describe('an address with a line break in it', () => {
+  it('is refused rather than becoming a header', () => {
+    expect(() => mail({ to: 'a@b.com\r\nBcc: x@evil.test' })).toThrow(/to address/);
+    expect(() => mail({ to: 'a@b.com\nBcc: x@evil.test' })).toThrow(/to address/);
+    expect(() => mail({ from: 'ddp@gmail.com\r\nBcc: x@evil.test' })).toThrow(/from address/);
+  });
+
+  it('comes back from sendEmail as a reason, not a throw', async () => {
+    const env = { GOOGLE_CLIENT_ID: 'i', GOOGLE_CLIENT_SECRET: 's', GOOGLE_REFRESH_TOKEN: 'r', MAIL_FROM: 'ddp@gmail.com' };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const r = await sendEmail(env, { to: 'a@b.com\r\nBcc: x@evil.test', subject: 's', text: 't' }, 'token');
+    expect(r).toEqual({ sent: false, reason: 'bad-address' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+});
+
 /* ── the path every existing caller is on ────────────────────────────────── */
 
 describe('a message with no html', () => {

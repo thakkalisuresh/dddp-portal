@@ -117,6 +117,18 @@ night while the watermark advances and the health check reports a good backup.
 See **B20** for the split that fixes it. The month it bites is the month
 residents actually start uploading, which is the month the portal goes live.
 
+**Cloudflare's D1 limits page says something that reads differently**:
+"Queries per Worker invocation — 1000 (Workers Paid) / 50 (Free)". An outside
+review took that to mean publishing a 99-flat month fails. It does not, and that
+was observed rather than argued: `generateBills` sends 99 inserts and the lock
+as ONE `DB.batch`, plus five reads before it and the audit write after, and the
+old production database's `audit_log` holds two `bills.generate` rows for
+2026-07 with `"generated":99` (13 and 14 August 2026, free plan). What is still
+unproven is whether ~50 *separate* D1 calls in one invocation would fail. No
+path makes that many today: the mail drains stop at 20 rows, the nightly dump
+is 29 table reads, and everything that scales with flats writes in a batch.
+Keep it that way — a per-flat `await ….run()` in a loop is the shape to avoid.
+
 ## The one thing worth doing
 
 A card on file with no alert is the only shape in which a surprise is possible.

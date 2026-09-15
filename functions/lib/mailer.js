@@ -53,6 +53,14 @@ export function mailConfigured(env) {
  * hanging off it as a stray .html file.
  */
 export function buildRawMessage({ to, from, subject, text, html, attachment = null }) {
+  // Addresses go into headers verbatim. A line break in one is a header of the
+  // sender's choosing (Bcc:), so refuse it here as well as where addresses are
+  // written: a row saved before the write-side check still reaches this line.
+  for (const [field, value] of [['to', to], ['from', from]]) {
+    if (/[\r\n\0]/.test(String(value ?? ''))) {
+      throw Object.assign(new Error(`line break in ${field} address`), { code: 'bad-address' });
+    }
+  }
   const encodedSubject = /^[\x20-\x7E]*$/.test(subject)
     ? subject
     : `=?UTF-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`;
