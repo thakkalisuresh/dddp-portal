@@ -542,10 +542,32 @@ function flatCard(group, status, open = false, reload = async () => {}) {
       && group.people.some((x) => x.active !== 0 && (x.role === 'admin' || x.role === 'superadmin'))
       ? null
       : occupancyControl(group, status, reload),
-    ...group.people.map((p) => personCard(p, status)));
+    // What the flat holds and what is left. Said on the card because the limit
+    // is only otherwise met as a refusal, halfway through adding somebody.
+    householdLine(current),
+    ...group.people.map((p) => personCard(p, status, group, reload)));
 }
 
-function personCard(p, status) {
+/** "Two owners and a tenant. One more owner login would fit." */
+function householdLine(current) {
+  const owners = current.filter((p) => p.relationship === 'owner').length;
+  const tenants = current.filter((p) => p.relationship === 'tenant').length;
+  if (!owners && !tenants) return null;
+
+  const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const held = [owners ? count(owners, 'owner') : null, tenants ? count(tenants, 'tenant') : null]
+    .filter(Boolean).join(' and ');
+  const spare = [
+    HOUSEHOLD_LIMITS.owner - owners > 0 ? count(HOUSEHOLD_LIMITS.owner - owners, 'owner') : null,
+    HOUSEHOLD_LIMITS.tenant - tenants > 0 ? count(HOUSEHOLD_LIMITS.tenant - tenants, 'tenant') : null,
+  ].filter(Boolean).join(' and ');
+
+  return el('p', { class: 'muted small' },
+    `${held} on this flat. `
+    + (spare ? `Room for ${spare}.` : 'It cannot hold another login of either kind.'));
+}
+
+function personCard(p, status, group = null, reload = async () => {}) {
   const inactive = p.active === 0;
   // An admin looking at another admin -- or at the superadmin, whom the API
   // already lists to them as an admin -- gets a card with nothing to press.
@@ -626,7 +648,59 @@ function personCard(p, status) {
         : el('p', { class: 'small muted' },
             'Forgotten password? Ask them to tap "Forgotten your password?" on the '
             + 'login page — a code goes to their own email, so nobody else ever holds '
-            + `their password. If their email is wrong, ask ${ADMINISTRATOR.name}.`)));
+            + `their password. If their email is wrong, ask ${ADMINISTRATOR.name}.`)),
+
+    departControl(p, group, reload, inactive || lockedToMe));
+}
+
+/**
+ * One of several moves out, while the others stay.
+ *
+ * Only for a flat that has somebody else of the same party on it. The last
+ * owner or the last tenant leaving is a change of occupancy — what happens to
+ * the billing, who is liable now — and the dropdown above asks those questions.
+ * The server refuses this route for them too, so the button and the endpoint
+ * agree rather than the screen offering something that 409s.
+ */
+function departControl(p, group, reload, locked) {
+  if (locked || !group) return null;
+  const others = group.people.filter(
+    (x) => x.active !== 0 && x.id !== p.id && x.relationship === p.relationship);
+  if (!others.length) return null;
+
+  const slot = el('div');
+  const ask = () => {
+    const reason = el('input', {
+      class: 'input', placeholder: 'Sold their share, moved away',
+      'aria-label': `Why ${p.name} is no longer in ${p.flat}`,
+    });
+    const go = el('button', { class: 'btn btn--sm', type: 'button' }, 'They have moved out');
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      try {
+        await api.admin.departResident(p.id, reason.value || reason.placeholder);
+        slot.replaceChildren();
+        await reload();
+      } catch (err) { go.disabled = false; showError(slot, err); }
+    });
+
+    slot.replaceChildren(el('div', { class: 'note note--warn stack', style: 'gap:var(--s-3)',
+                                     role: 'alertdialog' },
+      el('p', { class: 'small' },
+        `Record ${p.name} as moved out of ${p.flat}? They lose their login straight away. `
+        + `${others[0].name} stays, and anything ${p.name} still owes moves across so it `
+        + 'does not disappear with their account. Their paid bills stay theirs.'),
+      el('div', { class: 'field' }, el('label', {}, 'Why (for the record)'), reason),
+      el('div', { class: 'row', style: 'gap:var(--s-3);flex-wrap:wrap' }, go,
+        el('button', { class: 'linkish small', type: 'button',
+                       onclick: () => slot.replaceChildren() }, 'They still live here'))));
+    reason.focus();
+  };
+
+  return el('div', { style: 'margin-top:var(--s-3)' },
+    el('button', { class: 'btn btn--sm btn--quiet', type: 'button', onclick: ask },
+      'No longer lives here'),
+    slot);
 }
 
 /** The two an admin must ask about rather than write. Mirrors REQUESTABLE_FIELDS. */
@@ -1625,6 +1699,31 @@ const OCCUPANCY_OPTIONS = [
   ['owner+tenant', 'Owner + tenant'],
 ];
 
+/**
+ * How many logins a flat holds, by party. The server's copy is HOUSEHOLD_LIMITS
+ * in functions/lib/tenancy.js and the triggers in migration 0040 — the same
+ * deliberate split as ADMINISTRATOR in contact.js. Both need editing together;
+ * the screen only ever uses this to say what is left before it asks.
+ */
+const HOUSEHOLD_LIMITS = { owner: 3, tenant: 2 };
+
+/**
+ * "Meera and Rohit also own this flat." Named rather than counted, because the
+ * form above edits the first-registered one and an admin reading it should know
+ * which of the three they are about to rename.
+ */
+function othersNote(party, word) {
+  if (party.length < 2) return null;
+  const rest = party.slice(1);
+  const names = rest.length === 1
+    ? rest[0].name
+    : `${rest.slice(0, -1).map((p) => p.name).join(', ')} and ${rest[rest.length - 1].name}`;
+  return el('p', { class: 'small muted' },
+    `${names} ${rest.length === 1 ? 'is' : 'are'} also a ${word} of this flat and `
+    + `${rest.length === 1 ? 'is' : 'are'} not changed here. They share the one bill; `
+    + 'their own rows below edit them, and remove them one at a time.');
+}
+
 /** The same derivation the server does, so the screen cannot disagree with it. */
 function occupancyOf(people) {
   const here = people.filter((p) => p.active !== 0);
@@ -1650,8 +1749,14 @@ function monthLabel(iso) {
 function occupancyControl(group, status, reload) {
   const state = occupancyOf(group.people);
   const here = group.people.filter((p) => p.active !== 0);
-  const curOwner = here.find((p) => p.relationship === 'owner') ?? null;
-  const curTenant = here.find((p) => p.relationship === 'tenant') ?? null;
+  // First registered first — the same order occupantOf uses to decide whose
+  // name a bill is raised against, so this form and the bill cannot disagree
+  // about which of three joint owners is "the owner" it is editing.
+  const byAge = (a, b) => a.id - b.id;
+  const owners = here.filter((p) => p.relationship === 'owner').sort(byAge);
+  const tenants = here.filter((p) => p.relationship === 'tenant').sort(byAge);
+  const curOwner = owners[0] ?? null;
+  const curTenant = tenants[0] ?? null;
   const billed = group.billed !== false;
 
   const form = el('div');
@@ -1756,7 +1861,11 @@ function occupancyControl(group, status, reload) {
           // The person's own row below has the Request button.
           el('p', { class: 'small muted' },
             `${curOwner.mobile}${curOwner.email ? ` · ${curOwner.email}` : ''} — `
-            + 'change these from their own row below.'))
+            + 'change these from their own row below.'),
+          // This control edits ONE name. Saying whose, when the flat is jointly
+          // owned, is the difference between a form that is limited and a form
+          // that is misleading about who lives here.
+          othersNote(owners, 'owner'))
       : el('div', { class: 'stack', style: 'gap:var(--s-2)' },
           el('p', { class: 'label' }, 'Owner'),
           el('div', { class: 'field' }, el('label', {}, 'Name'), ownerName),
@@ -1805,7 +1914,8 @@ function occupancyControl(group, status, reload) {
       el('div', { class: 'field' }, el('label', {}, 'Name'), tenantName),
       newTenantRows,
       el('div', { class: 'field' },
-        el('label', {}, 'Tenancy started'), started));
+        el('label', {}, 'Tenancy started'), started),
+      othersNote(tenants, 'tenant'));
 
     const billingBack = el('input', { type: 'checkbox', checked: true });
     const billingReason = el('input', {
