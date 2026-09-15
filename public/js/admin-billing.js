@@ -139,8 +139,8 @@ function defaultPeriod() {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
-/** '2026-07' -> '2026-08' */
-function nextMonth(p) {
+/** '2026-07' -> '2026-08'. Exported for the console's "settled" board. */
+export function nextMonth(p) {
   const [y, m] = String(p).split('-').map(Number);
   return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
 }

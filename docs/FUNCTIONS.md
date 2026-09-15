@@ -786,6 +786,7 @@ Billing — one flow from the price of gas to the published bill.
 
 | | Export | What it does |
 |---|---|---|
+| fn | `nextMonth` |  |
 | fn | `billingPanel` | The whole tab. |
 
 ### `public/js/api.js`
@@ -1003,4 +1004,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-548 exports. 247 have no doc comment.
+549 exports. 248 have no doc comment.
