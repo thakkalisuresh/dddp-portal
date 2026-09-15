@@ -657,6 +657,8 @@ Sessions carry actor_id (who really logged in) and subject_id (whose data is sho
 | fn | `committeeMayUse` | The committee member's exception to the admins-only gate on `/api/admin/*`. |
 | const | `CREDENTIAL_ACTIONS` | Credential changes are blocked while impersonating, even in write mode — they could lock the real resident out of their own account (plan §5.5). |
 | fn | `isBlockedWhileImpersonating` |  |
+| fn | `forcedChangeRefuses` |  |
+| fn | `impersonationRefuses` |  |
 
 ### `functions/lib/statement.js`
 
@@ -1001,4 +1003,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-546 exports. 245 have no doc comment.
+548 exports. 247 have no doc comment.
