@@ -523,6 +523,9 @@ export default {
           return patchNotice(request, env, session, path);
         }
         if (route === 'POST /api/admin/residents') return postResident(request, env, session);
+        if (request.method === 'POST' && /^\/api\/admin\/residents\/\d+\/depart$/.test(path)) {
+          return departResident(request, env, session, path);
+        }
         if (request.method === 'PATCH' && /^\/api\/admin\/residents\/\d+$/.test(path)) {
           return patchResident(request, env, session, path);
         }
@@ -2021,6 +2024,72 @@ async function postResident(request, env, session) {
     `Log in at https://diamondpark.pages.dev and choose your own.`;
   return json({ id: row.id, oneTimePassword: otp, whatsapp: waLink(mobile, rawText) },
     { status: 201 });
+}
+
+/**
+ * One person leaves a flat that somebody else in their household still lives in.
+ *
+ * The occupancy dropdown answers "who lives in 5B" as a whole — owner, owner
+ * and tenant, or nobody — and every one of its transitions empties a party at a
+ * time. That was the only shape a flat could have when a party was one person.
+ * With three owners on a flat, "one of them has moved out" is not a change of
+ * occupancy at all: the flat is still owner-occupied, still billed, and the
+ * dropdown has nothing to say about it.
+ *
+ * THE LAST OF A PARTY IS REFUSED HERE, deliberately. Removing them changes what
+ * the flat IS, and that question carries others the dropdown asks and this
+ * route does not: does the flat keep being billed, who is liable now, is this a
+ * sale. A button that quietly emptied a flat would be answering them by
+ * omission.
+ */
+async function departResident(request, env, session, path) {
+  const id = Number(path.split('/')[4]);
+  const b = await readJson(request);
+
+  const target = await env.DB.prepare(
+    'SELECT id, name, flat, role, relationship, active FROM owners WHERE id = ?'
+  ).bind(id).first();
+  if (!target) return problem(404, 'DDP-AUTH-006', 'No such resident.');
+  if (!target.active) return problem(409, 'DDP-ADMIN-003', `${target.name} has already moved out.`);
+
+  const allowed = canEditResident({ actor: session.actor, target });
+  if (!allowed.ok) {
+    await reportError(env, 'DDP-ADMIN-014',
+                      { actor: session.actor.id, target: id, targetRole: target.role });
+    return problem(403, 'DDP-ADMIN-014', allowed.message);
+  }
+
+  const { results: people } = await env.DB.prepare(
+    'SELECT id, flat, name, relationship, active, role FROM owners WHERE flat = ?'
+  ).bind(target.flat).all();
+
+  const heir = successorFor(people ?? [], target);
+  if (!heir) {
+    return problem(409, 'DDP-ADMIN-003',
+      `${target.name} is the only ${target.relationship} of ${target.flat}. `
+      + 'Use the occupancy control on the flat instead — it asks what happens to the '
+      + 'billing, which removing the last one of them decides either way.');
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare('UPDATE owners SET active = 0, moved_out_at = ? WHERE id = ?').bind(now, id),
+    // Their unsettled bills go to the oldest account left in the household: a
+    // bill naming a deactivated row is invisible to the people who still owe
+    // it. Settled ones stay — that is the record of who paid.
+    env.DB.prepare(
+      `UPDATE bills SET owner_id = ? WHERE owner_id = ? AND status NOT IN ('paid', 'waived')`
+    ).bind(heir.id, id),
+  ]);
+  // Every session that account holds, gone with it.
+  await destroyAllSessionsFor(env, id);
+
+  await audit(env, session, 'resident.depart', {
+    id, flat: target.flat, relationship: target.relationship,
+    billsTo: heir.id, reason: String(b?.reason ?? '').slice(0, 200) || null,
+  });
+
+  return json({ departed: { id, name: target.name, flat: target.flat }, billsTo: heir.name });
 }
 
 async function patchResident(request, env, session, path) {

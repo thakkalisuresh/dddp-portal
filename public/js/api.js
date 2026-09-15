@@ -252,6 +252,8 @@ export const api = {
     periods:       ()        => request('GET',  '/api/admin/periods'),
     addResident:   (body)    => request('POST', '/api/admin/residents', body),
     updateResident:(id, b)   => request('PATCH', `/api/admin/residents/${id}`, b),
+    departResident:(id, reason) =>
+                               request('POST', `/api/admin/residents/${id}/depart`, { reason }),
     rosterPreview: (text)    => request('POST', '/api/admin/roster/preview', { text }),
     rosterImport:  (text)    => request('POST', '/api/admin/roster/import', { text }),
     rosterStatus:  ()        => request('GET',  '/api/admin/roster/status'),

@@ -104,7 +104,9 @@ function importView() {
         + 'Copy straight from a spreadsheet, or use commas. A line with only a '
         + 'flat number records it as vacant, which still gets a meter reading.'),
       el('p', { class: 'muted small' },
-        'A let flat needs two lines: one for the owner, one for the tenant.'),
+        'A let flat needs two lines: one for the owner, one for the tenant. '
+        + 'Joint owners get a line each — a flat holds up to three owners and two '
+        + 'tenants, and they share one bill, so each of them needs their own mobile.'),
       box,
       el('div', { style: 'padding-top:var(--s-2)' }, check)),
     ...(preview ? previewPanels() : []),

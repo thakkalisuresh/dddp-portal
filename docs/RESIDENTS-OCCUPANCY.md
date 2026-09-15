@@ -80,11 +80,34 @@ that is the record of who paid. When the LAST member of a household leaves, the
 bills stay with them: the flat is changing hands, and the incoming household
 must not inherit the outgoing one's debt.
 
-**What this does not yet do.** The occupancy dropdown and the roster still
-think one owner and one tenant per flat: they refuse rather than corrupt
-anything (a second owner is added on the Residents tab), but there is no
-control for removing ONE of three co-owners, and the console names a flat's
-first occupant only. Those are screens to design, not rules to decide.
+### The screens, after the model
+
+**One person leaving a flat somebody else still lives in** is not a change of
+occupancy — the flat is still owner-occupied and still billed — so the dropdown
+has nothing to say about it and never did. `POST /api/admin/residents/:id/depart`
+does that one thing: deactivate, end their sessions, hand their UNSETTLED bills
+to the oldest account left in their household, audit it. Settled bills stay
+theirs. The Residents tab draws it as **No longer lives here** on each person.
+
+**The last owner or the last tenant is refused there**, by the button (it is not
+drawn) and by the endpoint (409, naming the dropdown). Removing them changes
+what the flat IS, and that carries the questions the dropdown asks: does it keep
+being billed, who is liable now, is this a sale. A button that emptied a flat
+quietly would be answering them by omission.
+
+**The occupancy control still edits one owner and one tenant** — the
+first-registered of each, the same one `occupantOf` names on a bill. It now says
+so: with joint owners it names the others and points at their own rows. Widening
+that form to edit three people at once would duplicate what the person cards
+already do.
+
+**The flat card says what the flat holds and what is left** ("2 owners on this
+flat. Room for 1 owner and 2 tenants."), because the limit is otherwise only met
+as a refusal halfway through adding somebody.
+
+**The reading grid still names ONE resident per flat, deliberately.** That
+column is `bills.owner_id` — the person the bill will be raised against — and a
+list of three names there would describe something the bill does not do.
 
 ### `tenant-only`, and why it is visible
 
