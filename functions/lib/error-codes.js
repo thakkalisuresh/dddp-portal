@@ -166,6 +166,10 @@ export const ERROR_CODES = {
   'DDP-ADMIN-018': { severity: 'warn',  message: 'Bill edit awaiting approval could not be emailed to any admin' },
   'DDP-ADMIN-019': { severity: 'warn',  message: 'Payment reminder refused — already sent, still cooling, or spent' },
   'DDP-ADMIN-020': { severity: 'error', message: 'Payment reminder could not be emailed to the resident' },
+  // Three owner logins and two tenant ones per flat. Reported because the
+  // console should not offer the button past the limit: one of these is a
+  // screen that let an admin ask for something the building cannot hold.
+  'DDP-ADMIN-021': { severity: 'warn',  message: 'Resident refused — the flat already has as many logins of that party as it can hold' },
 
   // ── SYS ────────────────────────────────────────────────────────────────
   'DDP-SYS-001': { severity: 'fatal', message: 'Unhandled exception in a Worker route' },

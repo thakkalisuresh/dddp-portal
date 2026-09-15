@@ -41,6 +41,51 @@ the owner to touch — `occupantOf` simply stops finding a tenant and falls
 through. If a future change ever needs a second write there, it has reintroduced
 the thing 0011 rejected.
 
+## Households: three owner logins, two tenant ones
+
+Added 2026-09-15. The table above says "the owner" and "the tenant" in the
+singular, and the building is not singular: flats here are jointly owned, and a
+couple renting should not share one password to see what they owe. So a flat
+holds up to **three owner accounts** and up to **two tenant accounts** — five
+logins at the most, and each party is a HOUSEHOLD.
+
+**The bill still names one person.** `occupantOf` picks the first registered
+account of the occupying party — lowest id, sorted rather than left to whatever
+order the query returned — and generation binds that id to `bills.owner_id`.
+Attaching a bill to the flat instead is what migration 0003 closed: the buyer
+of 4A could read the seller's bills and open their payment screenshots.
+
+**What widened is the read.** `householdOf(people, viewer)` is the accounts
+active on the flat in the viewer's own party, and every reader matches on that
+set instead of on one id: the dashboard's bill and history, the pay button,
+`/api/bills/:id/intent`, proof upload, and `/api/proof/:id/image`. Three joint
+owners therefore see one bill, any of them can pay it, and each sees the
+receipt another uploaded. A later household never matches an earlier one's
+rows, so 0003's boundary is where it was.
+
+**The parties stay apart.** Owners and tenants on one flat are two households,
+which is what keeps a landlord reading the amount they are liable for while
+seeing none of their tenant's bank screenshots.
+
+**The limits are enforced twice**: `roomFor` refuses with a sentence an admin
+can act on (`DDP-ADMIN-021`, and the roster preview blocks the line), and the
+triggers in migration 0040 abort the write for any path that does not ask.
+Admin, superadmin and committee accounts do not count toward the cap — the
+treasurer is an owner living in a flat like anybody else.
+
+**When somebody leaves**, their unsettled bills re-point to the oldest account
+left in their household (`successorFor`), because a bill naming a deactivated
+account is invisible to the people who still owe it. Settled bills stay put —
+that is the record of who paid. When the LAST member of a household leaves, the
+bills stay with them: the flat is changing hands, and the incoming household
+must not inherit the outgoing one's debt.
+
+**What this does not yet do.** The occupancy dropdown and the roster still
+think one owner and one tenant per flat: they refuse rather than corrupt
+anything (a second owner is added on the Residents tab), but there is no
+control for removing ONE of three co-owners, and the console names a flat's
+first occupant only. Those are screens to design, not rules to decide.
+
 ### `tenant-only`, and why it is visible
 
 A flat with a tenant and no owner on record is reachable without anybody

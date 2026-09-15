@@ -718,6 +718,11 @@ Ownership changes: a flat is sold, or the builder hands one to a new buyer.
 | fn | `waLink` | A wa.me link needs bare digits with the country code and no '+'. |
 | const | `RELATIONSHIPS` |  |
 | fn | `isRelationship` |  |
+| const | `HOUSEHOLD_LIMITS` |  |
+| fn | `householdOf` |  |
+| fn | `householdIds` |  |
+| fn | `roomFor` |  |
+| fn | `successorFor` | Who inherits a departing person's unsettled bills. |
 | fn | `occupantOf` | Who is billed for this flat. |
 | fn | `landlordOf` |  |
 | fn | `isTenanted` |  |
@@ -1004,4 +1009,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-549 exports. 248 have no doc comment.
+554 exports. 252 have no doc comment.

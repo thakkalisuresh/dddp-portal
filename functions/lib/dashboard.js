@@ -10,7 +10,7 @@ import { buildUpiLinks, payTargetFor, manualPayment } from './upi.js';
 import { computeConsumption, meterDeltaAcrossChange, DEFAULT_CONVERSION } from './billing.js';
 import { applyLateFeeToBill } from './cron.js';
 import { istToday } from './time.js';
-import { billAccess, occupantOf, describeRelationship } from './tenancy.js';
+import { billAccess, occupantOf, householdIds, describeRelationship } from './tenancy.js';
 import { unreadNoticeCount } from './notices.js';
 
 const READING_HISTORY = 6;
@@ -76,10 +76,12 @@ export function shapeBill(bill, period, today = istToday()) {
 
 export async function dashboardPayload(env, subject, userAgent = '', origin = '') {
   const flat = subject.flat;
-  // Bills follow the PERSON, not the flat. After a sale the new owner must not
-  // see the previous owner's bills, and vice versa. Readings are different —
-  // a meter reading is a property fact and carries across.
-  const ownerId = subject.id;
+  // Bills follow the HOUSEHOLD, not the flat and not one person. After a sale
+  // the new owners must not see the previous owners' bills, which is why a
+  // bill names a person at all; but a flat's three joint owners answer for one
+  // bill together, so all three read the bill raised against any of them.
+  // Readings are different — a meter reading is a property fact and carries
+  // across every change of occupancy.
 
   // Everyone attached to this flat, so the tenancy rules can be applied. An
   // absent owner reads their TENANT's bills here, not their own, which is the
@@ -92,8 +94,16 @@ export async function dashboardPayload(env, subject, userAgent = '', origin = ''
 
   const access = billAccess({ viewer: subject, people });
   const occupant = occupantOf(people);
-  // A landlord is shown the occupant's bills; everyone else, their own.
-  const billsOf = access.reason === 'landlord' && occupant ? occupant.id : ownerId;
+  // A landlord is shown the occupying household's bills; everyone else, their
+  // own household's. Both are lists of ids: one bill, several people who may
+  // read it. An empty list would match every bill, so a viewer the rules place
+  // outside both households is given an id that cannot exist rather than a
+  // query with no restriction in it.
+  const billsOf = access.reason === 'landlord' && occupant
+    ? householdIds(people, occupant)
+    : householdIds(people, subject);
+  const readers = billsOf.length ? billsOf : [0];
+  const holders = readers.map(() => '?').join(', ');
 
   const [flatRow, billRow, readings, bills] = await Promise.all([
     env.DB.prepare('SELECT flat, floor FROM flats WHERE flat = ?').bind(flat).first(),
@@ -101,9 +111,9 @@ export async function dashboardPayload(env, subject, userAgent = '', origin = ''
     env.DB.prepare(
       `SELECT b.*, p.due_date, p.late_fee AS period_late_fee, p.status AS period_status
          FROM bills b JOIN periods p ON p.period = b.period
-        WHERE b.flat = ? AND (b.owner_id IS NULL OR b.owner_id = ?)
+        WHERE b.flat = ? AND (b.owner_id IS NULL OR b.owner_id IN (${holders}))
         ORDER BY b.period DESC LIMIT 1`
-    ).bind(flat, billsOf).first(),
+    ).bind(flat, ...readers).first(),
 
     // meter_changes is joined in because without it the number simply DROPS —
     // 19.145 one month, 0.412 the next — and the resident's only reasonable
@@ -126,9 +136,9 @@ export async function dashboardPayload(env, subject, userAgent = '', origin = ''
 
     env.DB.prepare(
       `SELECT period, consumption, rate_per_kg, total, status, late_fee
-         FROM bills WHERE flat = ? AND (owner_id IS NULL OR owner_id = ?)
+         FROM bills WHERE flat = ? AND (owner_id IS NULL OR owner_id IN (${holders}))
         ORDER BY period DESC LIMIT ?`
-    ).bind(flat, billsOf, BILL_HISTORY).all(),
+    ).bind(flat, ...readers, BILL_HISTORY).all(),
   ]);
 
   const period = billRow
