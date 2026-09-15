@@ -13,7 +13,7 @@
  */
 
 import { isFlat, whyNot, parseFlat, allFlats, floorOfFlat } from './building.js';
-import { occupantOf } from './tenancy.js';
+import { occupantOf, roomFor, HOUSEHOLD_LIMITS } from './tenancy.js';
 import { normaliseMobile } from './godedit.js';
 
 /** Column headers people actually paste, mapped to what we need. */
@@ -188,9 +188,16 @@ export function previewRoster(rows, { existingFlats = [], existingPeople = [] } 
     }
     seenMobile.set(digits, { flat, name });
 
+    // Three owner logins and two tenant ones, counted across the rows already
+    // in the database AND the rows above this one on the paste. Blocked rather
+    // than warned: the trigger in migration 0040 would abort the import
+    // mid-write, and a paste that fails at the database says far less about
+    // what to fix than a line number does.
     const household = [...(seenPerFlat.get(flat) ?? [])];
-    if (rel.value === 'tenant' && household.some((h) => h.relationship === 'tenant')) {
-      stop(`${flat} already has a tenant on this list. One meter, one bill.`);
+    const room = roomFor(household.map((h) => ({ ...h, active: 1 })), rel.value);
+    if (!room.ok) {
+      stop(`${flat} already has ${room.used} ${rel.value} logins on this list or on the `
+         + `register, and ${room.limit} is the most a flat can have.`);
       continue;
     }
     seenPerFlat.set(flat, [...household, { name, relationship: rel.value }]);
@@ -217,8 +224,16 @@ export function previewRoster(rows, { existingFlats = [], existingPeople = [] } 
         message: `${flat} has a tenant but no owner. Nobody would be liable if they left owing.`,
       });
     }
-    if (all.filter((p) => p.relationship === 'owner').length > 1) {
-      warnings.push({ flat, message: `${flat} has more than one owner listed. Only one is treated as liable.` });
+    // No warning for several owners any more: joint ownership is ordinary, and
+    // all of them read the one bill. What is worth saying is when a flat is
+    // brought in at its limit, because the next person to move in cannot be
+    // added until somebody is removed.
+    const owners = all.filter((p) => p.relationship === 'owner').length;
+    if (owners === HOUSEHOLD_LIMITS.owner) {
+      warnings.push({
+        flat,
+        message: `${flat} comes in with ${owners} owner logins, which is the most it can hold.`,
+      });
     }
   }
 

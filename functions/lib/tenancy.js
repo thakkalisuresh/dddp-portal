@@ -427,6 +427,87 @@ function present(people) {
   return (people ?? []).filter((p) => p.active);
 }
 
+/* ── households ───────────────────────────────────────────────────────────
+   A flat's bill is ONE bill and a flat has more than one login: up to three
+   owners and up to two tenants, because a jointly owned flat is normal and a
+   couple should not share a password to see what they owe.
+
+   A bill still names a PERSON in `owner_id` — attaching it to the flat alone
+   is what migration 0003 closed, when the buyer of 4A could read the seller's
+   bills and open their payment screenshots. What widens is the READ: the bill
+   is visible to that person's household, meaning the accounts active on the
+   same flat in the same party. A later household never matches an earlier
+   one's rows, so the boundary 0003 drew is where it was.
+
+   Two parties, never mixed: the owners of a flat are one household and its
+   tenants are another. That is what keeps a landlord out of their tenant's
+   screenshots while still showing them the amount they are liable for.     */
+
+/** The cap per flat, by party. Admin accounts sit outside it — see roomFor. */
+export const HOUSEHOLD_LIMITS = { owner: 3, tenant: 2 };
+
+/** Accounts that answer for a flat's bill alongside this person, including them. */
+export function householdOf(people, viewer) {
+  if (!viewer?.active) return [];
+  return present(people).filter((p) => p.relationship === viewer.relationship);
+}
+
+/** Ids for `owner_id IN (…)`. Never empty for an active viewer: they are in it. */
+export function householdIds(people, viewer) {
+  return householdOf(people, viewer).map((p) => p.id);
+}
+
+/**
+ * Whether one more account of this party will fit on the flat.
+ *
+ * Admins, superadmins and committee members do not count. A treasurer is an
+ * owner living in a flat like anybody else, and a building whose three joint
+ * owners include the treasurer must still be able to add the third owner.
+ */
+function counts(people, relationship) {
+  return present(people).filter(
+    (p) => p.relationship === relationship && (p.role ?? 'owner') === 'owner'
+  ).length;
+}
+
+export function roomFor(people, relationship) {
+  const limit = HOUSEHOLD_LIMITS[relationship];
+  if (!limit) return { ok: false, message: 'Relationship must be owner or tenant.' };
+
+  const used = counts(people, relationship);
+  if (used < limit) return { ok: true, used, limit };
+
+  return {
+    ok: false,
+    used,
+    limit,
+    message: relationship === 'owner'
+      ? `This flat already has ${limit} owner logins, which is the most it can have. `
+        + 'Remove one before adding another.'
+      : `This flat already has ${limit} tenant logins, which is the most it can have. `
+        + 'Remove one before adding another.',
+  };
+}
+
+/**
+ * Who inherits a departing person's unsettled bills.
+ *
+ * Their household, minus them. A bill pointing at a deactivated account is
+ * invisible to the people who still owe it — they are active, the bill's
+ * person is not, and no query would join the two. Returns null when the last
+ * member of a household leaves, which is a flat changing hands rather than a
+ * household losing a member: those bills stay where they are, and the incoming
+ * household must not inherit them.
+ */
+export function successorFor(people, leaver) {
+  const rest = present(people).filter(
+    (p) => p.id !== leaver.id && p.relationship === leaver.relationship
+  );
+  // Oldest account first, the same order that decides who a bill is raised
+  // against in the first place.
+  return rest.sort((a, b) => a.id - b.id)[0] ?? null;
+}
+
 /**
  * Who is billed for this flat.
  *
@@ -435,7 +516,11 @@ function present(people) {
  * and with nobody living there it is the person who owns it.
  */
 export function occupantOf(people) {
-  const here = present(people);
+  // Lowest id, not "whichever row the query returned first". With three owners
+  // on a flat this decides whose name a bill is raised against, and an
+  // unordered SELECT would move it between months. First registered wins, and
+  // their household sees the bill either way — see householdOf.
+  const here = present(people).slice().sort((a, b) => a.id - b.id);
   return here.find((p) => p.relationship === 'tenant')
       ?? here.find((p) => p.relationship === 'owner')
       ?? null;
@@ -466,8 +551,18 @@ export function billAccess({ viewer, people }) {
     return { amounts: false, proofs: false, canPay: false, reason: 'departed' };
   }
 
+  // OF THIS FLAT. The checks below read the viewer's party rather than their
+  // id, so what used to be proved by matching ids has to be said out loud:
+  // people is one flat's rows, and a viewer absent from it is unrelated to it.
+  if (!present(people).some((p) => p.id === viewer.id)) {
+    return { amounts: false, proofs: false, canPay: false, reason: 'unrelated' };
+  }
+
+  // The occupying HOUSEHOLD, not the one account the bill happens to name.
+  // Three joint owners share one bill; the two who are not named on it are as
+  // liable for it as the one who is, and were previously shown nothing.
   const occupant = occupantOf(people);
-  if (occupant && occupant.id === viewer.id) {
+  if (occupant && occupant.relationship === viewer.relationship) {
     return { amounts: true, proofs: true, canPay: true, reason: 'occupant' };
   }
 
@@ -475,8 +570,9 @@ export function billAccess({ viewer, people }) {
   // The first version checked `viewer.relationship === 'owner'` against a
   // tenanted flat, which let the owner of 5A read the bill amounts of every
   // let flat in the building.
-  const landlord = landlordOf(people);
-  if (landlord && landlord.id === viewer.id && isTenanted(people)) {
+  // Likewise by party: every owner of a let flat is liable for it, so all of
+  // them see the amount. None of them sees the tenant's screenshots.
+  if (viewer.relationship === 'owner' && isTenanted(people)) {
     return { amounts: true, proofs: false, canPay: false, reason: 'landlord' };
   }
 
