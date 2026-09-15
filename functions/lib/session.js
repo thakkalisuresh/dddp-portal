@@ -216,3 +216,69 @@ export const CREDENTIAL_ACTIONS = new Set([
 export function isBlockedWhileImpersonating(action) {
   return CREDENTIAL_ACTIONS.has(action);
 }
+
+/**
+ * What an account on a temporary password may do before choosing its own.
+ *
+ * The redirect to /password lived only in the browser, so the temporary
+ * password — the one an admin read out, or emailed, or that sat in a message
+ * thread — was a full login for anybody who called the API directly. The
+ * account's first act has to be replacing it, and the server is the only place
+ * that can insist.
+ *
+ * An ALLOWLIST, read on the method and path. `GET /api/me` is on it because the
+ * password page needs the name and email to prefill; `/api/onboard` and
+ * `/api/password` are how the state ends; the telemetry pair records nothing a
+ * resident can use. Everything else, reads included, waits.
+ *
+ * Only for a session's own account. An admin impersonating somebody who has not
+ * finished setting up is reading their screen, not holding their password.
+ */
+const FORCED_CHANGE_ROUTES = new Set([
+  'GET /api/me', 'POST /api/password', 'POST /api/onboard', 'POST /api/logout',
+  'POST /api/activity', 'GET /api/capture', 'POST /api/clicks',
+]);
+
+export function forcedChangeRefuses(session, method, path) {
+  if (!session || session.impersonating) return false;
+  if (!session.subject?.mustChangePassword) return false;
+  return !FORCED_CHANGE_ROUTES.has(`${method} ${path}`);
+}
+
+/**
+ * The one place impersonation's limits are enforced for every route.
+ *
+ * Rank is read off the ACTOR (see hasRole), so a superadmin viewing as a
+ * resident still clears the /api/admin and /api/god gates. Before this, "read
+ * only" meant the handful of resident handlers that remembered to ask — a
+ * view-as session could publish bills, change roles and hand over the
+ * superadmin, all attributed to a session whose subject was somebody else.
+ *
+ *  - Reads always pass. Looking is what impersonation is for.
+ *  - Leaving always passes: logout, and /api/god/exit.
+ *  - Read-only refuses every other write.
+ *  - Write mode exists to act AS the resident, so it refuses administration:
+ *    an admin who wants to change the building exits first, and the audit row
+ *    then names the admin rather than the flat they happened to be looking at.
+ *
+ * Returns a refusal message, or null to let the request through.
+ */
+const SAFE_METHODS = new Set(['GET', 'HEAD']);
+const ALWAYS_WHILE_IMPERSONATING = new Set([
+  'POST /api/logout', 'POST /api/god/exit', 'POST /api/activity', 'POST /api/clicks',
+]);
+
+export function impersonationRefuses(session, method, path) {
+  if (!session?.impersonating) return null;
+  if (SAFE_METHODS.has(method)) return null;
+  if (ALWAYS_WHILE_IMPERSONATING.has(`${method} ${path}`)) return null;
+  // The banner's "Allow writes" re-impersonates from inside the read-only
+  // session. It changes which view the actor holds, never the building, and
+  // the /api/god gate still insists on a superadmin behind it.
+  if (method === 'POST' && /^\/api\/god\/impersonate\/\d+$/.test(path)) return null;
+  if (!session.canWrite) return 'This is a read-only view. Exit it to make changes.';
+  if (path.startsWith('/api/admin/') || path.startsWith('/api/god/')) {
+    return 'Exit the resident view before changing anything for the building.';
+  }
+  return null;
+}

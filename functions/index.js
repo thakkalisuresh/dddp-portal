@@ -84,6 +84,7 @@ import { runBackup, backupHealth, driveConfigured, committeeFolderSeparate, isBa
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole, committeeMayUse,
+  forcedChangeRefuses, impersonationRefuses,
   RESIDENT_TTL_DAYS, SHARED_DEVICE_TTL_DAYS, IMPERSONATE_TTL_MIN,
 } from './lib/session.js';
 
@@ -170,6 +171,18 @@ export default {
 
       // ── authenticated ─────────────────────────────────────────────────
       if (!session) return problem(401, 'DDP-AUTH-004', 'Please log in.');
+
+      // Both before any route below, so no handler can forget them. See the
+      // two functions in session.js for what each lets through and why.
+      if (forcedChangeRefuses(session, request.method, path)) {
+        return problem(403, 'DDP-AUTH-020', 'Choose your own password first.');
+      }
+      const refusal = impersonationRefuses(session, request.method, path);
+      if (refusal) {
+        await reportError(env, 'DDP-AUTH-021',
+          { actor: session.actor.id, subject: session.subject.id, mode: session.mode, route });
+        return problem(403, 'DDP-AUTH-021', refusal);
+      }
 
       if (route === 'POST /api/logout') return logout(env, session);
       if (route === 'GET /api/me') return me(env, session, request);

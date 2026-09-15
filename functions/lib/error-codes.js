@@ -51,6 +51,12 @@ export const ERROR_CODES = {
   // path that flipped `active` without doing so. The session is ended either
   // way; the warning is how the missed path gets found.
   'DDP-AUTH-019': { severity: 'warn',  message: 'Session presented by a deactivated account — ended' },
+  // Not reported to the log: a page that fires a request or two before its
+  // own redirect to /password would otherwise write a row per visit.
+  'DDP-AUTH-020': { severity: 'warn',  message: 'Request refused — account must choose its own password first' },
+  // Reported. The UI hides write controls while viewing as someone, so one of
+  // these is either a missed control or somebody calling the API by hand.
+  'DDP-AUTH-021': { severity: 'warn',  message: 'Impersonated session attempted a write its mode does not allow' },
 
   // ── BILL ───────────────────────────────────────────────────────────────
   'DDP-BILL-001': { severity: 'error', message: 'Bill generation found no reading for an active flat' },

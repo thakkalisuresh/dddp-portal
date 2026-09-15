@@ -16,7 +16,7 @@ import { $, el, esc, setChildren, renderViewBanner, showError, foldedSection } f
 import { mobileField } from './mobile-field.js';
 import { ADMINISTRATOR } from './contact.js';
 import { money, kg, periodLabel, dayLabel } from './i18n.js';
-import { billingPanel } from './admin-billing.js';
+import { billingPanel, nextMonth } from './admin-billing.js';
 
 const main = $('#main');
 let me = null;

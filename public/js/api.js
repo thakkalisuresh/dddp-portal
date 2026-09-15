@@ -33,6 +33,11 @@ async function request(method, path, body) {
 
   if (!res.ok) {
     const err = data?.error ?? {};
+    // The server will not serve this account anything until it has its own
+    // password. Every page, not only the dashboard, should land there.
+    if (err.code === 'DDP-AUTH-020' && location.pathname !== '/password') {
+      location.href = '/password';
+    }
     throw new ApiError(res.status, err.code ?? 'UNKNOWN', err.message);
   }
   return data;

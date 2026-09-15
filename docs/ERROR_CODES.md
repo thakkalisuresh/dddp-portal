@@ -31,6 +31,8 @@ Ask the bot a code and it will explain it.
 | `DDP-AUTH-017` | warn | live | New password rejected — same as the password already on the account |
 | `DDP-AUTH-018` | warn | live | New password rejected — used before, still within the history depth |
 | `DDP-AUTH-019` | warn | live | Session presented by a deactivated account — ended |
+| `DDP-AUTH-020` | warn | live | Request refused — account must choose its own password first |
+| `DDP-AUTH-021` | warn | live | Impersonated session attempted a write its mode does not allow |
 
 ## MAIL
 
@@ -172,7 +174,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-107 codes across 11 domains — 12 fatal, 3 awaiting their call site, 3 retired.
+109 codes across 11 domains — 12 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.
