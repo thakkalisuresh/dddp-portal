@@ -62,6 +62,20 @@ describe('CSV that survives real resident data', () => {
     expect(toCsvValue(329.04)).toBe('329.04');
   });
 
+  it('defuses a cell a spreadsheet would run as a formula', () => {
+    expect(toCsvValue('=HYPERLINK("http://x","pay")')).toBe(`"'=HYPERLINK(""http://x"",""pay"")"`);
+    expect(toCsvValue('+cmd|x')).toBe("'+cmd|x");
+    expect(toCsvValue('-2+3')).toBe("'-2+3");
+    expect(toCsvValue('@SUM(A1)')).toBe("'@SUM(A1)");
+    expect(toCsvValue('\t=1')).toBe("'\t=1");
+  });
+
+  it('leaves mobiles and negative amounts as numbers', () => {
+    expect(toCsvValue('+919567791515')).toBe('+919567791515');
+    expect(toCsvValue(-150)).toBe('-150');
+    expect(toCsvValue('-12.5')).toBe('-12.5');
+  });
+
   it('renders null as empty, not as the word null', () => {
     expect(toCsvValue(null)).toBe('');
     expect(toCsvValue(undefined)).toBe('');
