@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "DD Diamond Park RWA \u2014 gas billing portal",
+  "description": "DD Diamond Park RWA — gas billing portal",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --define \"__RELEASE__:'$(git rev-parse --short HEAD)'\"",
@@ -16,6 +16,8 @@
     "errdoc": "node scripts/gen-error-docs.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "eslint .",
+    "check:migrations": "node scripts/check-migrations.mjs",
     "seed": "node scripts/seed-dev.mjs",
     "query": "node scripts/query.mjs",
     "build:pages": "node scripts/build-pages.mjs",
@@ -29,6 +31,8 @@
   },
   "devDependencies": {
     "esbuild": "^0.28.1",
+    "eslint": "^9.39.5",
+    "globals": "^15.15.0",
     "jsqr": "^1.4.0",
     "vitest": "^3.0.0",
     "wrangler": "^4.0.0"

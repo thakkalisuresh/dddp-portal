@@ -14,3 +14,12 @@ jobs:
       - run: npm test
       # Fails if docs/ERROR_CODES.md drifted from the registry.
       - run: npm run errdoc && git diff --exit-code docs/ERROR_CODES.md
+      # Undeclared names only — the bug class that parses, bundles and passes
+      # every test, then throws in a browser. See eslint.config.js.
+      - run: npm run lint
+      # The deployable itself, not only its parts. A broken import between
+      # functions/ modules fails here rather than on `deploy:pages`.
+      - run: npm run build:pages
+      # Every migration, executed, into an empty local D1, then
+      # foreign_key_check. Nothing ran them before a deploy did.
+      - run: npm run check:migrations

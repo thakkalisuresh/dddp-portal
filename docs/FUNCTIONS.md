@@ -657,6 +657,8 @@ Sessions carry actor_id (who really logged in) and subject_id (whose data is sho
 | fn | `committeeMayUse` | The committee member's exception to the admins-only gate on `/api/admin/*`. |
 | const | `CREDENTIAL_ACTIONS` | Credential changes are blocked while impersonating, even in write mode — they could lock the real resident out of their own account (plan §5.5). |
 | fn | `isBlockedWhileImpersonating` |  |
+| fn | `forcedChangeRefuses` |  |
+| fn | `impersonationRefuses` |  |
 
 ### `functions/lib/statement.js`
 
@@ -716,6 +718,11 @@ Ownership changes: a flat is sold, or the builder hands one to a new buyer.
 | fn | `waLink` | A wa.me link needs bare digits with the country code and no '+'. |
 | const | `RELATIONSHIPS` |  |
 | fn | `isRelationship` |  |
+| const | `HOUSEHOLD_LIMITS` |  |
+| fn | `householdOf` |  |
+| fn | `householdIds` |  |
+| fn | `roomFor` |  |
+| fn | `successorFor` | Who inherits a departing person's unsettled bills. |
 | fn | `occupantOf` | Who is billed for this flat. |
 | fn | `landlordOf` |  |
 | fn | `isTenanted` |  |
@@ -784,6 +791,7 @@ Billing — one flow from the price of gas to the published bill.
 
 | | Export | What it does |
 |---|---|---|
+| fn | `nextMonth` |  |
 | fn | `billingPanel` | The whole tab. |
 
 ### `public/js/api.js`
@@ -1001,4 +1009,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-546 exports. 245 have no doc comment.
+554 exports. 252 have no doc comment.

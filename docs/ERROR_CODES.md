@@ -31,6 +31,8 @@ Ask the bot a code and it will explain it.
 | `DDP-AUTH-017` | warn | live | New password rejected — same as the password already on the account |
 | `DDP-AUTH-018` | warn | live | New password rejected — used before, still within the history depth |
 | `DDP-AUTH-019` | warn | live | Session presented by a deactivated account — ended |
+| `DDP-AUTH-020` | warn | live | Request refused — account must choose its own password first |
+| `DDP-AUTH-021` | warn | live | Impersonated session attempted a write its mode does not allow |
 
 ## MAIL
 
@@ -156,6 +158,7 @@ Ask the bot a code and it will explain it.
 | `DDP-ADMIN-018` | warn | live | Bill edit awaiting approval could not be emailed to any admin |
 | `DDP-ADMIN-019` | warn | live | Payment reminder refused — already sent, still cooling, or spent |
 | `DDP-ADMIN-020` | error | live | Payment reminder could not be emailed to the resident |
+| `DDP-ADMIN-021` | warn | live | Resident refused — the flat already has as many logins of that party as it can hold |
 
 ## SYS
 
@@ -172,7 +175,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-107 codes across 11 domains — 12 fatal, 3 awaiting their call site, 3 retired.
+110 codes across 11 domains — 12 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

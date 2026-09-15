@@ -50,6 +50,7 @@ import {
   roleAsSeenBy,
   planHandover, outstandingFor,
   mergeTimeline, toIST, isRelationship, occupantOf, landlordOf, isTenanted,
+  householdIds, roomFor, successorFor,
   billAccess, describeRelationship, ADMINISTRATOR,
   planOccupancy, contactClash,
 } from './lib/tenancy.js';
@@ -84,6 +85,7 @@ import { runBackup, backupHealth, driveConfigured, committeeFolderSeparate, isBa
 import {
   createSession, resolveSession, destroySession, destroyAllSessionsFor,
   cookieHeader, clearCookieHeader, hasRole, committeeMayUse,
+  forcedChangeRefuses, impersonationRefuses,
   RESIDENT_TTL_DAYS, SHARED_DEVICE_TTL_DAYS, IMPERSONATE_TTL_MIN,
 } from './lib/session.js';
 
@@ -170,6 +172,18 @@ export default {
 
       // ── authenticated ─────────────────────────────────────────────────
       if (!session) return problem(401, 'DDP-AUTH-004', 'Please log in.');
+
+      // Both before any route below, so no handler can forget them. See the
+      // two functions in session.js for what each lets through and why.
+      if (forcedChangeRefuses(session, request.method, path)) {
+        return problem(403, 'DDP-AUTH-020', 'Choose your own password first.');
+      }
+      const refusal = impersonationRefuses(session, request.method, path);
+      if (refusal) {
+        await reportError(env, 'DDP-AUTH-021',
+          { actor: session.actor.id, subject: session.subject.id, mode: session.mode, route });
+        return problem(403, 'DDP-AUTH-021', refusal);
+      }
 
       if (route === 'POST /api/logout') return logout(env, session);
       if (route === 'GET /api/me') return me(env, session, request);
@@ -1161,13 +1175,34 @@ async function emailTempPassword(request, env, session, path) {
  * The bill is resolved through the SESSION's flat — a resident cannot log an
  * intent against someone else's bill by changing the id in the URL.
  */
+/**
+ * One of this person's household's bills, or nothing.
+ *
+ * The flat comes from the SESSION and the readers from the household, never
+ * from the URL: a bill id is a number anybody can type. Owners and tenants are
+ * separate households on the same flat, so an absent owner resolves nothing
+ * here and cannot pay their tenant's bill — which is the rule billAccess
+ * states and this is the half that enforces it for writes.
+ */
+async function billForHousehold(env, billId, subject, columns) {
+  const { results } = await env.DB.prepare(
+    'SELECT id, name, flat, relationship, active FROM owners WHERE flat = ?'
+  ).bind(subject.flat).all();
+  const readers = householdIds(results ?? [], subject);
+  if (!readers.length) return null;
+
+  const holders = readers.map(() => '?').join(', ');
+  return env.DB.prepare(
+    `SELECT ${columns} FROM bills
+      WHERE id = ? AND flat = ? AND (owner_id IS NULL OR owner_id IN (${holders}))`
+  ).bind(billId, subject.flat, ...readers).first();
+}
+
 async function logIntent(env, session, path) {
   const billId = Number(path.split('/')[3]);
 
-  const bill = await env.DB.prepare(
-    `SELECT id, flat, status, total FROM bills
-      WHERE id = ? AND flat = ? AND (owner_id IS NULL OR owner_id = ?)`
-  ).bind(billId, session.subject.flat, session.subject.id).first();
+  const bill = await billForHousehold(env, billId, session.subject,
+    'id, flat, status, total');
 
   if (!bill) return problem(404, 'DDP-PAY-001', 'That bill could not be found.');
 
@@ -1945,6 +1980,19 @@ async function postResident(request, env, session) {
     return problem(400, 'DDP-ADMIN-001', whyNot(flat) ?? `Flat ${flat} is not on the register.`);
   }
 
+  // A flat holds three owner logins and two tenant ones — joint owners and a
+  // couple renting, each with their own password rather than a shared one.
+  // Past that the roster stops describing the building, so it is refused here
+  // and again by a trigger in migration 0040.
+  const { results: onFlat } = await env.DB.prepare(
+    'SELECT id, flat, relationship, active, role FROM owners WHERE flat = ?'
+  ).bind(flat).all();
+  const room = roomFor(onFlat ?? [], relationship);
+  if (!room.ok) {
+    await reportError(env, 'DDP-ADMIN-021', { flat, relationship, used: room.used });
+    return problem(409, 'DDP-ADMIN-021', room.message);
+  }
+
   // mobile is the login id and email is where a reset code goes; a duplicate of
   // either quietly hands one person's account to another.
   for (const [field, value] of [['mobile', mobile], ['email', email]]) {
@@ -2433,14 +2481,15 @@ async function postTransfer(request, env, session) {
     return problem(400, 'DDP-ADMIN-009', 'That does not look like a mobile number.');
   }
 
-  const incoming = await env.DB.prepare(
-    `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, pw_iterations,
-                         must_change_pw, pw_expires_at, role, active, moved_in_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'owner', 1, ?, ?) RETURNING id`
-  ).bind(flat, String(b.name).trim(), mobile, b?.email ?? null, hash, salt, iterations,
-         tempPasswordExpiry(TEMP_PW_HOURS), now, now).first();
-
-  await env.DB.batch([
+  // ONE batch, and the outgoing owner goes out FIRST.
+  //
+  // Two reasons it is not three statements any more. A flat holds three owner
+  // logins, so on a jointly owned flat the incoming row is the fourth until
+  // the outgoing one is gone — inserted first, it is refused by the cap.
+  // And these were separate writes: a failure between them left the flat with
+  // both owners active, or with none, and the readers pick by id from whatever
+  // is there. Deactivate, end their sessions, then insert, all or nothing.
+  const [, , inserted] = await env.DB.batch([
     // Deactivated, never deleted: their bills, payments and comments must stay
     // attributable for the audit trail to mean anything.
     env.DB.prepare(
@@ -2449,7 +2498,14 @@ async function postTransfer(request, env, session) {
     // Ends their access immediately — the flat is not theirs any more.
     env.DB.prepare('DELETE FROM sessions WHERE actor_id = ? OR subject_id = ?')
       .bind(outgoing.id, outgoing.id),
+    env.DB.prepare(
+      `INSERT INTO owners (flat, name, mobile, email, pw_hash, pw_salt, pw_iterations,
+                           must_change_pw, pw_expires_at, role, active, moved_in_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'owner', 1, ?, ?) RETURNING id`
+    ).bind(flat, String(b.name).trim(), mobile, b?.email ?? null, hash, salt, iterations,
+           tempPasswordExpiry(TEMP_PW_HOURS), now, now),
   ]);
+  const incoming = inserted.results?.[0] ?? null;
 
   await audit(env, session, 'flat.transfer', {
     flat, from: outgoing.id, to: incoming.id, outstandingAtTransfer: outstanding.total,
@@ -2669,10 +2725,8 @@ async function uploadProof(request, env, session, ctx, path) {
   }
 
   // Resolved through the session's flat — not from the URL.
-  const bill = await env.DB.prepare(
-    `SELECT id, flat, period, total, status FROM bills
-      WHERE id = ? AND flat = ? AND (owner_id IS NULL OR owner_id = ?)`
-  ).bind(billId, session.subject.flat, session.subject.id).first();
+  const bill = await billForHousehold(env, billId, session.subject,
+    'id, flat, period, total, status');
   if (!bill) return problem(404, 'DDP-PAY-001', 'That bill could not be found.');
   if (bill.status === 'paid' || bill.status === 'waived') {
     return problem(409, 'DDP-PAY-003', 'This bill is already settled.');
@@ -2767,11 +2821,19 @@ async function proofImage(env, session, path) {
 
   if (!row) return problem(404, 'DDP-PROOF-005', 'That image could not be found.');
 
-  // Ownership is by PERSON. Matching on flat alone would hand the previous
-  // owner's payment screenshots to whoever buys the flat next.
+  // Ownership is by HOUSEHOLD. Matching on flat alone would hand the previous
+  // owner's payment screenshots to whoever buys the flat next; matching on one
+  // person hides a shared bill's receipt from the people who share it. Owners
+  // and tenants are separate households, so a landlord still sees none of
+  // their tenant's screenshots — the rule billAccess spells out.
   const uploader = row.owner_id ?? row.bill_owner_id;
-  const isOwner = uploader != null && uploader === session.subject.id;
-  if (!isOwner && !hasRole(session, 'admin')) {
+  const { results: people } = await env.DB.prepare(
+    'SELECT id, name, flat, relationship, active FROM owners WHERE flat = ?'
+  ).bind(session.subject.flat).all();
+  const mine = row.flat === session.subject.flat
+    && uploader != null
+    && householdIds(people ?? [], session.subject).includes(uploader);
+  if (!mine && !hasRole(session, 'admin')) {
     await reportError(env, 'DDP-ADMIN-004', { proofId, actor: session.actor.id });
     return problem(403, 'DDP-ADMIN-004', 'Not yours to view.');
   }
@@ -2785,7 +2847,10 @@ async function proofImage(env, session, path) {
     return problem(404, 'DDP-PROOF-005', 'That image is missing from storage.');
   }
 
-  if (!isOwner) await audit(env, session, 'proof.view', { proofId, flat: row.flat });
+  // An admin looking at somebody's bank screenshot is recorded; the household
+  // looking at its own receipt is not, exactly as before — what counts as
+  // "their own" is now the household rather than the one uploader.
+  if (!mine) await audit(env, session, 'proof.view', { proofId, flat: row.flat });
 
   return new Response(object.body, {
     headers: {
@@ -3657,6 +3722,29 @@ async function putOccupancy(request, env, session, path) {
       // access whatsoever" is not true of a row flipped to 0 while a phone in
       // somebody's pocket still holds a valid cookie.
       await destroyAllSessionsFor(env, step.id);
+
+      // Their unsettled bills move to whoever is left of their household.
+      // A bill names one person and their household reads it through that
+      // name; deactivating the named one would leave the people who still owe
+      // the money unable to see or pay it. Settled bills stay where they are —
+      // that is the record of who actually paid, and the person who left keeps
+      // it. Nobody left means the flat changed hands, and the incoming
+      // household must not inherit the outgoing one's debt: those stay too,
+      // for the committee to chase.
+      // Against who is left AFTER the plan, not who is here now. A plan that
+      // empties a flat deactivates every owner in one pass, and choosing from
+      // the current rows would hand the bills to somebody on their way out —
+      // or back to the first leaver, whose row this loop has already closed.
+      const leaving = new Set(plan.steps.filter((s) => s.op === 'deactivate').map((s) => s.id));
+      const staying = (people ?? []).filter((p) => !leaving.has(p.id));
+      const leaver = (people ?? []).find((p) => p.id === step.id);
+      const heir = leaver ? successorFor(staying, leaver) : null;
+      if (heir) {
+        statements.push(env.DB.prepare(
+          `UPDATE bills SET owner_id = ?
+            WHERE owner_id = ? AND status NOT IN ('paid', 'waived')`
+        ).bind(heir.id, step.id));
+      }
       continue;
     }
 
@@ -5482,7 +5570,7 @@ async function rosterPreview(request, env) {
   const body = await readJson(request);
   const [flats, people] = await Promise.all([
     env.DB.prepare('SELECT flat FROM flats').all(),
-    env.DB.prepare('SELECT flat, name, mobile, relationship, active FROM owners').all(),
+    env.DB.prepare('SELECT flat, name, mobile, relationship, active, role FROM owners').all(),
   ]);
 
   const { rows, detectedHeader, columns } = parseRoster(body?.text ?? '');
@@ -5498,7 +5586,7 @@ async function rosterImport(request, env, session) {
   const body = await readJson(request);
   const [flats, people] = await Promise.all([
     env.DB.prepare('SELECT flat FROM flats').all(),
-    env.DB.prepare('SELECT flat, name, mobile, relationship, active FROM owners').all(),
+    env.DB.prepare('SELECT flat, name, mobile, relationship, active, role FROM owners').all(),
   ]);
 
   // Re-run the preview server-side rather than trusting the client's copy.

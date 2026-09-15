@@ -163,9 +163,21 @@ describe('what the preview refuses to write', () => {
     expect(preview('4A\tA\tnot-a-number').blocked[0].reason).toMatch(/not a usable mobile/i);
   });
 
-  it('blocks two tenants on one meter', () => {
+  it('takes two tenants on one meter — a couple renting, two logins, one bill', () => {
     const p = preview('4B\tA\t9847011224\ttenant\n4B\tB\t9847011225\ttenant');
-    expect(p.blocked[0].reason).toMatch(/already has a tenant/i);
+    expect(p.blocked).toEqual([]);
+    expect(p.create).toHaveLength(2);
+  });
+
+  it('blocks the third tenant, and the fourth owner', () => {
+    const tenants = preview('4B\tA\t9847011224\ttenant\n4B\tB\t9847011225\ttenant\n4B\tC\t9847011226\ttenant');
+    expect(tenants.blocked[0].reason).toMatch(/2 is the most/i);
+
+    const owners = preview('4B\tA\t9847011224\towner\n4B\tB\t9847011225\towner\n'
+      + '4B\tC\t9847011226\towner\n4B\tD\t9847011227\towner');
+    expect(owners.blocked[0].reason).toMatch(/3 is the most/i);
+    // The three that fit still import: one bad line does not sink the paste.
+    expect(owners.create).toHaveLength(3);
   });
 
   it('blocks a relationship it does not recognise', () => {
