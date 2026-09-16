@@ -234,6 +234,11 @@
      cell's. The flex lives on an inner element instead. */
   .msg { font-size: var(--text-sm); vertical-align: middle; }
   .msg__row { display: flex; align-items: baseline; gap: var(--s-3); flex-wrap: wrap; }
+  /* A billed flat with nobody on file: shown, greyed, not enterable. */
+  .grid tr.row--nobody td { background: var(--paper); color: var(--ink-muted); }
+  .grid tr.row--nobody input:disabled { background: transparent; cursor: not-allowed; }
+  .grid tr.row--nobody .row { margin-top: var(--s-2); gap: var(--s-2); }
+  .grid tr.row--nobody [hidden] { display: none; }
   .msg__saved { font-family: var(--font-ui); font-size: var(--text-xs); white-space: nowrap; }
   .msg--error { color: var(--overdue); }
   .msg--warn  { color: var(--awaiting); }

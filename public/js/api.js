@@ -326,7 +326,10 @@ export const api = {
 
       const rows = [['flat', 'resident', 'previous', 'reading']];
       for (const f of grid.flats) {
-        rows.push([f.flat, clean(f.resident), f.previous ?? '', '']);
+        // A flat with nobody on file stays in the sheet, in walk order, but
+        // says so — the import refuses a reading for it (nobody-on-file).
+        const who = f.residentId == null ? 'NOBODY ON FILE - skip' : clean(f.resident);
+        rows.push([f.flat, who, f.previous ?? '', '']);
       }
 
       const csv = rows.map((r) => r.join(',')).join('\n');

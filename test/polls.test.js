@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   validatePoll, isYesNoPair, isClosed, midpoint, deliveryWarnings,
   canSeePoll, canVote, canManagePoll, canSeeCount, validateBallot,
-  optionsFrozen, tally, assertCanClose, assertCanVote, SENDS_PER_DAY,
+  optionsFrozen, tally, assertCanClose, assertCanVote, SENDS_PER_DAY, VOTING_FLATS_SQL,
 } from '../functions/lib/polls.js';
 
 const opts = (...labels) => labels.map((label) => ({ label }));
@@ -351,10 +351,10 @@ function fakeDb({ poll = OPEN_POLL, options = OPTIONS, votes = VOTES, distinctFl
   const batches = [];
   const runs = [];
   const pick = (sql) => {
-    // Not every statement takes a bind — `SELECT COUNT(*) FROM flats` is
+    // Not every statement takes a bind — the voting-flats COUNT is
     // prepared and read straight off, which is what D1 allows and what the
     // turnout denominator does.
-    if (sql.includes('FROM flats')) return [{ n: 89 }];
+    if (sql === VOTING_FLATS_SQL) return [{ n: 89 }];
     // Before the generic poll_votes branch: a COUNT reads a scalar, and
     // handing it the rows instead gives .n === undefined, which silently reads
     // as "nobody has voted".
@@ -667,5 +667,22 @@ describe('the notice behind a poll', () => {
     // for. If this had its own copy, that would be the case it got wrong.
     const absentOwner = { relationship: 'owner', role: 'resident' };
     expect(linkedNotice(row({ notice_scope: 'owners' }), absentOwner)).not.toBeNull();
+  });
+});
+
+describe('the turnout denominator', () => {
+  /**
+   * Flats someone can vote for, not flats being billed. `flats.active` is the
+   * billing switch, and it counted a billed flat with nobody on file (or only a
+   * tenant) while leaving out an owner-occupied flat taken off billing.
+   */
+  it('counts flats with a current, non-tenant resident — the same people canVote allows', () => {
+    expect(VOTING_FLATS_SQL).toMatch(/COUNT\(DISTINCT flat\)/);
+    expect(VOTING_FLATS_SQL).toMatch(/FROM owners/);
+    expect(VOTING_FLATS_SQL).toMatch(/active = 1/);
+    expect(VOTING_FLATS_SQL).toMatch(/relationship != 'tenant'/);
+    expect(VOTING_FLATS_SQL).not.toMatch(/FROM flats/);
+    expect(canVote({ relationship: 'tenant' })).toBe(false);
+    expect(canVote({ relationship: 'owner' })).toBe(true);
   });
 });

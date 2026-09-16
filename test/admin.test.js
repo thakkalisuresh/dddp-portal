@@ -77,6 +77,24 @@ describe('parsing a pasted month', () => {
     expect(parseReadings('4A\t5.817 m3', flats).rows[0].reading).toBe(5.817);
   });
 
+  it('refuses a flat with nobody on file, by the flat it names', () => {
+    // Sheet A keeps the row marked "NOBODY ON FILE - skip"; a number typed into
+    // it anyway is refused, not filled into the greyed-out row.
+    const { rows, errors } = parseReadings('4A\t5.817\n4c\t2.110', flats, { nobodyOnFile: ['4C'] });
+    expect(rows).toEqual([{ flat: '4A', reading: 5.817 }]);
+    expect(errors).toEqual([{ line: '4c\t2.110', flat: '4C', reason: 'nobody-on-file' }]);
+  });
+
+  it('refuses it from the template too, and skips it quietly when left blank', () => {
+    const text = 'flat,resident,previous,reading\n'
+      + '4A,Asha,5.000,5.817\n4C,NOBODY ON FILE - skip,2.000,\n';
+    expect(parseReadings(text, flats, { nobodyOnFile: ['4C'] }))
+      .toEqual({ rows: [{ flat: '4A', reading: 5.817 }], errors: [] });
+    const typed = text.replace('skip,2.000,', 'skip,2.000,2.500');
+    expect(parseReadings(typed, flats, { nobodyOnFile: ['4C'] }).errors[0].reason)
+      .toBe('nobody-on-file');
+  });
+
   it('never writes — it only ever returns a draft', () => {
     const result = parseReadings('4A\t5.817', flats);
     expect(Object.keys(result).sort()).toEqual(['errors', 'rows']);
@@ -300,7 +318,8 @@ describe('saveReadings refuses what a meter could not have shown', () => {
             }),
             all: async () => ({
               results: sql.includes('FROM flats')
-                ? [{ flat: '4A', active: 1 }, { flat: '4B', active: 1 }, { flat: '6G', active: 0 }]
+                ? [{ flat: '4A', active: 1, occupied: 1 }, { flat: '4B', active: 1, occupied: 1 },
+                   { flat: '6G', active: 0, occupied: 0 }, { flat: '4C', active: 1, occupied: 0 }]
                 : [],
             }),
           };
@@ -345,6 +364,13 @@ describe('saveReadings refuses what a meter could not have shown', () => {
     // Written happily before, then invisible: the grid only draws active flats.
     const err = await refuse([{ flat: '6G', reading: 21.9 }]);
     expect(err?.detail?.rejected).toEqual([{ flat: '6G', reason: 'not-billed' }]);
+  });
+
+  it('refuses a billed flat with nobody on file', async () => {
+    // The grid greys the row out; this is the same rule for a direct call, or
+    // a stale tab. Saved, it could only end in DDP-BILL-015 at publish.
+    const err = await refuse([{ flat: '4C', reading: 21.9 }]);
+    expect(err?.detail?.rejected).toEqual([{ flat: '4C', reason: 'nobody-on-file' }]);
   });
 
   it('refuses a reading below zero', async () => {

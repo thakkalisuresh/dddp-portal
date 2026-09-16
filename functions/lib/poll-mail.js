@@ -27,7 +27,7 @@ import { renderEmail, para, heading, figure, action, aside, SITE }
 import { deadlineText, deadlineShort } from './poll-text.js';
 // The same counting the portal does, so a letter and the screen can never
 // disagree about a published result.
-import { tally } from './polls.js';
+import { tally, VOTING_FLATS_SQL } from './polls.js';
 
 /** Twenty sends plus one token refresh is twenty-one. See the header. */
 export const DRAIN_SIZE = 20;
@@ -244,7 +244,7 @@ async function pollContent(env, pollIds) {
     env.DB.prepare(
       `SELECT id FROM polls WHERE id IN (${marks}) AND published_at IS NOT NULL`
     ).bind(...pollIds).all(),
-    env.DB.prepare('SELECT COUNT(*) AS n FROM flats WHERE active = 1').first(),
+    env.DB.prepare(VOTING_FLATS_SQL).first(),
   ]);
 
   for (const id of pollIds) out.set(id, { options: [], result: null });

@@ -239,6 +239,18 @@ export function assertCanVote(poll, viewer, now = new Date().toISOString()) {
    ═════════════════════════════════════════════════════════════════════════ */
 
 /**
+ * The denominator of "51 of 89 flats voted": flats somebody can vote for.
+ *
+ * NOT `flats.active`. That is the billing switch, and it disagrees with
+ * `canVote` both ways — a billed flat with nobody on file (or only a tenant)
+ * counts though nobody there can vote, and an owner-occupied flat taken off
+ * billing is left out though its owner can. One query, used by the screen and
+ * the results email alike, so the two never print different totals.
+ */
+export const VOTING_FLATS_SQL =
+  "SELECT COUNT(DISTINCT flat) AS n FROM owners WHERE active = 1 AND relationship != 'tenant'";
+
+/**
  * Who gets emailed about a poll: owners with an address, and nobody else.
  *
  * OWNERS ONLY, decided 2026-09-09 — an email is a call to act, and a tenant who
@@ -454,10 +466,8 @@ export async function getPoll(env, id, viewer, { now = new Date().toISOString() 
   if (canSeeCount(poll, viewer, now)) {
     const [{ results: votes }, total] = await Promise.all([
       env.DB.prepare('SELECT option_id, flat FROM poll_votes WHERE poll_id = ?').bind(id).all(),
-      // The denominator of "51 of 89 flats voted". Active flats only: a
-      // deactivated flat has nobody in it to vote, and counting it would make
-      // every poll look worse attended than it was.
-      env.DB.prepare('SELECT COUNT(*) AS n FROM flats WHERE active = 1').first(),
+      // The denominator of "51 of 89 flats voted" — see VOTING_FLATS_SQL.
+      env.DB.prepare(VOTING_FLATS_SQL).first(),
     ]);
     const counted = tally(options ?? [], votes ?? []);
     shaped.result = {
