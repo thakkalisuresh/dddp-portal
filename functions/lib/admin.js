@@ -459,9 +459,17 @@ export async function saveReadings(env, period, entries, actorId) {
    * failing the call outright would throw away every good reading typed
    * alongside a bad one, and the queue drops a 4xx rather than retrying it.
    */
-  const known = new Map(
-    ((await env.DB.prepare('SELECT flat, active FROM flats').all()).results ?? [])
-      .map((f) => [f.flat, f.active]));
+  const flatRows = (await env.DB.prepare(
+    `SELECT f.flat, f.active,
+            EXISTS (SELECT 1 FROM owners o WHERE o.flat = f.flat AND o.active = 1) AS occupied
+       FROM flats f`
+  ).all()).results ?? [];
+  const known = new Map(flatRows.map((f) => [f.flat, f.active]));
+  // NOBODY ON FILE is refused too, the same as the greyed-out row on the grid.
+  // Any person active in the flat is somebody `occupantOf` would bill, so
+  // "no active row" is exactly FLAT-BILLED-NO-OWNER — and a reading for that
+  // flat can only ever end in DDP-BILL-015 at publish.
+  const nobody = new Set(flatRows.filter((f) => !f.occupied).map((f) => f.flat));
 
   const rejected = [];
   const valid = [];
@@ -469,6 +477,7 @@ export async function saveReadings(env, period, entries, actorId) {
     const reading = Number(e.reading);
     const reason = !e.flat || !known.has(e.flat) ? 'unknown-flat'
       : !known.get(e.flat) ? 'not-billed'
+      : nobody.has(e.flat) ? 'nobody-on-file'
       : !Number.isFinite(reading) ? 'not-a-number'
       : reading < 0 ? 'negative'
       : null;
@@ -568,8 +577,11 @@ function headerColumns(line) {
  * heuristic still applies, because "4A 5.817" pasted out of a WhatsApp message
  * has no header and is how this was always used.
  */
-export function parseReadings(text, knownFlats) {
+export function parseReadings(text, knownFlats, { nobodyOnFile = [] } = {}) {
   const known = new Map(knownFlats.map((f) => [normaliseFlat(f), f]));
+  // Billed flats with nobody on file. Refused by name rather than filled in: the
+  // grid shows them greyed out, and saveReadings would refuse the value anyway.
+  const nobody = new Set(nobodyOnFile.map(normaliseFlat));
   const rows = [];
   const errors = [];
   const seen = new Set();
@@ -618,6 +630,7 @@ export function parseReadings(text, knownFlats) {
       }
       const key = normaliseFlat(label);
       if (!known.has(key)) { errors.push({ line, flat: label, reason: 'unknown-flat' }); continue; }
+      if (nobody.has(key)) { errors.push({ line, flat: known.get(key), reason: 'nobody-on-file' }); continue; }
       if (seen.has(key)) { errors.push({ line, flat: label, reason: 'duplicate' }); continue; }
       seen.add(key);
       rows.push({ flat: known.get(key), reading: Number(value) });
@@ -658,6 +671,7 @@ export function parseReadings(text, knownFlats) {
     const key = normaliseFlat(label);
 
     if (!known.has(key)) { errors.push({ line, flat: label, reason: 'unknown-flat' }); continue; }
+    if (nobody.has(key)) { errors.push({ line, flat: known.get(key), reason: 'nobody-on-file' }); continue; }
     if (seen.has(key)) { errors.push({ line, flat: label, reason: 'duplicate' }); continue; }
 
     seen.add(key);

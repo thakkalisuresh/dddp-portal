@@ -3945,11 +3945,19 @@ async function putReadings(request, env, session, url) {
 /** Parse only — the draft goes back for review, nothing is written. */
 async function parseImport(request, env, url) {
   const body = await readJson(request);
-  const flats = await env.DB.prepare('SELECT flat FROM flats WHERE active = 1').all();
-  const known = (flats.results ?? []).map((r) => r.flat);
-  const parsed = parseReadings(body?.text ?? '', known);
+  const flats = await env.DB.prepare(
+    `SELECT f.flat,
+            EXISTS (SELECT 1 FROM owners o WHERE o.flat = f.flat AND o.active = 1) AS occupied
+       FROM flats f WHERE f.active = 1`
+  ).all();
+  const rowsIn = flats.results ?? [];
+  const known = rowsIn.map((r) => r.flat);
+  const nobodyOnFile = rowsIn.filter((r) => !r.occupied).map((r) => r.flat);
+  const parsed = parseReadings(body?.text ?? '', known, { nobodyOnFile });
 
   for (const e of parsed.errors) {
+    // Expected, and already explained on screen — not a fault worth an alert.
+    if (e.reason === 'nobody-on-file') continue;
     if (e.reason === 'unknown-flat') await reportError(env, 'DDP-ADMIN-001', e);
     else await reportError(env, 'DDP-ADMIN-003', e);
   }

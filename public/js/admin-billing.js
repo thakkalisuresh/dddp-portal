@@ -113,8 +113,17 @@ const ownerless = () => grid.flats.filter((f) => f.residentId == null);
 /** Billable, and no address to send a bill to. The WhatsApp list, before publishing. */
 const noEmail = () => billable().filter((f) => !emails.get(f.residentId));
 
+/**
+ * How many meters the walk needs, and how many are in. Both over billable()
+ * only: a flat with nobody on file is greyed out on the grid and takes no
+ * reading, so counting it made "9 of 10 entered" a walk that could never end.
+ * The month is still blocked on it — step 3 says so — just not as a missing
+ * reading.
+ */
+const wantedCount = () => billable().length;
+
 const enteredCount = () =>
-  grid.flats.filter((f) => f.reading != null && (f.meterChange || f.reading >= f.previous)).length;
+  billable().filter((f) => f.reading != null && (f.meterChange || f.reading >= f.previous)).length;
 
 const totalKg = () => billable().reduce((sum, f) => sum + (consumptionOf(f) ?? 0), 0);
 const totalAmount = () => billable().reduce((sum, f) => sum + (amountOf(f) ?? 0), 0);
@@ -199,7 +208,7 @@ async function load() {
   // hand; anything else starts at the beginning.
   step = isPublished() ? 0
     : grid.rate == null ? 1
-      : enteredCount() < grid.total ? 2 : 3;
+      : enteredCount() < wantedCount() ? 2 : 3;
 }
 
 /* ── the rail ────────────────────────────────────────────────────────────── */
@@ -421,11 +430,11 @@ function previousMonth(p) {
 
 const readingsState = () => step === 2 ? 'open'
   : grid.rate == null ? 'waiting'
-    : enteredCount() === grid.total ? 'done' : 'ready';
+    : enteredCount() === wantedCount() ? 'done' : 'ready';
 
 const readingsSub = () => grid.rate == null
   ? 'Needs a rate first — a reading has nothing to price without one'
-  : `${enteredCount()} of ${grid.total} meters entered`;
+  : `${enteredCount()} of ${wantedCount()} meters entered`;
 
 function readingsBody() {
   const progressFill = el('span', { class: 'progress__fill' });
@@ -448,8 +457,9 @@ function readingsBody() {
     const rejected = cells.filter((i) => i.classList.contains('input--error'));
     const empty = cells.filter((i) => i.value === '' && !i.classList.contains('input--error'));
 
-    progressFill.style.width = `${grid.total ? Math.round((entered.length / grid.total) * 100) : 0}%`;
-    progressLabel.textContent = `${entered.length} of ${grid.total} entered`
+    const wanted = wantedCount();
+    progressFill.style.width = `${wanted ? Math.round((entered.length / wanted) * 100) : 0}%`;
+    progressLabel.textContent = `${entered.length} of ${wanted} entered`
       + (rejected.length ? ` · ${rejected.length} need${rejected.length > 1 ? '' : 's'} fixing` : '');
 
     const sub = root.querySelector('.step[data-step="2"] .step__sub');
@@ -459,7 +469,7 @@ function readingsBody() {
     // whatever is in the way — which with 89 rows is the whole problem. "1
     // still to enter" was both false and unactionable when the row in question
     // was full and refused.
-    const done = entered.length === grid.total && !rejected.length;
+    const done = entered.length === wanted && !rejected.length;
     const refused = rejected.map((i) => i.getAttribute('data-flat'));
     go.className = `btn btn--block${done ? '' : ' btn--quiet'}`;
     // NAMED WHEN A NAME HELPS, counted when it does not. At the start of a
@@ -499,6 +509,7 @@ function readingsBody() {
       el('span', { class: 'small muted' },
         'Saved as you type · held and retried if the signal drops')),
 
+    nobodyPanel(),
     importPanel(tbody, importOut, refresh),
     importOut,
 
@@ -580,7 +591,8 @@ function importPanel(tbody, out, refresh) {
       // its own evidence. Named individually only while the list is short
       // enough to act on.
       const headerless = parsed.errors.filter((e) => e.reason === 'no-header');
-      const rest = parsed.errors.filter((e) => e.reason !== 'no-header');
+      const nobody = parsed.errors.filter((e) => e.reason === 'nobody-on-file');
+      const rest = parsed.errors.filter((e) => !['no-header', 'nobody-on-file'].includes(e.reason));
 
       out.replaceChildren(...[
         el('span', {}, `${accepted} filled in as a draft. `),
@@ -589,6 +601,14 @@ function importPanel(tbody, out, refresh) {
               `${headerless.length} row${headerless.length > 1 ? 's' : ''} could not be read: `
               + 'the file has no header row. Its first line has to name the columns, '
               + 'as the template does — flat, resident, previous, reading. ')
+          : null,
+        // Refused on purpose, and said as the greyed-out row says it: the fix is
+        // a person on Residents, not a better number.
+        nobody.length
+          ? el('strong', { style: 'color:var(--overdue)' },
+              `${nobody.map((e) => e.flat).join(', ')} not saved: nobody is on file for `
+              + `${nobody.length > 1 ? 'these flats' : 'that flat'}. `
+              + 'Add a resident under Residents first. ')
           : null,
         rest.length
           ? el('strong', { style: 'color:var(--overdue)' },
@@ -668,6 +688,7 @@ function importPanel(tbody, out, refresh) {
 }
 
 function readingRow(f, refresh) {
+  if (f.residentId == null) return nobodyRow(f);
   // Validation message and save indicator are separate elements. Sharing one
   // cell meant "saved" overwrote "unusually high" — flagging the value amber
   // while deleting the sentence explaining why.
@@ -780,6 +801,91 @@ function readingRow(f, refresh) {
     el('td', {}, input),
     used,
     status);
+}
+
+/**
+ * A billed flat with nobody on file: shown, greyed out, and not enterable.
+ *
+ * Not dropped from the grid. `readingGrid` still returns it, so `grid.total`
+ * still counts it and generation still refuses the month — hiding the row would
+ * have been the only screen admitting the flat exists. The input carries no
+ * `data-flat`, so the progress count, the import fill and autosave all pass it
+ * by. A reading already saved is shown, read-only; the server refuses a new one
+ * (`nobody-on-file`).
+ *
+ * The two ways out sit on the row: put a person on it, or take it off billing
+ * with a reason. The second is patchFlat, which refuses while a reading exists
+ * for an open month — its message says so, and is shown here as-is.
+ */
+function nobodyRow(f) {
+  const input = el('input', {
+    class: 'input cell num', type: 'text', disabled: true,
+    value: f.reading ?? '', placeholder: '—',
+    'aria-label': `Flat ${f.flat} has nobody on file, so no reading is taken`,
+  });
+
+  const out = el('span', { class: 'small', role: 'status' });
+  const reason = el('input', {
+    class: 'input', type: 'text', placeholder: 'Why — unsold, vacant, …',
+    'aria-label': `Reason for no longer billing ${f.flat}`,
+  });
+  const confirm = el('button', {
+    class: 'btn btn--sm', type: 'button',
+    onclick: async () => {
+      if (!reason.value.trim()) {
+        out.className = 'small msg--error';
+        out.textContent = 'Give a reason first.';
+        return;
+      }
+      confirm.disabled = true;
+      try {
+        await api.admin.setFlatActive(f.flat, false, reason.value.trim());
+        await reload(2);
+      } catch (err) {
+        confirm.disabled = false;
+        showError(out, err);
+      }
+    },
+  }, `Stop billing ${f.flat}`);
+  const form = el('span', { class: 'row', hidden: true }, reason, confirm);
+  reason.addEventListener('input', () => { out.textContent = ''; });
+
+  const status = el('td', { class: 'msg' },
+    el('span', { class: 'msg__row' },
+      el('span', { class: 'chip chip--awaiting' }, 'Nobody on file'),
+      el('span', { class: 'small muted' }, 'Not billed until someone’s added.'),
+      el('a', { class: 'linkish', href: '#residents' }, 'Add a resident'),
+      el('button', {
+        class: 'linkish', type: 'button',
+        onclick: () => { form.hidden = !form.hidden; if (!form.hidden) reason.focus(); },
+      }, 'Stop billing')),
+    form, out);
+
+  return el('tr', { class: 'row--nobody' },
+    el('td', { class: 'flat' }, f.flat),
+    el('td', { class: 'prev' }, f.previous == null ? '—' : f.previous),
+    el('td', {}, input),
+    el('td', { class: 'used muted' }, '—'),
+    status);
+}
+
+/**
+ * The same fact as the greyed-out rows, said once above the table — a row 60
+ * lines down is easy to scroll past, and it is the one thing on this step that
+ * stops the month.
+ */
+function nobodyPanel() {
+  const stuck = ownerless();
+  if (!stuck.length) return null;
+  const names = stuck.map((f) => f.flat).join(', ');
+  return el('div', { class: 'note note--bad' },
+    el('b', {}, `${names} ${stuck.length > 1 ? 'have' : 'has'} nobody on file.`),
+    el('p', { style: 'margin:var(--s-2) 0 0' },
+      'This month can’t be published until '
+      + `${stuck.length > 1 ? 'each has' : 'it has'} a resident, or is taken off billing. `
+      + 'Readings for everyone else are saved either way. Add people under ',
+      el('a', { class: 'linkish', href: '#residents' }, 'Residents'),
+      '.'));
 }
 
 /**
@@ -951,11 +1057,11 @@ addEventListener('beforeunload', (event) => {
 
 const reviewState = () => isPublished() ? 'done'
   : step === 3 ? 'open'
-    : (grid.rate == null || enteredCount() !== grid.total) ? 'waiting' : 'ready';
+    : (grid.rate == null || enteredCount() !== wantedCount()) ? 'waiting' : 'ready';
 
 const reviewSub = () => isPublished()
   ? `Published · ${money(totalAmount())} across ${billable().length} flats`
-  : enteredCount() === grid.total
+  : enteredCount() === wantedCount()
     ? `${money(totalAmount())} across ${billable().length} flats, nothing sent yet`
     : 'Needs every meter in first';
 

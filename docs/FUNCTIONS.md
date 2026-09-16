@@ -514,6 +514,7 @@ Polls — a question the committee puts to the building.
 | fn | `tally` | The count, and the tie. |
 | fn | `assertCanClose` | Reject a state change that must not happen, loudly. |
 | fn | `assertCanVote` |  |
+| const | `VOTING_FLATS_SQL` | The denominator of "51 of 89 flats voted": flats somebody can vote for. |
 | fn | `queuePollMail` | Queue one mailing. |
 | fn | `queuePollReminder` | The reminder goes only to flats that have NOT voted. |
 | fn | `createPoll` |  |
@@ -1009,4 +1010,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-554 exports. 252 have no doc comment.
+555 exports. 252 have no doc comment.
