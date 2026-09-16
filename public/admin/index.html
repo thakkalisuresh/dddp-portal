@@ -221,6 +221,15 @@
     letter-spacing: .11em; text-transform: uppercase; color: var(--ink-muted); text-align: left;
   }
   .grid th.r, .grid td.amount { text-align: right; }
+  /* The cell is class="amount", which also matches the global .amount in
+     app.css — the 56px bill figure on a resident's dashboard. Down a column of
+     99 flats that turned every ₹0 into a headline and squeezed "Correct the
+     reading" onto three lines. A row figure is body-sized, like its neighbours. */
+  .grid td.amount { font-size: var(--text-base); line-height: inherit; letter-spacing: 0; }
+  .grid td.amount, .grid .amount__locked { font-weight: 500; }
+  /* The table already scrolls sideways on a phone; a button broken over three
+     lines only makes every row taller. */
+  .grid td .btn { white-space: nowrap; }
   .grid td { padding: var(--s-2) var(--s-4); border-bottom: 1px solid var(--border); height: 56px; }
   .grid .flat { font-family: var(--font-ui); font-weight: 600; width: 64px; }
   .grid .prev { color: var(--ink-muted); font-family: var(--font-ui); width: 96px; }
