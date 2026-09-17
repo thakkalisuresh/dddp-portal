@@ -41,8 +41,7 @@ export function trackPage(name = location.pathname) {
  * while it is in front, pauses in the background, and says goodbye on close.
  * Keeps functions/lib/presence.js's PING_EVERY_SEC.
  *
- * No input, scroll or content is looked at. The login page tells residents
- * that the portal notes their device and when they last used it.
+ * No input, scroll or content is looked at.
  */
 const PING_MS = 90_000;
 let pingTimer = null;
