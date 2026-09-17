@@ -54,6 +54,17 @@ export const TABLES = [
   // Batches before the reminders that point at them, since a restore reads
   // the bundle top to bottom.
   'reminder_batches', 'bill_reminders',
+  // Maintenance, parents first: a bill points at its quarter, a proof and an
+  // approval point at the bill. Every one of these is a financial record the
+  // association may be asked to produce years later, which is the whole reason
+  // the bundle exists.
+  'maint_quarters', 'maint_bills', 'maint_advances',
+  // The exemption lists are backed up for the same reason the late-fee columns
+  // on `owners` are: they are decisions the committee made, and a restore that
+  // lost them would silently start charging fees and blocking votes that
+  // somebody had explicitly excused.
+  'maint_fee_exemptions', 'voting_exemptions',
+  'maint_approval_requests', 'maint_approvals',
   'settings', 'alert_episodes', 'audit_log',
 ];
 

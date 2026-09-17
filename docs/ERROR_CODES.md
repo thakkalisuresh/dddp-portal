@@ -65,6 +65,17 @@ Ask the bot a code and it will explain it.
 | `DDP-BILL-019` | warn | live | Reading refused — unknown flat, a flat that is not billed, or a value below zero |
 | `DDP-BILL-020` | warn | live | Readings saved into a month that was never opened |
 
+## MAINT
+
+| Code | Severity | Status | Meaning |
+|---|---|---|---|
+| `DDP-MAINT-001` | error | live | Quarter label is not in the YYYY-Qn form |
+| `DDP-MAINT-002` | error | live | Maintenance date is not a valid YYYY-MM-DD |
+| `DDP-MAINT-003` | error | live | Maintenance basis is neither owner nor tenant |
+| `DDP-MAINT-004` | **fatal** | live | Quarter has no usable rate for that basis |
+| `DDP-MAINT-005` | error | live | Maintenance late fee or total is negative, fractional or not a number |
+| `DDP-MAINT-006` | error | live | Unknown mid-quarter occupancy change |
+
 ## PAY
 
 | Code | Severity | Status | Meaning |
@@ -175,7 +186,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-110 codes across 11 domains — 12 fatal, 3 awaiting their call site, 3 retired.
+116 codes across 12 domains — 13 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

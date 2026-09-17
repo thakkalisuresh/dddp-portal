@@ -106,6 +106,22 @@ export const ERROR_CODES = {
     message: 'Reading refused — unknown flat, a flat that is not billed, or a value below zero' },
   'DDP-BILL-020': { severity: 'warn',  message: 'Readings saved into a month that was never opened' },
 
+  // ── MAINT ──────────────────────────────────────────────────────────────
+  // Quarterly maintenance charges. A prefix of their own rather than more
+  // DDP-BILL codes: those are gas-shaped — meters, readings, conversion
+  // factors — and none of that vocabulary describes a flat rate. Keeping them
+  // apart is what makes a Telegram alert and the diagnostics screen readable at
+  // a glance, since the two billing streams run on different cadences against
+  // different bank accounts.
+  'DDP-MAINT-001': { severity: 'error', message: 'Quarter label is not in the YYYY-Qn form' },
+  'DDP-MAINT-002': { severity: 'error', message: 'Maintenance date is not a valid YYYY-MM-DD' },
+  'DDP-MAINT-003': { severity: 'error', message: 'Maintenance basis is neither owner nor tenant' },
+  // fatal, matching DDP-BILL-010's reasoning: a quarter with a missing or
+  // fractional rate would raise ninety-nine wrong bills that all look normal.
+  'DDP-MAINT-004': { severity: 'fatal', message: 'Quarter has no usable rate for that basis' },
+  'DDP-MAINT-005': { severity: 'error', message: 'Maintenance late fee or total is negative, fractional or not a number' },
+  'DDP-MAINT-006': { severity: 'error', message: 'Unknown mid-quarter occupancy change' },
+
   // ── MAIL ───────────────────────────────────────────────────────────────
   'DDP-MAIL-001': { severity: 'error', message: 'Reset email could not be sent' },
 
@@ -216,7 +232,7 @@ export const ERROR_CODES = {
 };
 
 /** Domains in registry order, for the generated docs. */
-export const DOMAINS = ['AUTH', 'MAIL', 'BILL', 'PAY', 'PROOF', 'RECON', 'NOTICE', 'POLL', 'ATTACH', 'ADMIN', 'SYS'];
+export const DOMAINS = ['AUTH', 'MAIL', 'BILL', 'MAINT', 'PAY', 'PROOF', 'RECON', 'NOTICE', 'POLL', 'ATTACH', 'ADMIN', 'SYS'];
 
 export function domainOf(code) {
   return code.split('-')[1];

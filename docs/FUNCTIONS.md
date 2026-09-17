@@ -441,6 +441,44 @@ Sending email, via the Gmail API.
 | fn | `mailToken` | A token to spend across a batch of sends. |
 | fn | `sendEmail` | Send one message. |
 
+### `functions/lib/maint.js`
+
+Quarterly maintenance charges.
+
+| | Export | What it does |
+|---|---|---|
+| const | `QUARTER_MONTHS` |  |
+| fn | `parseQuarter` |  |
+| fn | `isQuarterLabel` |  |
+| fn | `quarterOf` |  |
+| fn | `quarterRange` | The first and last calendar day of a quarter, inclusive. |
+| fn | `previousQuarter` |  |
+| fn | `nextQuarter` |  |
+| fn | `describeQuarter` | "Q4 2026 (Oct–Dec)" — the only form a resident ever sees. |
+| fn | `quarterHasEnded` | Has this quarter finished? Load-bearing for the voting rule: only an ENDED quarter's unpaid bill blocks a vote, so this is the line between "you are behind" and "you have not been given your ten days yet". |
+| const | `DEFAULT_OWNER_RATE` |  |
+| const | `DEFAULT_TENANT_RATE` |  |
+| const | `DEFAULT_LATE_FEE` |  |
+| const | `DUE_DAYS` |  |
+| fn | `isResidentOn` | Is this person in residence on `date`? LEASE_ENDS_AT IS DELIBERATELY NOT CONSULTED HERE, and a later reader will want to "fix" that. |
+| fn | `tenantOn` |  |
+| fn | `ownerOn` | The owner on record on a date, lowest id first. |
+| fn | `assessFlat` | Which rate a flat takes, and who carries the bill, ON THE ISSUE DATE. |
+| fn | `rateFor` | The amount for a basis, read from the quarter rather than from the constants above. |
+| fn | `previewQuarter` | What a quarter will actually bill, computed BEFORE anything is written — the maintenance twin of previewGeneration in lib/billing.js, and it earns its place for the same reason: the treasurer confirms one number they can check, rather than discovering the mistake in ninety-nine emails. |
+| fn | `dueDateFor` |  |
+| fn | `lateFeeDateFor` | The day the late fee lands: the day AFTER the due date. |
+| const | `SETTLED_STATUSES` | The statuses that mean the association has its money, or has agreed it never will. |
+| fn | `isSettled` |  |
+| fn | `maintLateFeeDecision` | Should this bill be charged a late fee today? The same shape as lateFeeDecision in lib/billing.js, and the same idempotency guard, because the cron that calls it runs nightly and Cloudflare may invoke it twice. |
+| fn | `applyMaintLateFee` |  |
+| fn | `advanceCovers` | Does this advance cover that quarter? Inclusive of the named quarter: "paid up to 2027-Q2" means Q2 is covered, which is how a resident writing the cheque understands it. |
+| fn | `furthestAdvance` |  |
+| fn | `flatVotingStatus` | May this flat vote in a poll created on this date? ONE VOTE PER FLAT, AND IT IS THE OWNER'S. |
+| fn | `isVotingExemptOn` | A committee-granted exemption from the voting block, with an end date for the same reason the late-fee exemption has one: a boolean set during a dispute is invisible policy two years later, and an end date makes forgetting a no-op. |
+| fn | `planOccupancyChange` | What happens to an outstanding maintenance bill when the occupancy changes. |
+| fn | `tenancyReadiness` | Can this quarter be scheduled, or is the tenancy data too stale to trust? The rate a flat takes depends entirely on whether a tenant row is active, and until now nothing in the portal could tell an active tenant from one who left eight months ago without anybody flipping the flag. |
+
 ### `functions/lib/notice-doc.js`
 
 A notice, as a document the committee can read without the portal.
@@ -1037,4 +1075,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-568 exports. 260 have no doc comment.
+599 exports. 275 have no doc comment.
