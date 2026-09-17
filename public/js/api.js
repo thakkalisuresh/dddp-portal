@@ -353,6 +353,9 @@ export const api = {
     handover:    (toOwnerId)   => request('POST', '/api/god/handover', { toOwnerId }),
     residents:   ()            => request('GET',  '/api/god/residents'),
     people:      ()            => request('GET',  '/api/god/people'),
+    sessions:    ()            => request('GET',  '/api/god/sessions'),
+    signOut:     (ownerId, sessionId = null) =>
+                   request('POST', '/api/god/sessions/signout', { ownerId, sessionId }),
     /** Destroys a withdrawn notice, its replies and its files. No undo. */
     purgeNotice: (id)          => request('DELETE', `/api/god/notices/${id}`),
     bills:       (params = '') => request('GET',  `/api/god/bills${params}`),

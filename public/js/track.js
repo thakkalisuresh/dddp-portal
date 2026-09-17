@@ -32,6 +32,53 @@ export function trackPage(name = location.pathname) {
   });
 
   maybeStartClickCapture();
+  startPresence();
+}
+
+/**
+ * Whether this page is open, in front, or gone — nothing else. The page view
+ * above already said "open"; from here the page repeats it every 90 seconds
+ * while it is in front, pauses in the background, and says goodbye on close.
+ * Keeps functions/lib/presence.js's PING_EVERY_SEC.
+ *
+ * No input, scroll or content is looked at. The login page tells residents
+ * that the portal notes their device and when they last used it.
+ */
+const PING_MS = 90_000;
+let pingTimer = null;
+let heard = false;
+
+function startPresence() {
+  const ping = () => presence('visible');
+  const resume = () => { clearInterval(pingTimer); pingTimer = setInterval(ping, PING_MS); };
+  if (document.visibilityState === 'visible') resume();
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { ping(); resume(); } else {
+      clearInterval(pingTimer);
+      presence('hidden');
+    }
+  });
+  // keepalive lets the request outlive the page; the cookie goes with it, which
+  // navigator.sendBeacon cannot promise.
+  addEventListener('pagehide', () => {
+    clearInterval(pingTimer);
+    fetch('/api/activity', {
+      method: 'POST', credentials: 'same-origin', keepalive: true,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'pagehide' }),
+    }).catch(() => {});
+  });
+  // Coming back from the back/forward cache is a page opening again.
+  addEventListener('pageshow', (e) => { if (e.persisted) { ping(); resume(); } });
+}
+
+function presence(kind) {
+  api.trackActivity({ kind }).then(() => { heard = true; }).catch((err) => {
+    // Signed out from elsewhere while this page sat open. Only after a report
+    // has worked, so a page that never had a session cannot loop to /login.
+    if (err?.status === 401 && heard) location.href = '/login';
+  });
 }
 
 /**

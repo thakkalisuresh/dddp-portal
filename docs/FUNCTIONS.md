@@ -531,6 +531,25 @@ Polls — a question the committee puts to the building.
 | const | `BALLOT_RETENTION_DAYS` | Ballots are pruned six months after the poll closed. |
 | fn | `pruneBallots` |  |
 
+### `functions/lib/presence.js`
+
+Who is signed in, and who has the portal open right now — the god-mode panel's arithmetic, kept out of the router so it can be tested without a database.
+
+| | Export | What it does |
+|---|---|---|
+| const | `PING_EVERY_SEC` |  |
+| const | `ONLINE_WINDOW_MIN` |  |
+| const | `AWAY_WINDOW_MIN` |  |
+| const | `TOUCH_EVERY_MIN` |  |
+| const | `LEAVE_GRACE_MS` | A pagehide that lands this soon after another write is the page being LEFT FOR the next one: the next page's "visible" can reach the server before the old page's goodbye, and must not be overwritten by it. |
+| const | `PRESENCE_KINDS` |  |
+| fn | `sessionIdOf` |  |
+| fn | `shouldTouch` |  |
+| fn | `stateOf` | One device's state: 'online', 'away' or 'idle' (signed in, not open). |
+| fn | `signedInPeople` | Live sessions plus owners → one entry per person, online first, then most recently seen. |
+| fn | `loginsToday` | Today's logins (IST), newest first. |
+| fn | `tokensToRevoke` | What a sign-out may remove. |
+
 ### `functions/lib/proof.js`
 
 Payment proofs.
@@ -866,6 +885,14 @@ The god-mode dashboard — is anyone actually using this portal? The activity lo
 |---|---|---|
 | fn | `renderDashboard` | Returns the container immediately and fills it when the numbers arrive. |
 
+### `public/js/god-sessions.js`
+
+Who is signed in — god mode only.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `renderSessions` |  |
+
 ### `public/js/i18n.js`
 
 Formatting for the things a resident reads: money, weight, months, dates.
@@ -1010,4 +1037,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-555 exports. 252 have no doc comment.
+568 exports. 260 have no doc comment.

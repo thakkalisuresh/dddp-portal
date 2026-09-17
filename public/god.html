@@ -146,6 +146,18 @@
                border-radius: 2px 0 0 2px; }
   .rank__num { position: relative; }
 
+  /* ── who's signed in ── */
+  #who-panel { padding: var(--s-4); gap: var(--s-3); }
+  .who { border-top: 1px solid var(--border); padding: var(--s-3) 0; }
+  .who__name { font-family: var(--font-ui); font-weight: 600; }
+  .who__device { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s-3);
+                 align-items: center; padding: var(--s-2) 0 0 var(--s-4); }
+  .who__login { display: grid; grid-template-columns: 48px 48px minmax(0, 1fr); gap: var(--s-3);
+                padding: var(--s-1) 0; border-top: 1px solid var(--border); align-items: baseline; }
+  @media (max-width: 560px) {
+    .who__device { grid-template-columns: 1fr; padding-left: 0; justify-items: start; }
+  }
+
   .flatlist { font-size: var(--text-sm); color: var(--ink-muted); line-height: 1.8; }
 </style>
 </head>

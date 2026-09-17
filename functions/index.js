@@ -5,7 +5,8 @@
  */
 
 import { json, problem, readJson, audit, rateLimit, clearRateLimit, guard, withSecurityHeaders } from './lib/http.js';
-import { reportError, assertAlerting, postToTelegram, requestContextFor } from './lib/errors.js';
+import { reportError, assertAlerting, postToTelegram, requestContextFor, describeDevice } from './lib/errors.js';
+import { signedInPeople, loginsToday, tokensToRevoke, PRESENCE_KINDS, LEAVE_GRACE_MS } from './lib/presence.js';
 import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex, derive,
          DEFAULT_ITERATIONS } from './lib/crypto.js';
 import { dashboardPayload } from './lib/dashboard.js';
@@ -575,6 +576,8 @@ export default {
         if (route === 'POST /api/god/capture') return setCapture(request, env, session);
         if (route === 'POST /api/god/handover') return handover(request, env, session);
         if (route === 'GET /api/god/people') return godPeople(env);
+        if (route === 'GET /api/god/sessions') return godSessions(env, session);
+        if (route === 'POST /api/god/sessions/signout') return godSignOut(request, env, session);
         if (request.method === 'DELETE' && /^\/api\/god\/notices\/\d+$/.test(path)) {
           return purgeNoticeRoute(env, session, Number(path.split('/')[4]), ctx);
         }
@@ -728,8 +731,11 @@ async function login(request, env, ctx) {
   // their own phone and being logged out monthly is the complaint we would get.
   const remember = body?.remember !== false;
   const ttl = (remember ? RESIDENT_TTL_DAYS : SHARED_DEVICE_TTL_DAYS) * 86_400;
-  const { token, maxAge } = await createSession(env, { actorId: owner.id, ttlSeconds: ttl });
-  await audit(env, { actor: { id: owner.id }, subject: { id: owner.id } }, 'login');
+  const { token, maxAge } = await createSession(env, {
+    actorId: owner.id, ttlSeconds: ttl, userAgent: request.headers.get('user-agent'),
+  });
+  await audit(env, { actor: { id: owner.id }, subject: { id: owner.id } }, 'login',
+              { device: describeDevice(request.headers.get('user-agent')) });
 
   return json(
     { flat: owner.flat, name: owner.name, role: owner.role, mustChangePassword: !!owner.must_change_pw },
@@ -2467,9 +2473,17 @@ async function deleteProof(env, session, path) {
  */
 async function recordActivity(request, env, session) {
   const b = await readJson(request);
+  // An open page saying where it is — not an event, so nothing goes into
+  // `activity`. See functions/lib/presence.js.
+  if (Object.hasOwn(PRESENCE_KINDS, b?.kind)) {
+    await reportPresence(env, session.token, PRESENCE_KINDS[b.kind]);
+    return json({ recorded: true });
+  }
   const kind = ['page', 'action', 'client-error'].includes(b?.kind) ? b.kind : 'action';
   const name = String(b?.name ?? '').slice(0, 120);
   if (!name) return json({ recorded: false });
+  // A page view is also the page saying it is open, which saves it a request.
+  if (kind === 'page') await reportPresence(env, session.token, 'online');
 
   await env.DB.prepare(
     `INSERT INTO activity (owner_id, actor_id, kind, name, detail, user_agent, at)
@@ -2482,6 +2496,82 @@ async function recordActivity(request, env, session) {
   ).run();
 
   return json({ recorded: true });
+}
+
+/**
+ * One device's presence. A goodbye is ignored when the row was written in the
+ * last few seconds: that is the next page announcing itself before the old
+ * page's pagehide arrived, and the device is not gone. Never allowed to fail
+ * the request — before migration 0041 the columns do not exist.
+ */
+async function reportPresence(env, token, state) {
+  const now = new Date();
+  try {
+    if (state === 'gone') {
+      const floor = new Date(now.getTime() - LEAVE_GRACE_MS).toISOString();
+      await env.DB.prepare(
+        `UPDATE sessions SET presence = 'gone'
+          WHERE token = ? AND (last_seen_at IS NULL OR last_seen_at < ?)`
+      ).bind(token, floor).run();
+    } else {
+      await env.DB.prepare('UPDATE sessions SET presence = ?, last_seen_at = ? WHERE token = ?')
+        .bind(state, now.toISOString(), token).run();
+    }
+  } catch { /* presence is a nicety */ }
+}
+
+/**
+ * Who is signed in, who has the portal open, and today's logins.
+ * Superadmin only, through the /api/god/ gate.
+ */
+async function godSessions(env, session) {
+  const now = new Date();
+  const [sessions, owners, logins] = await Promise.all([
+    env.DB.prepare('SELECT * FROM sessions WHERE expires_at > ?').bind(now.toISOString()).all(),
+    env.DB.prepare('SELECT id, flat, name, role, relationship FROM owners').all(),
+    // A day and a half back covers IST midnight whichever side of UTC's it is.
+    env.DB.prepare(
+      "SELECT actor_id, detail, at FROM audit_log WHERE action = 'login' AND at >= ?"
+    ).bind(new Date(now.getTime() - 36 * 3600_000).toISOString()).all(),
+  ]);
+  const byId = new Map((owners.results ?? []).map((o) => [o.id, o]));
+  const who = await signedInPeople({
+    sessions: sessions.results ?? [], owners: byId, currentToken: session.token, now,
+  });
+  return json({
+    generatedAt: toIST(now.toISOString()),
+    ...who,
+    logins: loginsToday({ logins: logins.results ?? [], owners: byId, now }),
+  });
+}
+
+/**
+ * Sign a person out of one device (`sessionId`) or all of them. Their god-mode
+ * views of somebody else go too, since those rows carry them as the actor.
+ */
+async function godSignOut(request, env, session) {
+  const b = await readJson(request);
+  const ownerId = Number(b?.ownerId);
+  const sessionId = b?.sessionId ? String(b.sessionId) : null;
+  if (!Number.isInteger(ownerId)) return problem(400, 'DDP-ADMIN-003', 'Choose someone to sign out.');
+
+  const owner = await env.DB.prepare('SELECT id, flat, name FROM owners WHERE id = ?')
+    .bind(ownerId).first();
+  if (!owner) return problem(404, 'DDP-ADMIN-001', 'No such person.');
+
+  const live = await env.DB.prepare(
+    'SELECT token FROM sessions WHERE actor_id = ? AND expires_at > ?'
+  ).bind(ownerId, new Date().toISOString()).all();
+  const verdict = await tokensToRevoke({
+    sessions: live.results ?? [], sessionId, currentToken: session.token,
+  });
+  if (verdict.error) return problem(409, 'DDP-ADMIN-003', verdict.error);
+
+  for (const token of verdict.tokens) await destroySession(env, token);
+  await audit(env, session, 'god.signout', {
+    ownerId, flat: owner.flat, devices: verdict.tokens.length, scope: sessionId ? 'one' : 'all',
+  });
+  return json({ signedOut: verdict.tokens.length });
 }
 
 /** The whole story, newest first: actions, page views and errors in one list. */
@@ -4405,6 +4495,7 @@ async function impersonate(request, env, session, path) {
     subjectId: target.id,
     mode,
     ttlSeconds: IMPERSONATE_TTL_MIN * 60,
+    userAgent: request.headers.get('user-agent'),
   });
   await audit(env, session, 'impersonate.start', { subject: target.id, flat: target.flat, mode });
 

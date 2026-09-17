@@ -17,6 +17,7 @@
 
 import { api, ApiError } from './api.js';
 import { renderDashboard } from './god-dash.js';
+import { renderSessions } from './god-sessions.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
 import { $, el, esc, renderViewBanner, showError, setChildren, askFirst } from './ui.js';
@@ -28,6 +29,7 @@ let filters = { flat: '', kind: '', q: '', since: '' };
 // the timeline search re-renders the page on every keystroke, and a dashboard
 // rebuilt each time would re-run its aggregate query on every letter.
 let dash = null;
+let who = null;
 
 trackPage('/god');
 init();
@@ -45,6 +47,7 @@ async function init() {
     renderViewBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
     renderNav(me, '/god');
     dash = renderDashboard();
+    who = renderSessions();
     await load();
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) { location.href = '/login'; return; }
@@ -77,6 +80,7 @@ function render(rows, generatedAt) {
 
   setChildren(main,
     dash,
+    who,
     controls(),
     el('p', { class: 'label', style: 'padding-top:var(--s-4)' }, 'Activity log'),
     filterBar(),
