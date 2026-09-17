@@ -103,6 +103,41 @@ function render(me) {
         } catch (err) { showError(pwStatus, err); }
       },
     }, 'Change password'),
-    el('p', { class: 'small muted' }, "You'll be signed out on every device.")
+    el('p', { class: 'small muted' }, "You'll be signed out on every device."),
+    ...godSwitch(me)
   );
+}
+
+/**
+ * The superadmin's switch for the God button, folded away at the foot of the
+ * page. Absent for everybody else, and while viewing as a resident — /api/me
+ * only sends `godNav` to the superadmin's own session.
+ */
+function godSwitch(me) {
+  // An array, spread into replaceChildren — which prints a bare null as text.
+  if (me.role !== 'superadmin' || me.godNav === undefined) return [];
+  const status = el('div');
+  const box = el('input', { type: 'checkbox', id: 'god-nav', checked: me.godNav || null });
+  box.addEventListener('change', async () => {
+    box.disabled = true;
+    try {
+      const { godNav } = await api.god.setNav(box.checked);
+      me.godNav = godNav;
+      renderNav(me, '/profile');
+      status.replaceChildren(el('div', { class: 'note note--good' },
+        godNav ? 'God mode is back in the menu.' : 'God mode is hidden from the menu.'));
+    } catch (err) {
+      box.checked = !box.checked;
+      showError(status, err);
+    } finally { box.disabled = false; }
+  });
+
+  return [el('details', { style: 'margin-top:var(--s-6)' },
+    el('summary', { class: 'small muted' }, 'Superadmin'),
+    el('div', { class: 'stack', style: 'margin-top:var(--s-3)' },
+      status,
+      el('label', { class: 'checkline', for: 'god-nav' }, box,
+        el('span', {}, 'Show God mode in the menu',
+          el('span', { class: 'checkline__hint' },
+            'Hides the button only. God mode still opens at /god.')))))];
 }

@@ -350,6 +350,7 @@ export const api = {
     timeline:    (params = '') => request('GET', `/api/god/timeline${params}`),
     clicks:      (params = '') => request('GET', `/api/god/clicks${params}`),
     setCapture:  (on, hours)   => request('POST', '/api/god/capture', { on, hours }),
+    setNav:      (on)          => request('POST', '/api/god/nav', { on }),
     handover:    (toOwnerId)   => request('POST', '/api/god/handover', { toOwnerId }),
     residents:   ()            => request('GET',  '/api/god/residents'),
     people:      ()            => request('GET',  '/api/god/people'),

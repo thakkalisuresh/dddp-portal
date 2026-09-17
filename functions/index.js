@@ -573,6 +573,7 @@ export default {
         if (route === 'GET /api/god/clicks') return clickLog(env, url);
         if (route === 'GET /api/god/export') return exportLogs(env, session, url);
         if (route === 'POST /api/god/capture') return setCapture(request, env, session);
+        if (route === 'POST /api/god/nav') return setGodNav(request, env, session);
         if (route === 'POST /api/god/handover') return handover(request, env, session);
         if (route === 'GET /api/god/people') return godPeople(env);
         if (request.method === 'DELETE' && /^\/api\/god\/notices\/\d+$/.test(path)) {
@@ -772,6 +773,12 @@ async function me(env, session, request) {
     // the letter never reaches, and the warning is about delivery.
     ...(hasRole(session, 'committee')
       ? { mailableOwners: await mailableOwnerCount(env) }
+      : {}),
+    // Whether the God button is drawn. The superadmin's own switch on the Me
+    // page; it hides the button and nothing else — /god and /api/god/* stay
+    // exactly as reachable as they were.
+    ...(session.subject.role === 'superadmin' && !session.impersonating
+      ? { godNav: await godNavShown(env) }
       : {}),
     impersonation: session.impersonating
       ? { active: true, by: session.actor.name, canWrite: session.canWrite }
@@ -2100,7 +2107,7 @@ async function patchResident(request, env, session, path) {
   // log has to say what an admin changed a number FROM, or a resident locked
   // out by a corrected typo leaves no record of the number that used to work.
   const target = await env.DB.prepare(
-    'SELECT id, name, flat, role, email, mobile FROM owners WHERE id = ?'
+    'SELECT id, name, flat, role, email, mobile, relationship, active FROM owners WHERE id = ?'
   ).bind(id).first();
   if (!target) return problem(404, 'DDP-AUTH-006', 'No such resident.');
 
@@ -2164,6 +2171,20 @@ async function patchResident(request, env, session, path) {
     if (!verdict.ok) {
       await reportError(env, 'DDP-ADMIN-006', { id, newRole: b.role, count: count?.n });
       return problem(409, 'DDP-ADMIN-006', verdict.message);
+    }
+    // Back to plain owner means counting toward the flat's logins again —
+    // admins and committee are left out of the 3+2 cap. A full flat would have
+    // the trigger in 0040 abort the UPDATE as a bare 500; say it in words.
+    if (b.role === 'owner' && target.role !== 'owner' && target.active) {
+      const { results: onFlat } = await env.DB.prepare(
+        'SELECT id, flat, relationship, active, role FROM owners WHERE flat = ?'
+      ).bind(target.flat).all();
+      const room = roomFor((onFlat ?? []).filter((p) => p.id !== id), target.relationship);
+      if (!room.ok) {
+        await reportError(env, 'DDP-ADMIN-021', { id, flat: target.flat, newRole: b.role });
+        return problem(409, 'DDP-ADMIN-021',
+          `${target.name} cannot go back to a plain ${target.relationship}: ${room.message}`);
+      }
     }
     if (b.role !== target.role) changes.role = { from: target.role, to: b.role };
     fields.push('role = ?'); values.push(b.role);
@@ -2653,6 +2674,28 @@ async function setCapture(request, env, session) {
 
   await audit(env, session, turnOn ? 'capture.on' : 'capture.off', { hours: turnOn ? hours : null });
   return json({ on: turnOn, expiresAt: turnOn ? expiresAt : null, hours: turnOn ? hours : null });
+}
+
+/**
+ * The superadmin's switch for the God button. Stored as a setting rather than
+ * on the owners row: there is one superadmin, and no migration for a
+ * preference. Absent means shown, so nothing vanished on the day this shipped.
+ */
+async function godNavShown(env) {
+  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'god_nav'").first();
+  return row?.value !== 'off';
+}
+
+async function setGodNav(request, env, session) {
+  const body = await readJson(request);
+  const on = body?.on !== false;
+  await env.DB.prepare(
+    `INSERT INTO settings (key, value, set_by, set_at) VALUES ('god_nav', ?, ?, ?)
+     ON CONFLICT (key) DO UPDATE SET value = excluded.value,
+                                     set_by = excluded.set_by, set_at = excluded.set_at`
+  ).bind(on ? 'on' : 'off', session.actor.id, new Date().toISOString()).run();
+  await audit(env, session, on ? 'godnav.on' : 'godnav.off', {});
+  return json({ godNav: on });
 }
 
 async function clickLog(env, url) {
