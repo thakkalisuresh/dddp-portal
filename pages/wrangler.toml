@@ -54,6 +54,19 @@ bucket_name = "dddp-archive"
 [vars]
 UPI_VPA = "qr.ddwelfare@sib"
 UPI_PAYEE = "DD Diamond Park RWA"
+MAINT_PAYEE_MODE = "account"
+MAINT_PAYEE_NAME = "DD Diamond Park RWA"
+# MAINTENANCE PAYEE. Mode is "account" until the bank issues a UPI ID for the
+# maintenance account, then "upi". The address itself is NOT here and must never
+# be: MAINT_ACCOUNT_NUMBER, MAINT_IFSC and MAINT_UPI_VPA are SECRETS, set with
+# `wrangler pages secret put`, because this repository is public. In account
+# mode lib/upi.js assembles <account>@<IFSC>.ifsc.npci at runtime, so neither
+# half is ever written down anywhere but the secret store. A test asserts these
+# files do not contain them.
+#
+# MAINT_PAYEE_NAME is a PLACEHOLDER. The committee is still deciding between
+# this and the bank's full registered name, and whichever they pick has to match
+# what a resident's UPI app shows them or the payment looks wrong.
 # MUST match ../wrangler.toml — see the note there. This is the copy that
 # matters for residents: the site runs here, the cron Worker runs there, and
 # both hash against the same D1.

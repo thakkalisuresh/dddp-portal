@@ -318,6 +318,7 @@ Self-checks — the building's invariants, written down as assertions.
 | fn | `runChecks` | An empty table and an unreadable one are NOT the same thing. |
 | fn | `summarise` |  |
 | fn | `toMarkdown` | Markdown, because the destination is a chat window. |
+| fn | `checkMaintPayee` | Is the maintenance payee actually configured? WHY THIS IS A `fail` AND NOT A `warn`. |
 
 ### `functions/lib/digest.js`
 
@@ -440,6 +441,47 @@ Sending email, via the Gmail API.
 | fn | `buildRawMessage` | RFC 2822, base64url. |
 | fn | `mailToken` | A token to spend across a batch of sends. |
 | fn | `sendEmail` | Send one message. |
+
+### `functions/lib/maint-cron.js`
+
+The maintenance quarter's life, as scheduled work: draft, confirm, issue, charge the fee.
+
+| | Export | What it does |
+|---|---|---|
+| const | `DRAFT_LEAD_DAYS` | How far ahead a draft appears. |
+| fn | `draftDateFor` |  |
+| fn | `ensureDraft` | Create the draft for the next quarter, if it is time and it does not exist. |
+| fn | `confirmRecipients` | Who gets asked to confirm the quarter: every admin EXCEPT whoever scheduled the previous one. |
+| fn | `confirmEmail` |  |
+| fn | `remindToConfirm` | Ask the admins to confirm, at most once a night, and only while it is still a draft. |
+| fn | `flatsWithPeople` |  |
+| fn | `scheduleQuarter` | Confirm a quarter: record the issue date, fix the rates, and record what the admin was looking at when they did. |
+| fn | `issueQuarter` | Raise the quarter's bills and queue the telling of it, as one act. |
+| fn | `applyMaintLateFees` | Charge the quarter's late fees. |
+| fn | `applyLateFeeToMaintBill` | Charge ONE bill, now, if it is due one. |
+| fn | `queueDueLetters` | Queue the two reminders that fall between issuing and the due date. |
+| fn | `runMaintenance` | The maintenance half of the 08:30 run: draft, remind, issue, queue. |
+
+### `functions/lib/maint-mail.js`
+
+The maintenance outbox: four letters per bill, and the drain that sends them.
+
+| | Export | What it does |
+|---|---|---|
+| const | `PLACEHOLDER_COPY` | A flag, not a comment, so nothing ships by accident. |
+| const | `DRAIN_SIZE` |  |
+| const | `MAX_ATTEMPTS` |  |
+| const | `MAIL_KINDS` |  |
+| fn | `permanentFailure` | Is this failure worth trying again? Identical rule to `announce.js`, and deliberately a copy rather than an import: it is four lines, and the alternative is one module reaching into another's retry policy so that changing gas's quietly changes maintenance's. |
+| fn | `issuedEmail` | Letter 1 — the bill exists. |
+| fn | `dueSoonEmail` |  |
+| fn | `dueEmail` |  |
+| fn | `overdueEmail` | Letter 4 — the fee has landed, and possibly the vote with it. |
+| fn | `letterFor` |  |
+| fn | `ccFor` | The Cc list for one bill: the rest of the household. |
+| fn | `mailCounts` |  |
+| fn | `drainMaintMail` | Send up to `limit` queued letters. |
+| fn | `sweepMaintMail` | The nightly sweep. |
 
 ### `functions/lib/maint.js`
 
@@ -821,6 +863,11 @@ UPI deep links.
 | fn | `queryString` | Query string with spaces as %20, not '+'. |
 | fn | `stampFor` | The date stamp residents see on their bank statement: 09_08_26. |
 | fn | `buildUpiLinks` |  |
+| fn | `maintPayeeMode` |  |
+| fn | `maintPayee` | The address residents actually pay, and what to show beside it. |
+| fn | `maintNote` | The note that lands on the bank statement: `(2B_MAINT_Q4_26)`. |
+| fn | `buildMaintUpiLinks` | The pay links for a maintenance bill. |
+| fn | `manualMaintPayment` |  |
 | fn | `manualPayment` |  |
 | fn | `payTargetFor` |  |
 
@@ -1075,4 +1122,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-599 exports. 275 have no doc comment.
+632 exports. 287 have no doc comment.

@@ -75,6 +75,8 @@ Ask the bot a code and it will explain it.
 | `DDP-MAINT-004` | **fatal** | live | Quarter has no usable rate for that basis |
 | `DDP-MAINT-005` | error | live | Maintenance late fee or total is negative, fractional or not a number |
 | `DDP-MAINT-006` | error | live | Unknown mid-quarter occupancy change |
+| `DDP-MAINT-007` | error | live | Maintenance quarter does not exist |
+| `DDP-MAINT-008` | warn | live | Maintenance quarter is not in a state that allows this |
 
 ## PAY
 
@@ -186,7 +188,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-116 codes across 12 domains — 13 fatal, 3 awaiting their call site, 3 retired.
+118 codes across 12 domains — 13 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

@@ -10,15 +10,37 @@
  * index, and a reconciliation pointing at a proof id that must not move.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, renameSync } from 'node:fs';
+import { mkdtempSync, rmSync, renameSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repo = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const dir = mkdtempSync(join(tmpdir(), 'dddp-rebuild-'));
-const mig = join(repo, 'migrations', '0042_maintenance_billing.sql');
-const parked = join(dir, '0042.parked.sql');
+/**
+ * Everything from 0042 onward is parked while the database is populated, then
+ * restored and applied in one go.
+ *
+ * Not just 0042: later migrations build on it — 0043 alters a table 0042
+ * creates — so parking one and leaving the rest would fail on a missing table
+ * rather than on the thing being tested. Anything added after this will be
+ * picked up automatically, which is the point of deriving the list rather than
+ * naming the files.
+ */
+const FROM = '0042';
+const parkedNames = readdirSync(join(repo, 'migrations'))
+  .filter((f) => f.endsWith('.sql') && f.slice(0, 4) >= FROM)
+  .sort();
+const parkPairs = parkedNames.map((name) => [
+  join(repo, 'migrations', name),
+  join(dir, `${name}.parked`),
+]);
+const park = () => { for (const [from, to] of parkPairs) renameSync(from, to); };
+const unpark = () => {
+  for (const [from, to] of parkPairs) {
+    try { renameSync(to, from); } catch { /* already back */ }
+  }
+};
 
 const wrangler = (args) => execFileSync('npx', ['wrangler', ...args, '--local', '--persist-to', dir],
   { encoding: 'utf8', cwd: repo, env: { ...process.env, CI: 'true' }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -35,7 +57,7 @@ const check = (label, actual, expected) => {
 
 try {
   // ── everything BEFORE 0042 ────────────────────────────────────────────
-  renameSync(mig, parked);
+  park();
   wrangler(['d1', 'migrations', 'apply', 'dddp']);
 
   // ── rows the rebuild has to survive ───────────────────────────────────
@@ -79,8 +101,8 @@ try {
                              status, reviewed_by, reviewed_at, deleted_at, backed_up_at, created_at
                         FROM payment_proofs ORDER BY id`);
 
-  // ── apply 0042 ────────────────────────────────────────────────────────
-  renameSync(parked, mig);
+  // ── apply 0042 (and everything after it) ──────────────────────────────
+  unpark();
   wrangler(['d1', 'migrations', 'apply', 'dddp']);
 
   const after = sql(`SELECT id, bill_id, owner_id, r2_key, image_sha256, utr, parsed_amount,
@@ -168,6 +190,6 @@ try {
   console.error(err.stderr || err.stdout || err.message);
   process.exitCode = 1;
 } finally {
-  try { renameSync(parked, mig); } catch { /* already back */ }
+  unpark();
   rmSync(dir, { recursive: true, force: true });
 }

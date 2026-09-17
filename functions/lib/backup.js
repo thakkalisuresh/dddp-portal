@@ -65,6 +65,12 @@ export const TABLES = [
   // somebody had explicitly excused.
   'maint_fee_exemptions', 'voting_exemptions',
   'maint_approval_requests', 'maint_approvals',
+  // The maintenance outbox, after the bills it points at, and for the reason
+  // bill_announcements is backed up: it is the record of who has ALREADY been
+  // told. A restore that brought back the bills without it would find every row
+  // missing, queue the whole quarter afresh, and write to the building four
+  // times about letters they received weeks ago.
+  'maint_mail',
   'settings', 'alert_episodes', 'audit_log',
 ];
 

@@ -121,6 +121,11 @@ export const ERROR_CODES = {
   'DDP-MAINT-004': { severity: 'fatal', message: 'Quarter has no usable rate for that basis' },
   'DDP-MAINT-005': { severity: 'error', message: 'Maintenance late fee or total is negative, fractional or not a number' },
   'DDP-MAINT-006': { severity: 'error', message: 'Unknown mid-quarter occupancy change' },
+  'DDP-MAINT-007': { severity: 'error', message: 'Maintenance quarter does not exist' },
+  // warn, following DDP-BILL-007's reasoning: somebody pressing Schedule on a
+  // quarter that is already scheduled is a person doing an ordinary thing
+  // twice, not a fault. At `error` it would reach Telegram on every double-tap.
+  'DDP-MAINT-008': { severity: 'warn',  message: 'Maintenance quarter is not in a state that allows this' },
 
   // ── MAIL ───────────────────────────────────────────────────────────────
   'DDP-MAIL-001': { severity: 'error', message: 'Reset email could not be sent' },
