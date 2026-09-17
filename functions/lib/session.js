@@ -10,6 +10,7 @@
 
 import { newSessionToken } from './crypto.js';
 import { reportError } from './errors.js';
+import { shouldTouch } from './presence.js';
 
 export const COOKIE = 'dddp_session';
 export const RESIDENT_TTL_DAYS = 90;      // logging in monthly shouldn't mean resetting monthly
@@ -50,14 +51,27 @@ export function readCookie(request) {
   return null;
 }
 
-export async function createSession(env, { actorId, subjectId = actorId, mode = 'normal', ttlSeconds }) {
+export async function createSession(env, { actorId, subjectId = actorId, mode = 'normal', ttlSeconds, userAgent = null }) {
   const token = newSessionToken();
   const now = new Date();
   const expires = new Date(now.getTime() + ttlSeconds * 1000);
-  await env.DB.prepare(
-    `INSERT INTO sessions (token, actor_id, subject_id, mode, expires_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(token, actorId, subjectId, mode, expires.toISOString(), now.toISOString()).run();
+  const at = now.toISOString();
+  try {
+    await env.DB.prepare(
+      `INSERT INTO sessions (token, actor_id, subject_id, mode, expires_at, created_at,
+                             user_agent, last_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(token, actorId, subjectId, mode, expires.toISOString(), at,
+           userAgent ? String(userAgent).slice(0, 400) : null, at).run();
+  } catch (err) {
+    // Migration 0041 not applied yet. Logging in matters more than knowing
+    // which phone did it, so the row goes in without the two new columns.
+    if (!/no column|has no column/i.test(String(err?.message ?? err))) throw err;
+    await env.DB.prepare(
+      `INSERT INTO sessions (token, actor_id, subject_id, mode, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(token, actorId, subjectId, mode, expires.toISOString(), at).run();
+  }
   return { token, expiresAt: expires, maxAge: ttlSeconds };
 }
 
@@ -67,7 +81,9 @@ export async function resolveSession(env, request) {
   if (!token) return null;
 
   const row = await env.DB.prepare(
-    `SELECT s.token, s.actor_id, s.subject_id, s.mode, s.expires_at,
+    // s.* rather than a column list, so last_seen_at is read when migration
+    // 0041 has added it and simply absent when it has not.
+    `SELECT s.*,
             a.name  AS actor_name,  a.role AS actor_role, a.flat AS actor_flat,
             a.active AS actor_active,
             a.relationship AS actor_relationship,
@@ -108,6 +124,16 @@ export async function resolveSession(env, request) {
     await reportError(env, 'DDP-AUTH-019', { actorId: row.actor_id, tokenPrefix: token.slice(0, 6) });
     await destroySession(env, token);
     return null;
+  }
+
+  // "Is anyone here right now", for the god-mode sign-in panel. Throttled so
+  // a resident clicking through five screens costs one write, not five, and
+  // never allowed to fail the request it rides on.
+  if (Object.prototype.hasOwnProperty.call(row, 'last_seen_at') && shouldTouch(row.last_seen_at)) {
+    try {
+      await env.DB.prepare('UPDATE sessions SET last_seen_at = ? WHERE token = ?')
+        .bind(new Date().toISOString(), token).run();
+    } catch { /* presence is a nicety */ }
   }
 
   return {
