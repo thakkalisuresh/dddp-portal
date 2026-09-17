@@ -25,7 +25,9 @@ const GOD = { href: '/god', label: 'God', icon: 'M12 2l9 5v6c0 5-4 8-9 9-5-1-9-4
 function itemsFor(me) {
   const items = [...RESIDENT];
   if (me?.role === 'admin' || me?.role === 'superadmin') items.push(ADMIN);
-  if (me?.role === 'superadmin') items.push(GOD);
+  // The superadmin can hide the button from the Me page. It hides the button
+  // only; /god still opens when typed.
+  if (me?.role === 'superadmin' && me.godNav !== false) items.push(GOD);
   return items;
 }
 

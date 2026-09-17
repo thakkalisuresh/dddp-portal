@@ -1072,8 +1072,136 @@ async function billsPanel() {
 /** The directory, with residents' own messages folded in beneath it. */
 async function residentsPanel() {
   return el('div', { class: 'stack' },
+    // Who holds a role is the superadmin's decision alone; patchResident
+    // ignores `role` from anybody else, so the section is not drawn for them.
+    me.role === 'superadmin'
+      ? foldedSection('Admin and committee', null, rolesPanel)
+      : null,
     await residentsDirectory(),
     foldedSection('Messages', null, messagesPanel));
+}
+
+const ROLE_LABELS = { owner: 'Resident', committee: 'Committee', admin: 'Admin' };
+
+/**
+ * Every active login in one list, each with its own role.
+ *
+ * PER LOGIN, NOT PER FLAT — decided 2026-09-16. A flat holds up to three owner
+ * and two tenant logins, and making the treasurer an admin must not hand the
+ * same powers to a co-owner who never took the job. It also keeps the 3+2 cap
+ * honest: roles other than owner are left out of the count.
+ *
+ * Changes are staged in the dropdowns and written together by Save, one PATCH
+ * each, so a stray tap on a select changes nothing until it is confirmed.
+ * The superadmin's own row is drawn without a dropdown: that role only moves
+ * by handover, in god mode.
+ */
+async function rolesPanel() {
+  const status = el('div');
+  const tbody = el('tbody');
+  const search = el('input', {
+    class: 'input', type: 'search', placeholder: 'Flat or name',
+    'aria-label': 'Search accounts',
+  });
+  const onlyRoles = el('input', { type: 'checkbox', id: 'roles-only' });
+  const save = el('button', { class: 'btn', type: 'button', disabled: true }, 'Save changes');
+  const pending = new Map(); // id -> new role
+  let people = [];
+
+  async function load() {
+    const { residents } = await api.admin.residents();
+    people = residents.filter((r) => r.active !== 0);
+    pending.clear();
+    draw();
+  }
+
+  function syncSave() {
+    save.disabled = pending.size === 0;
+    save.textContent = pending.size
+      ? `Save ${pending.size} ${pending.size === 1 ? 'change' : 'changes'}`
+      : 'Save changes';
+  }
+
+  function draw() {
+    const q = search.value.trim().toLowerCase();
+    const shown = people.filter((p) =>
+      (!q || p.flat.toLowerCase().startsWith(q) || p.name.toLowerCase().includes(q))
+      && (!onlyRoles.checked || p.role !== 'owner' || pending.has(p.id)));
+
+    tbody.replaceChildren(...shown.map((p) => {
+      const cell = p.role === 'superadmin'
+        ? el('span', { class: 'chip chip--neutral' }, 'Superadmin')
+        : roleSelect(p);
+      return el('tr', {},
+        el('td', {}, p.flat),
+        el('td', {}, p.name,
+          p.relationship === 'tenant'
+            ? el('span', { class: 'muted small' }, ' · tenant') : null),
+        el('td', {}, cell));
+    }));
+    if (!shown.length) {
+      tbody.replaceChildren(el('tr', {}, el('td', { colspan: '3', class: 'muted' },
+        onlyRoles.checked && !q ? 'Nobody holds a role yet.' : 'No account matches.')));
+    }
+    syncSave();
+  }
+
+  function roleSelect(p) {
+    const select = el('select', {
+      class: 'input', 'aria-label': `Role for ${p.name}, ${p.flat}`,
+    }, ...Object.entries(ROLE_LABELS).map(([value, label]) =>
+      el('option', { value, selected: (pending.get(p.id) ?? p.role) === value || null }, label)));
+    select.addEventListener('change', () => {
+      if (select.value === p.role) pending.delete(p.id);
+      else pending.set(p.id, select.value);
+      select.classList.toggle('input--dirty', pending.has(p.id));
+      syncSave();
+    });
+    if (pending.has(p.id)) select.classList.add('input--dirty');
+    return select;
+  }
+
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    const failed = [];
+    let done = 0;
+    for (const [id, role] of pending) {
+      const p = people.find((x) => x.id === id);
+      try {
+        await api.admin.updateResident(id, { role });
+        done += 1;
+      } catch (err) {
+        failed.push(`${p.flat} ${p.name}: ${err.message}`);
+      }
+    }
+    await load();
+    status.replaceChildren(failed.length
+      ? el('div', { class: 'note note--warn' },
+          el('p', {}, done ? `${done} saved. These were not:` : 'Nothing was saved:'),
+          ...failed.map((f) => el('p', { class: 'small' }, f)))
+      : el('div', { class: 'note note--good' },
+          `${done} ${done === 1 ? 'role' : 'roles'} saved. `
+          + 'The change applies on their next page load.'));
+  });
+
+  search.addEventListener('input', draw);
+  onlyRoles.addEventListener('change', draw);
+  await load();
+
+  return el('div', { class: 'stack' },
+    el('p', { class: 'small muted' },
+      'Each login has its own role. Making one owner of a flat an admin does not '
+      + 'change the others on that flat.'),
+    status,
+    search,
+    el('label', { class: 'checkline', for: 'roles-only' }, onlyRoles,
+      el('span', {}, 'Only admin and committee')),
+    el('div', { class: 'scroll-x' },
+      el('table', { class: 'table' },
+        el('thead', {}, el('tr', {},
+          el('th', {}, 'Flat'), el('th', {}, 'Name'), el('th', {}, 'Role'))),
+        tbody)),
+    el('div', { class: 'row' }, save));
 }
 
 /**
