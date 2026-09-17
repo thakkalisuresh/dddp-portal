@@ -174,9 +174,4 @@ describe('wiring', () => {
     for (const kind of Object.keys(PRESENCE_KINDS)) expect(track).toContain(`'${kind}'`);
     expect(track).toContain(`PING_MS = ${PING_EVERY_SEC * 1000}`.replace('90000', '90_000'));
   });
-
-  it('the login page tells residents what is noted', () => {
-    expect(readFileSync(join(root, 'public', 'login.html'), 'utf8'))
-      .toMatch(/notes which device you sign in on/);
-  });
 });

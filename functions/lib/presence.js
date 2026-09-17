@@ -15,8 +15,7 @@
  *
  * Each of those writes sessions.presence and sessions.last_seen_at for that
  * one device. Nothing about what the person is doing is sent — no input, no
- * position, no page content — only which of three states the tab is in. The
- * login page tells residents that the device and last use are noted.
+ * position, no page content — only which of three states the tab is in.
  *
  * THE TOKEN NEVER LEAVES THE SERVER. A session token is the credential itself;
  * listing them would put every resident's login in the superadmin's browser.
