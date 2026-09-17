@@ -18,6 +18,7 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "check:migrations": "node scripts/check-migrations.mjs",
+    "check:rebuild": "node scripts/check-rebuild-0042.mjs",
     "seed": "node scripts/seed-dev.mjs",
     "query": "node scripts/query.mjs",
     "build:pages": "node scripts/build-pages.mjs",

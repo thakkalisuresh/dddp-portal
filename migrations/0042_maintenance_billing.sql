@@ -368,10 +368,67 @@ ALTER TABLE owners ADD COLUMN tenancy_confirmed_at TEXT;
 -- review queue, one dedupe, one backup sweep and one vision path rather than
 -- two of each drifting apart.
 --
--- ROW IDS ARE PRESERVED, which matters beyond tidiness: 0017's
--- `statement_matches.proof_id` points into this table, and a rebuild that
--- renumbered rows would silently repoint every reconciliation ever recorded.
--- R2 keys are column values, so nothing in the bucket moves.
+-- ROW IDS ARE PRESERVED, which matters beyond tidiness: `reconciliations.proof_id`
+-- (0017) points into this table, and a rebuild that renumbered rows would
+-- silently repoint every reconciliation ever recorded. R2 keys are column
+-- values, so nothing in the bucket moves.
+--
+-- WHY `reconciliations` IS REBUILT TWICE BELOW, WHICH LOOKS ABSURD UNTIL YOU
+-- TRY IT ANY OTHER WAY. This was found by running the migration against a
+-- populated database, not by reading it.
+--
+-- `reconciliations.proof_id` (0017) is a foreign key INTO payment_proofs. The
+-- moment one reconciliation row exists, `DROP TABLE payment_proofs` orphans it
+-- and the migration dies with SQLITE_CONSTRAINT_FOREIGNKEY — halfway through,
+-- with the new table already built. An empty database never shows this, which
+-- is exactly why check-migrations.mjs did not catch it and says so in its own
+-- header.
+--
+-- `PRAGMA defer_foreign_keys = ON` does not save it, and that is worth writing
+-- down because it is the obvious fix and it silently does not work. Deferring
+-- moves the check to commit, but DROP TABLE runs an implicit delete that
+-- INCREMENTS the deferred-violation counter, and re-creating the table under
+-- the same name afterwards never decrements it. The transaction still fails at
+-- commit, now with a rolled-back Durable Object instead of a clean error.
+--
+-- `PRAGMA foreign_keys = OFF` is the documented SQLite answer and is not
+-- available: it is a no-op inside a transaction, and D1 runs each migration in
+-- one.
+--
+-- What is left is to make sure nothing references payment_proofs at the moment
+-- it is dropped. `reconciliations` has no children of its own, so rebuilding it
+-- is cheap and safe: once without the foreign key, then payment_proofs, then
+-- once more to put the key back exactly as 0017 declared it. The database ends
+-- in the shape it would have had if SQLite could simply drop a NOT NULL.
+--
+-- Note for whoever rebuilds the next table: 0030 rebuilt `owners`, which half
+-- the schema references, and does none of this. It applied cleanly only because
+-- production held almost no rows at the time. The pattern in this repo is less
+-- proven than its comments suggest — rehearse the next one against real data.
+
+-- Step 1 of 3: reconciliations, minus the key into payment_proofs.
+CREATE TABLE reconciliations_tmp (
+  id         INTEGER PRIMARY KEY,
+  session_id INTEGER REFERENCES statement_sessions(id),
+  proof_id   INTEGER,
+  bill_id    INTEGER REFERENCES bills(id),
+  verdict    TEXT NOT NULL,
+  reference  TEXT,
+  amount     REAL,
+  txn_date   TEXT,
+  matched_by TEXT,
+  created_at TEXT NOT NULL,
+  CHECK (verdict IN ('confirmed', 'amount_mismatch', 'proof_no_credit', 'credit_no_proof', 'duplicate_reference')),
+  CHECK (matched_by IS NULL OR matched_by IN ('reference', 'amount-and-date'))
+);
+INSERT INTO reconciliations_tmp
+  (id, session_id, proof_id, bill_id, verdict, reference, amount, txn_date, matched_by, created_at)
+SELECT id, session_id, proof_id, bill_id, verdict, reference, amount, txn_date, matched_by, created_at
+FROM reconciliations;
+DROP TABLE reconciliations;
+ALTER TABLE reconciliations_tmp RENAME TO reconciliations;
+
+-- Step 2 of 3: the rebuild this migration actually came for.
 CREATE TABLE payment_proofs_new (
   id            INTEGER PRIMARY KEY,
 
@@ -416,3 +473,32 @@ CREATE UNIQUE INDEX ux_proof_utr ON payment_proofs(utr) WHERE utr IS NOT NULL;
 CREATE INDEX ix_proof_bill       ON payment_proofs(bill_id);
 CREATE INDEX ix_proof_maint_bill ON payment_proofs(maint_bill_id);
 CREATE INDEX ix_proof_status     ON payment_proofs(status, created_at);
+
+-- Step 3 of 3: reconciliations again, with the key into payment_proofs put
+-- back exactly as 0017 declared it. Every id was preserved through the rebuild,
+-- so each proof_id still points at the same proof it always did.
+CREATE TABLE reconciliations_new (
+  id         INTEGER PRIMARY KEY,
+  session_id INTEGER REFERENCES statement_sessions(id),
+  proof_id   INTEGER REFERENCES payment_proofs(id),
+  bill_id    INTEGER REFERENCES bills(id),
+  verdict    TEXT NOT NULL,
+  -- Statement-derived, and kept on purpose: without it a confirmation cannot
+  -- be justified after the statement is gone. Narration is NOT kept.
+  reference  TEXT,
+  amount     REAL,
+  txn_date   TEXT,
+  matched_by TEXT,
+  created_at TEXT NOT NULL,
+  CHECK (verdict IN ('confirmed', 'amount_mismatch', 'proof_no_credit', 'credit_no_proof', 'duplicate_reference')),
+  CHECK (matched_by IS NULL OR matched_by IN ('reference', 'amount-and-date'))
+);
+INSERT INTO reconciliations_new
+  (id, session_id, proof_id, bill_id, verdict, reference, amount, txn_date, matched_by, created_at)
+SELECT id, session_id, proof_id, bill_id, verdict, reference, amount, txn_date, matched_by, created_at
+FROM reconciliations;
+DROP TABLE reconciliations;
+ALTER TABLE reconciliations_new RENAME TO reconciliations;
+
+CREATE INDEX ix_reconciliations_proof ON reconciliations(proof_id);
+CREATE INDEX ix_reconciliations_bill  ON reconciliations(bill_id);
