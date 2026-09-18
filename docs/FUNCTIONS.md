@@ -480,7 +480,7 @@ The maintenance quarter's life, as scheduled work: draft, confirm, issue, charge
 | fn | `draftDateFor` |  |
 | fn | `ensureDraft` | Create the draft for the next quarter, if it is time and it does not exist. |
 | fn | `confirmRecipients` | Who gets asked to confirm the quarter: every admin EXCEPT whoever scheduled the previous one. |
-| fn | `confirmEmail` |  |
+| fn | `confirmEmail` | The nightly nudge to an admin while a quarter is still a draft. |
 | fn | `remindToConfirm` | Ask the admins to confirm, at most once a night, and only while it is still a draft. |
 | fn | `flatsWithPeople` |  |
 | fn | `scheduleQuarter` | Confirm a quarter: record the issue date, fix the rates, and record what the admin was looking at when they did. |
@@ -514,7 +514,7 @@ The maintenance outbox: four letters per bill, and the drain that sends them.
 
 | | Export | What it does |
 |---|---|---|
-| const | `PLACEHOLDER_COPY` | A flag, not a comment, so nothing ships by accident. |
+| const | `PLACEHOLDER_COPY` | A flag, not a comment, so nothing shipped by accident. |
 | const | `DRAIN_SIZE` |  |
 | const | `MAX_ATTEMPTS` |  |
 | const | `MAIL_KINDS` |  |
@@ -1209,4 +1209,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-670 exports. 292 have no doc comment.
+670 exports. 291 have no doc comment.

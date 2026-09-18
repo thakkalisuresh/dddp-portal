@@ -80,13 +80,13 @@ describe('the four letters', () => {
     expect(m.text).not.toMatch(/added on\s{2,}/);
   });
 
-  it('names the amount and the date three days early', () => {
-    // The ₹750 itself is NOT in this letter any more — the committee's wording
-    // moved the fee to the due-date letter, so the last warning a resident gets
-    // in time to avoid it is the one on the day, not this one.
+  it('names the fee three days early, while it can still be avoided', () => {
+    // Dropped in the wording pass and restored by the committee: this is the
+    // last letter that arrives while the ₹750 can still be avoided.
     const m = dueSoonEmail(bill());
     expect(m.text).toContain('₹9,000');
     expect(m.text).toContain('11 October');
+    expect(m.text).toMatch(/late fee of ₹750 is added on 12 October/);
   });
 
   it('says the due date itself is still payable — the rule that differs from gas', () => {
@@ -137,11 +137,12 @@ describe('the four letters', () => {
     }
   });
 
-  it('is still flagged as placeholder copy', () => {
-    // Flips to false when the committee has approved the wording. This assertion
-    // is the thing that stops "we'll do the wording later" becoming "we shipped
-    // the draft".
-    expect(PLACEHOLDER_COPY).toBe(true);
+  it('is no longer placeholder copy', () => {
+    // Turned round on 18 September 2026, when the committee approved the
+    // wording. It asserted `true` for the whole build, which is what stopped
+    // "we'll do the wording later" becoming "we shipped the draft"; it asserts
+    // `false` now, so draft copy cannot come back in without this failing.
+    expect(PLACEHOLDER_COPY).toBe(false);
   });
 });
 

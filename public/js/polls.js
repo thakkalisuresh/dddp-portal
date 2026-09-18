@@ -19,7 +19,7 @@ import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
 import { $, el, esc, renderViewBanner, showError, setChildren } from './ui.js';
-import { deadlineLabel, closesIn, stampLabel, money } from './i18n.js';
+import { deadlineLabel, closesIn, stampLabel, dayLabel, money } from './i18n.js';
 // The SAME rules the Worker enforces, not a second copy of them.
 import { validatePoll, deliveryWarnings, MAX_OPTIONS } from './poll-rules.js';
 
@@ -91,37 +91,65 @@ function pollRow(p) {
 }
 
 /**
- * The flat cannot vote because it owes maintenance.
+ * The flat cannot vote because it owes maintenance. Two states, not one.
  *
- * PLACEHOLDER COPY. Every resident-visible string in this feature goes to the
- * committee in one wording pass; `message` comes from `flatVotingStatus` and is
- * a draft, and so is everything around it here.
+ * THE OPTIONS STAY ON SCREEN, shown but not selectable. Hiding them was the
+ * other option and the user chose this: a flat in arrears is still part of the
+ * building, and it can at least read what the building is deciding.
  *
- * NAMES THE DEBT AND OFFERS THE WAY OUT. A block a resident cannot act on from
- * the screen they met it on is a dead end, and this one lifts the moment the
- * treasurer confirms payment — the rule is evaluated on read, so a flat that
- * pays on Tuesday votes on Tuesday. The Pay button carries `from` so the
- * payment sheet comes back to this poll rather than leaving them somewhere else
- * in the portal.
+ * NAMES THE DEBT AND NEVER THE PERSON, on either side of a let flat. A tenant's
+ * arrears lock the owner's vote, so the one case where naming somebody would be
+ * easiest is the case where it does the most damage.
+ *
+ * THE SECOND STATE HAS NO PAY BUTTON. Their screenshot is already with the
+ * treasurer; offering them a Pay button is how somebody pays twice, and a
+ * duplicate credit is far more work to unpick than a missing one.
  */
 function lockedCard(p) {
   const v = p.voting;
+  const claimed = v.reason === 'arrears-claimed';
   const billId = v.billIds?.[0] ?? null;
+  const quarters = v.quarters?.length ? v.quarters.join(', ') : null;
+
+  // "including the late fee" only where there IS one. A resident told their
+  // ₹9,750 includes a fee that was waived brings the screenshot to a meeting.
+  const detail = [
+    quarters,
+    v.owed ? money(v.owed) : null,
+    claimed && v.claimedAt ? `screenshot uploaded ${dayLabel(v.claimedAt)}` : null,
+    !claimed && v.lateFee ? 'including the late fee' : null,
+  ].filter(Boolean).join(' · ');
+
   return el('div', { class: 'note note--warn stack', style: 'gap:var(--s-3)' },
-    el('p', { class: 'label' }, 'This flat cannot vote yet'),
-    el('p', { class: 'small' }, v.message ?? 'This flat has maintenance outstanding.'),
-    v.owed
-      ? el('p', { class: 'small' },
-          `${money(v.owed)} outstanding${v.quarters?.length ? ` · ${v.quarters.join(', ')}` : ''}.`)
+    el('p', { class: 'label' },
+      claimed ? 'Your payment is with the treasurer' : 'Voting is locked while maintenance charges are unpaid'),
+    detail ? el('p', { class: 'small' }, detail) : null,
+    claimed
+      ? el('p', { class: 'small' }, 'Voting unlocks as soon as it is confirmed. Nothing more to do.')
       : null,
-    // No button when the payment is already with the treasurer: they have done
-    // their part, and a Pay button would be asking them to pay twice.
-    billId && v.reason !== 'arrears-claimed'
+    // The Pay button carries `from`, so the payment sheet comes back to this
+    // poll rather than leaving them somewhere else in the portal.
+    !claimed && billId
       ? el('a', {
           class: 'btn btn--sm',
           href: `/pay?bill=${encodeURIComponent(billId)}&from=${encodeURIComponent(`/polls?id=${p.id}`)}`,
-        }, 'Pay the maintenance')
+        }, v.owed ? `Pay ${money(v.owed)}` : 'Pay the maintenance')
       : null);
+}
+
+/**
+ * The line under the options, in the unpaid state only.
+ *
+ * Under them rather than in the card, because it answers the question the
+ * options themselves raise: they can see the choices, they cannot pick one, and
+ * this is what changes that. The claimed state already says its own version of
+ * this inside the card, and saying it twice would read as nagging.
+ */
+function lockedFooter(p) {
+  const v = p.voting;
+  if (!v || v.canVote || v.reason === 'arrears-claimed') return null;
+  return el('p', { class: 'small muted' },
+    'Your flat can vote as soon as the treasurer confirms the payment.');
 }
 
 /* ── one poll ──────────────────────────────────────────────────────────── */
@@ -162,6 +190,7 @@ function draw() {
       : null,
 
     el('div', { class: 'stack' }, ...p.options.map((o) => option(o, { voting, p }))),
+    !p.canVote && !p.closed && p.voting && !p.voting.canVote ? lockedFooter(p) : null,
 
     voting ? submitBar(p, voted) : null,
     !voting && voted && !p.closed ? castNote(p) : null,

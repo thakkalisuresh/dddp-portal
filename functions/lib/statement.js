@@ -573,7 +573,11 @@ export function reconcile({
         candidates,
         detail: candidates.length
           ? 'Money arrived with no screenshot. The amount alone cannot say whose it is — assign it to a flat.'
-          : 'Money arrived with no screenshot, and no unpaid maintenance bill is a candidate for it.',
+          // NAMES THE ROUTE OUT. A refusal with nowhere to go is the one that
+          // gets worked around by assigning the credit to the nearest plausible
+          // flat, which is how somebody else's payment settles your bill.
+          : 'Nothing owing matches this credit. If you know whose it is, record it '
+            + 'as an offline payment, which a second admin approves.',
       });
       continue;
     }

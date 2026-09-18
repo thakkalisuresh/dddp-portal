@@ -13,8 +13,8 @@
  * what nobody can check by looking at a rendered page.
  *
  * WHAT THIS MODULE DOES NOT DO: it does not decide what a card SAYS. The copy
- * is placeholder until the committee's wording pass (PLACEHOLDER_COPY), and the
- * layout is the mockups' business, not this file's.
+ * is the committee's, approved in the wording pass (PLACEHOLDER_COPY is down),
+ * and the layout is the mockups' business, not this file's.
  */
 
 import { istToday } from './time.js';
@@ -303,6 +303,15 @@ export function votingCard(status) {
     // function IS the resident-facing shape of the status — the poll card
     // comes through it for the same reason.
     quarters: (status.quarters ?? []).map(describeQuarter),
+    // The blocking bills themselves, so the poll card's Pay button can be a
+    // button rather than an instruction to go and find the bill. Dropped when
+    // the poll payload was first routed through here, which silently cost the
+    // locked poll card its only way out — found by opening the poll.
+    billIds: status.billIds ?? [],
+    // Both only ever shown, never compared: whether the figure includes a late
+    // fee, and the date the resident said they had paid.
+    lateFee: status.lateFee ?? 0,
+    claimedAt: status.claimedAt ?? null,
   };
 }
 

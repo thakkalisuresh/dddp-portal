@@ -28,6 +28,15 @@ import { drawQr } from './qr.js';
 const main = $('#main');
 
 /**
+ * How long the bank details stay folded before opening themselves.
+ *
+ * Longer than the per-tap watcher's 1.6s, which answers "did THAT tap work".
+ * This one answers "has anything happened at all", and firing it while someone
+ * is still reading the amount would open a drawer they had not asked for.
+ */
+const AUTO_REVEAL_MS = 6000;
+
+/**
  * `initials` is the fallback mark, NOT an attempt at the brand's logo — the
  * official SVG is used when public/img/upi/ has one, and a lettered tile in
  * the interface's own font when it does not.
@@ -99,23 +108,29 @@ function whatThisIs(sheet) {
     ? sheet.quarterLabel
     : periodLabel(sheet.bill.period);
 
+  // The quarter and the flat on ONE line. They were a heading and a muted line
+  // under it, which read as two facts; they are one fact — which bill this is.
   return el('section', { class: 'stack' },
     el('p', { class: 'label' },
-      sheet.kind === 'maintenance' ? 'Maintenance' : 'Gas'),
-    el('h1', { class: 'h2' }, label),
-    el('p', { class: 'muted' }, `Flat ${sheet.flat}`));
+      sheet.kind === 'maintenance' ? 'Maintenance charges' : 'Gas'),
+    el('h1', { class: 'h2' }, `${label} · Flat ${sheet.flat}`));
 }
 
 /* ── 2. the amount and who it goes to ─────────────────────────────────── */
 
 function amountBlock(sheet) {
   const m = sheet.manual;
+  const total = sheet.bill.total;
+  // COPYABLE, like everything else on this screen that somebody has to retype.
+  // A resident paying from their own bank app types this figure by hand, and a
+  // transposed digit is a payment the treasurer cannot match to any bill.
+  const figure = el('p', { class: 'amount' }, money(total));
   return el('section', { class: 'stack' },
-    el('p', { class: 'amount' }, money(sheet.bill.total)),
+    el('div', { class: 'manual__row' }, figure, copyButton(String(total), figure)),
     // The payee NAME, not the address. The address is a string of digits and
     // an IFSC in account mode, which tells a resident nothing about whether
     // they are paying the right people.
-    m?.payee ? el('p', { class: 'muted' }, `to ${m.payee}`) : null);
+    m?.payee ? el('p', { class: 'muted' }, `To ${m.payee}`) : null);
 }
 
 /* ── 3-5. the apps, the note, the bank details ────────────────────────── */
@@ -133,6 +148,10 @@ function payBlock(sheet) {
   const record = () => { api.payIntent(sheet.bill.id, sheet.kind).catch(() => {}); };
 
   const manual = sheet.manual?.ok === false ? null : manualBlock(sheet, record);
+  // Set the moment anything takes the page over. Shared by the per-tap watcher
+  // and by the standing timer below, because both are asking the same question
+  // the platform will not answer: did an app actually open?
+  let appLaunched = false;
   let qrDetails = null;
   const revealFallbacks = () => {
     if (qrDetails) qrDetails.open = true;
@@ -164,7 +183,7 @@ function payBlock(sheet) {
   const handoff = () => {
     record();
     let handedOff = false;
-    const mark = () => { handedOff = true; };
+    const mark = () => { handedOff = true; appLaunched = true; };
     const events = [[document, 'visibilitychange'], [window, 'pagehide'], [window, 'blur']];
     for (const [t, e] of events) t.addEventListener(e, mark);
 
@@ -193,8 +212,7 @@ function payBlock(sheet) {
 
     const hrefFor = (key) => (target === 'ios' ? links[key] : links.androidApps?.[key]);
     block.append(
-      el('p', { class: 'label' },
-        target === 'android' ? 'Or choose your app' : 'Choose your UPI app'),
+      el('p', { class: 'label' }, target === 'android' ? 'Or pay with' : 'Pay with'),
       el('div', { class: 'pay-apps' },
         ...apps.filter((key) => APPS[key] && hrefFor(key)).map((key) =>
           el('a', { class: 'pay-app', href: hrefFor(key), onclick: handoff },
@@ -207,8 +225,9 @@ function payBlock(sheet) {
     if (mode === 'account') {
       block.append(
         el('p', { class: 'small muted' },
-          'PhonePe and Paytm do not accept payments made to a bank account. '
-          + 'Use one of the apps above, or the bank details below.'));
+          'PhonePe and Paytm do not allow payments to a bank account. '
+          + 'Use one of the apps above, or transfer from your own bank app '
+          + 'using the details below.'));
     }
   } else {
     block.append(
@@ -252,19 +271,38 @@ function payBlock(sheet) {
   if (manual) {
     block.append(manual);
     if (location.hash === '#pay-help') manual.open = true;
+
+    // OPENS ITSELF IF NOTHING HAPPENS. A resident with no UPI app installed
+    // taps, the page does not move, and there is no event to tell us so — see
+    // manualBlock. Left alone if they have already opened or closed it
+    // themselves: a fold that reopens after somebody shut it is the page
+    // arguing with them.
+    let touched = false;
+    manual.addEventListener('toggle', () => { touched = true; });
+
+    const reveal = () => {
+      if (touched || appLaunched || manual.open) return;
+      // FIRED INTO A BACKGROUNDED PAGE: decide when they come back rather than
+      // never. If an app took over, `appLaunched` is already true and we never
+      // reach here; if the screen simply locked while they read the amount,
+      // giving up would leave the fold shut for exactly the resident who walked
+      // away confused and then returned to a page that still says nothing.
+      if (document.visibilityState === 'hidden') {
+        addEventListener('visibilitychange', reveal, { once: true });
+        return;
+      }
+      manual.open = true;
+    };
+    setTimeout(reveal, AUTO_REVEAL_MS);
   }
 
+  // THE UPLOAD PROMPT, last. A screenshot is what turns a payment into
+  // something the treasurer can confirm, and it is asked for after the payment
+  // rather than before it.
   block.append(
-    el('p', { class: 'helper' },
-      el('span', {}, 'Pay exactly '),
-      el('strong', {}, money(total)),
-      el('span', {}, ` and leave the note as it is. That is how flat ${sheet.flat}'s payment is matched.`)),
-    // THE UPLOAD PROMPT, last. A screenshot is what turns a payment into
-    // something the treasurer can confirm, and it is asked for after the
-    // payment rather than before it.
-    el('p', { style: 'text-align:center;margin-top:var(--s-3)' },
+    el('p', { style: 'text-align:center;margin-top:var(--s-4)' },
       el('a', { class: 'linkish', href: `/proof?bill=${encodeURIComponent(sheet.bill.id)}` },
-        'Already paid? Upload screenshot')));
+        'Paid? Upload the payment screenshot so the treasurer can confirm it.')));
 
   // Arrived here from a dead intent: open the way out without being asked. The
   // resident has just watched the page appear to reload for no reason, and this
@@ -290,59 +328,66 @@ function payBlock(sheet) {
 function noteBlock(note) {
   const field = el('code', { class: 'ref' }, note);
   return el('div', { class: 'stack', style: 'margin-top:var(--s-4)' },
-    el('span', { class: 'label' }, 'Add this note to the payment'),
+    el('span', { class: 'label' }, 'Your payment will carry this note'),
     el('div', { class: 'manual__row' }, field, copyButton(note, field)),
     el('p', { class: 'small', style: 'color:var(--awaiting)' },
-      'This note lands on the bank statement and is how the treasurer matches '
-      + 'your payment to your flat. Please do not change it.'));
+      'It appears on the bank statement and is how the treasurer matches your '
+      + 'payment to your flat.'));
 }
 
 /**
- * The way out when no app opens.
+ * The way out when no app opens: secondary, but never out of reach.
  *
- * Always visible, never behind a "did it fail?" question. Someone whose app did
- * not open is already unsure what happened, and someone who simply prefers
- * their own app should not have to admit to a failure to find this.
+ * SECONDARY RATHER THAN ALWAYS VISIBLE. Most residents tap an app and are gone,
+ * and a screen that shows an account number to all of them buries the one
+ * button that works for nine in ten. So it folds — and then opens ITSELF.
+ *
+ * WHY IT OPENS ITSELF. A page cannot tell whether a UPI app opened; there is no
+ * callback either way. A resident with no UPI app installed taps, nothing
+ * happens, and behind a closed summary there is nothing to tell them what to do
+ * next — they are stranded on a screen that appears broken. So if nothing has
+ * taken the page over after a few seconds, this opens without being asked.
+ * Opening a fold nobody needed costs a little clutter; leaving it shut costs
+ * somebody their payment.
+ *
+ * THE NOTE IS IN HERE TOO, repeated from above. Somebody paying from their own
+ * bank app is typing four fields by hand, and the one that reconciliation
+ * depends on must not be the one they have to scroll back up for.
  */
 function manualBlock(sheet, record = () => {}) {
   const m = sheet.manual;
   if (!m) return null;
 
-  const idField = el('code', { class: 'vpa' }, m.vpa);
-  // Copying the UPI ID is the same declaration as tapping Pay: this person is
-  // about to send money. It starts the same hold — otherwise the residents who
-  // pay from their own app are precisely the ones who get charged the late fee.
-  const copy = copyButton(m.vpa, idField, record);
-
   const bank = m.bankDetails;
 
-  return el('details', { class: 'manual' },
-    el('summary', {}, 'Pay another way'),
-    el('p', { class: 'small muted' }, 'Open any UPI app and send to this ID.'),
-    el('div', { class: 'manual__row' }, idField, copy),
-    el('div', { class: 'manual__grid' },
-      el('div', {},
-        el('span', { class: 'label' }, 'Amount'),
-        el('strong', { class: 'num' }, money(m.amount)))),
+  const box = el('details', { class: 'manual' },
+    el('summary', {}, "App didn't open? Pay from your bank app instead"),
+    // THE BANK DETAILS in account mode; the UPI ID where there is no account
+    // to quote. The assembled UPI ID is built from these two halves, and an app
+    // that refuses the assembled form still accepts a plain bank transfer — so
+    // this is the route that works when every other one here has been refused.
+    ...(bank
+      ? [copyRow('Account', bank.account),
+         copyRow('IFSC', bank.ifsc),
+         copyRow('Name', bank.name)]
+      // Copying the UPI ID is the same declaration as tapping Pay: this person
+      // is about to send money, so it starts the same hold. Otherwise the
+      // residents who pay from their own app are precisely the ones who get
+      // charged the late fee.
+      : [copyRow('UPI ID', m.vpa, record),
+         m.payee ? copyRow('Name', m.payee) : null]),
+    sheet.note ? copyRow('Note', sheet.note) : null,
+    el('p', { class: 'small', style: 'color:var(--awaiting)' },
+      'Add the note so the treasurer can match your payment to your flat.'));
 
-    // THE BANK DETAILS, in account mode only. The UPI ID above is assembled
-    // from these two halves, and an app that refuses the assembled form will
-    // still accept a plain bank transfer — so this is the route that works when
-    // every other one on this page has been refused.
-    bank
-      ? el('div', { class: 'stack', style: 'margin-top:var(--s-4)' },
-          el('span', { class: 'label' }, 'Or transfer to the account'),
-          copyRow('Account number', bank.account),
-          copyRow('IFSC', bank.ifsc),
-          copyRow('Name', bank.name))
-      : null);
+  return box;
 }
 
-function copyRow(label, value) {
+function copyRow(label, value, onCopy = () => {}) {
   const field = el('code', { class: 'vpa' }, value);
   return el('div', {},
     el('span', { class: 'label' }, label),
-    el('div', { class: 'manual__row' }, field, copyButton(value, field)));
+    el('div', { class: 'manual__row' }, field, copyButton(value, field, onCopy)));
 }
 
 function copyButton(text, field, onCopy = () => {}) {

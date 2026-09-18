@@ -86,17 +86,23 @@ describe('what the dialog says', () => {
 
   const texts = (r) => r.lines.map((l) => l.text).join(' ');
 
-  it('names the money, the person and the direction', () => {
+  it('names the money and the direction, and the person whose login ends', () => {
+    // The approved wording says "the owner" rather than naming them: the lines
+    // read as a list of what saving this DOES, and a name in each one made the
+    // list read as gossip about two people. The tenant is still named on the
+    // line that takes their login, which is the one a person should own.
     const t = texts(describe_());
     expect(t).toContain('₹9,000 to ₹7,500');
-    expect(t).toContain('Anu Thomas');
-    expect(t).toContain('Rajan Pillai');
+    expect(t).toContain('to the owner');
+    expect(t).toContain("end Anu Thomas's login");
   });
 
   it('always says the login goes, and that it does not go yet', () => {
     // The part of this an admin does not picture when they tap.
+    // "not yet" now lives in the dialog's foot rather than in the line, so the
+    // list stays a list of consequences and the timing is said once.
     const line = describe_().lines.find((l) => l.kind === 'login');
-    expect(line.text).toMatch(/loses their login when this is approved — not now/);
+    expect(line.text).toMatch(/end Anu Thomas's login/);
   });
 
   it('always says who the letters go to instead', () => {
@@ -113,22 +119,23 @@ describe('what the dialog says', () => {
     expect(r.lines.some((l) => l.kind === 'future')).toBe(false);
     // And it refuses to decide who carries the bill, which is the one thing
     // arithmetic cannot answer here.
-    expect(texts(r)).toContain('has to be assigned to somebody');
+    expect(texts(r)).toContain('to be assigned by an admin');
   });
 
   it('recomputes when the date moves across the issue date', () => {
-    expect(texts(describe_({ movedOutOn: '2026-09-30' }))).toContain('re-rates from');
-    expect(texts(describe_({ movedOutOn: '2026-10-04' }))).toContain('stays at ₹9,000');
+    expect(texts(describe_({ movedOutOn: '2026-09-30' }))).toContain('from ₹9,000 to ₹7,500');
+    expect(texts(describe_({ movedOutOn: '2026-10-04' })))
+      .toContain('move the unpaid Q4 2026 (Oct–Dec) bill of ₹9,000 to the owner');
   });
 
   it('says so plainly when there is no bill to move', () => {
-    expect(texts(describe_({ bills: [] }))).toContain('no unpaid maintenance bill');
+    expect(texts(describe_({ bills: [] }))).toContain('because none is unpaid on this flat');
   });
 
   it('skips a bill whose quarter has gone missing rather than guessing a rate', () => {
     const r = describe_({ quarters: {} });
     expect(r.plans).toEqual([]);
-    expect(texts(r)).toContain('no unpaid maintenance bill');
+    expect(texts(r)).toContain('because none is unpaid on this flat');
   });
 
   it('dates the expiry from the request, not from nothing', () => {

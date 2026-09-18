@@ -17,10 +17,10 @@
  * nobody wants to send: the fee has landed, and on a flat with arrears from an
  * ended quarter, the vote is now blocked too.
  *
- * ALL RESIDENT-VISIBLE WORDING IN THIS FILE IS PLACEHOLDER. It is written to be
- * readable and approximately right so the screens and tests have something real
- * to work against, and it is marked so throughout. The committee approves the
- * final copy before testing; see PLACEHOLDER_COPY below.
+ * THE WORDING IN THIS FILE IS THE COMMITTEE'S, approved 18 September 2026 as
+ * rendered, and PLACEHOLDER_COPY is down. Changing any of it is a decision for
+ * them and not a tidy-up: what looks like a stray sentence here is usually one
+ * that was argued over — see the restored late-fee line in letter 2.
  */
 
 import { mailToken, sendEmail, mailConfigured } from './mailer.js';
@@ -29,13 +29,14 @@ import { dayAndMonth } from './reminders.js';
 import { describeQuarter, quarterHasEnded, lateFeeDateFor } from './maint.js';
 
 /**
- * A flag, not a comment, so nothing ships by accident.
+ * A flag, not a comment, so nothing shipped by accident.
  *
- * The wording pass flips this to false once the committee has signed off, and
- * a test asserts it is false before the feature can be called done. A comment
- * saying "placeholder" is a note; this is a thing that can be checked.
+ * False since the committee's wording pass. It is kept rather than deleted, and
+ * its test now asserts FALSE: the assertion that stopped draft copy shipping is
+ * the same assertion that stops it coming back, and a feature this size will be
+ * edited again by somebody who was not here.
  */
-export const PLACEHOLDER_COPY = true;
+export const PLACEHOLDER_COPY = false;
 
 /** How many are sent per drain. See the subrequest arithmetic above. */
 export const DRAIN_SIZE = 20;
@@ -118,13 +119,19 @@ export function issuedEmail({ flat, quarter, total, dueDate, basis, lateFee, lat
 }
 
 /** Letter 2 — three days out. The only one that exists purely to be helpful. */
-export function dueSoonEmail({ flat, quarter, total, dueDate, origin = '' }) {
+export function dueSoonEmail({ flat, quarter, total, dueDate, lateFee, lateFeeDate, origin = '' }) {
   const site = origin || SITE;
+  const feeDate = lateFeeDate ?? lateFeeDateFor(dueDate);
   return renderEmail({
     title: `Maintenance charges due in 3 days · Flat ${flat}`,
     preview: `${money(total)} due ${dayAndMonth(dueDate)}`,
     blocks: [
       para(`${money(total)} for ${describeQuarter(quarter)} is due on ${dayAndMonth(dueDate)}.`),
+      // RESTORED after the wording pass dropped it. This is the last letter
+      // that reaches a resident while the fee can still be avoided, and a
+      // warning that arrives afterwards is not a warning.
+      para(`A late fee of ${money(lateFee)} is added on ${dayAndMonth(feeDate)} `
+        + 'if the charges are unpaid.'),
       action(`Pay ${money(total)}`, `${site}/dashboard`),
       // The reminder that is wrong for one reader in ten is the one that makes
       // them distrust the other nine: somebody who paid yesterday is told what

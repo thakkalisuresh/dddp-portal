@@ -272,7 +272,13 @@ export async function maintAdminPayload(env, quarterLabel, { today = istToday() 
   if (!label) return null;
 
   const quarter = await env.DB.prepare(
-    'SELECT * FROM maint_quarters WHERE quarter = ?'
+    // The scheduler's NAME, joined here rather than left as an id: the receipt
+    // says who committed the building to this, and "scheduled by 4" is not an
+    // answer to that question.
+    `SELECT q.*, o.name AS scheduled_by_name
+       FROM maint_quarters q
+       LEFT JOIN owners o ON o.id = q.scheduled_by
+      WHERE q.quarter = ?`
   ).bind(label).first();
 
   const previousLabel = previousOf(label);

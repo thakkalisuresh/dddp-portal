@@ -760,9 +760,9 @@ function movedOutControl(p, reload, locked) {
       'aria-label': `The day ${p.name} left ${p.flat}`,
     });
     const becomes = el('select', { class: 'input', 'aria-label': `What ${p.flat} becomes` },
-      el('option', { value: 'owner' }, 'The owner moves in'),
-      el('option', { value: 'tenant' }, 'A new tenant moves in'),
-      el('option', { value: 'empty' }, 'It stands empty'));
+      el('option', { value: 'owner' }, 'Owner'),
+      el('option', { value: 'tenant' }, 'New tenant'),
+      el('option', { value: 'empty' }, 'Nobody'));
     const reason = el('input', {
       class: 'input', placeholder: 'Lease ended, moved to Bangalore',
       'aria-label': `Why ${p.name} is no longer in ${p.flat}`,
@@ -783,7 +783,7 @@ function movedOutControl(p, reload, locked) {
           personId: p.id, movedOutOn: when.value, becomes: becomes.value,
         });
         setChildren(consequences,
-          el('p', { class: 'label' }, 'What this would do'),
+          el('p', { class: 'label' }, 'Saving this will:'),
           el('ul', { class: 'conseq' },
             ...plan.lines.map((l) => el('li', { class: 'small' }, l.text))));
       } catch (err) {
@@ -812,14 +812,16 @@ function movedOutControl(p, reload, locked) {
                                   role: 'alertdialog' },
       el('p', { class: 'label' }, `Tenant moved out · Flat ${p.flat}`),
       el('p', { class: 'small muted' },
-        `${p.name}${p.moved_in_at ? `, tenant since ${monthLabel(p.moved_in_at) ?? p.moved_in_at}` : ''}.`),
-      el('div', { class: 'field' }, el('label', {}, 'The day they left'), when),
-      el('div', { class: 'field' }, el('label', {}, 'Who is in the flat now'), becomes),
+        `${p.name}${p.moved_in_at ? `, tenant since ${shortMonth(p.moved_in_at)}` : ''}`),
+      el('div', { class: 'field' }, el('label', {}, 'Moved out on'), when),
+      el('div', { class: 'field' }, el('label', {}, 'Who is in the flat now?'), becomes),
       consequences,
       el('div', { class: 'field' }, el('label', {}, 'Why (kept with the approval)'), reason),
+      // The timing, said ONCE and at the foot rather than inside the list of
+      // consequences: the list is what saving does, this is when it happens.
       el('p', { class: 'small' },
-        'Nothing changes until another admin agrees — including their login, which they keep '
-        + 'until then.'),
+        `Nothing changes until a second admin approves this. ${p.name} keeps their `
+        + 'login until then.'),
       out,
       el('div', { class: 'row', style: 'gap:var(--s-3);flex-wrap:wrap' }, go,
         el('button', { class: 'linkish small', type: 'button',
@@ -831,6 +833,12 @@ function movedOutControl(p, reload, locked) {
     el('button', { class: 'btn btn--sm btn--quiet', type: 'button', onclick: open },
       'Tenant moved out'),
     slot);
+}
+
+/** '2025-08-14' -> '08/25'. Month precision, which is how a tenancy start is remembered. */
+function shortMonth(iso) {
+  const [y, m] = String(iso ?? '').split('-');
+  return y && m ? `${m}/${y.slice(2)}` : String(iso ?? '');
 }
 
 /** Today, as a date input wants it. The building's own date, not the browser's UTC. */
@@ -1397,28 +1405,32 @@ function maintenanceCard(card) {
 
   if (card.state === 'scheduled') {
     return el('div', { class: `panel ${tone.calm}` },
-      el('p', {}, `${card.quarterLabel} bills issue on ${dayLabel(card.issueDate)} — `
-        + `${card.flats} flats, ${money(card.total)}.`),
+      el('p', {}, el('strong', {}, `${card.quarterLabel} issues on ${dayLabel(card.issueDate)}`)),
+      el('p', { class: 'small' }, `${card.flats} flats · ${money(card.total)}`),
       el('button', { class: 'btn btn--sm btn--ghost', type: 'button',
                      onclick: () => show('maint') }, 'Open Maintenance'));
   }
 
-  const when = card.daysOverdue > 0
-    // Named as late, because it is: the quarter has started and no bills exist.
-    ? `${card.daysOverdue} day${card.daysOverdue === 1 ? '' : 's'} overdue`
+  // THE WORDS CHANGE, not only the colour. A card that merely turns amber is
+  // decoration by the third day; "the quarter started 4 days ago, nobody has
+  // been billed" is a different sentence from "starts in 7 days", and it is the
+  // sentence that gets somebody to act.
+  const line = card.daysOverdue > 0
+    ? `The quarter started ${card.daysOverdue} day${card.daysOverdue === 1 ? '' : 's'} ago. `
+      + 'Nobody has been billed.'
     : card.daysRemaining === 0
-      ? 'due today'
-      : `${card.daysRemaining} day${card.daysRemaining === 1 ? '' : 's'} left`;
+      ? 'The quarter starts today.'
+      : `The quarter starts in ${card.daysRemaining} day${card.daysRemaining === 1 ? '' : 's'}.`;
 
   return el('div', { class: `panel ${tone[card.urgency] ?? 'note'}` },
-    el('p', {}, el('strong', {}, `${card.quarterLabel} maintenance is not scheduled`),
-      ` — ${when}.`),
+    el('p', {}, el('strong', {}, `${card.quarterLabel} is not scheduled`)),
     el('p', { class: 'small' },
-      `Bills are meant to go out ${dayLabel(card.issueDate)}.`
+      line
       // The blocker, on the card. "Schedule the quarter" is not actionable
-      // until you know what is stopping it.
-      + (card.tenanciesToConfirm
-          ? ` ${card.tenanciesToConfirm} tenanc${card.tenanciesToConfirm === 1 ? 'y needs' : 'ies need'} confirming first.`
+      // until you know what is stopping it. Left off the overdue state on
+      // purpose: there, the tenancies are not the headline any more.
+      + (card.daysOverdue === 0 && card.tenanciesToConfirm
+          ? ` ${card.tenanciesToConfirm} tenanc${card.tenanciesToConfirm === 1 ? 'y' : 'ies'} to confirm.`
           : '')),
     el('button', { class: 'btn btn--sm', type: 'button', onclick: () => show('maint') },
       card.tenanciesToConfirm ? 'Check the tenancies' : 'Schedule the quarter'));

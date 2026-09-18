@@ -69,34 +69,31 @@ export function describeDeparture({
     if (plan.action === 're-rate') {
       lines.push({
         kind: 're-rate',
-        text: `${describeQuarter(label)} re-rates from ${money(bill.total)} to ${money(plan.total)}`
-          + `, because ${person?.name ?? 'the tenant'} had already left when the quarter was issued.`,
-      });
-      lines.push({
-        kind: 'moves',
-        text: `That bill moves to ${owner?.name ?? 'the owner'}, who can then see it and pay it.`,
+        text: `change ${describeQuarter(label)} from ${money(bill.total)} to ${money(plan.total)} `
+          + 'and bill it to the owner',
       });
     } else if (plan.action === 'reassign' && plan.reason === 'left-after-issue-date') {
+      // The rule 0042 states and the one an admin will argue with, so the
+      // reason is carried rather than asserted: the flat was let on the day the
+      // quarter issued, so the rate stands and only the payer changes.
       lines.push({
         kind: 'moves',
-        // The rule 0042 states and the one an admin will argue with, so it is
-        // said in full rather than asserted.
-        text: `${describeQuarter(label)} stays at ${money(bill.total)} — the flat was let on the day it was `
-          + `issued, so the rate does not change — and moves to ${owner?.name ?? 'the owner'}.`,
+        text: `move the unpaid ${describeQuarter(label)} bill of ${money(bill.total)} to the owner `
+          + '— the flat was let on the day it was issued, so the rate does not change',
       });
     } else if (plan.action === 'reassign') {
       lines.push({
         kind: 'choose',
-        text: `${describeQuarter(label)} (${money(bill.total)}) has to be assigned to somebody: the owner, or the `
-          + 'tenant moving in. Nothing decides that on its own, so an admin picks it afterwards.',
+        text: `leave ${describeQuarter(label)} (${money(bill.total)}) to be assigned by an admin, `
+          + 'to the owner or to the tenant moving in',
       });
     } else if (plan.reason === 'settled') {
-      lines.push({ kind: 'none', text: `${describeQuarter(label)} is already paid and is not touched.` });
+      lines.push({ kind: 'none', text: `leave ${describeQuarter(label)} alone, because it is paid` });
     }
   }
 
   if (!plans.length) {
-    lines.push({ kind: 'none', text: 'There is no unpaid maintenance bill on this flat to move.' });
+    lines.push({ kind: 'none', text: 'move no maintenance bill, because none is unpaid on this flat' });
   }
 
   // The next quarter, which is the consequence an admin forgets and the one the
@@ -105,23 +102,22 @@ export function describeDeparture({
   if (becomes !== 'tenant') {
     lines.push({
       kind: 'future',
-      text: 'From the next quarter this flat is billed at the owner rate, '
+      text: `bill this flat at the owner rate from the next quarter, `
         + `${money(rates?.owner_rate ?? DEFAULT_OWNER_RATE)} instead of `
-        + `${money(rates?.tenant_rate ?? DEFAULT_TENANT_RATE)}.`,
+        + `${money(rates?.tenant_rate ?? DEFAULT_TENANT_RATE)}`,
     });
   }
 
   lines.push({
     kind: 'letters',
-    text: `${person?.name ?? 'They'} stops receiving the maintenance letters and reminders; `
-      + `they go to ${owner?.name ?? 'the owner'} instead.`,
+    text: 'send the remaining letters to the owner only',
   });
 
   lines.push({
     kind: 'login',
     // Said in the dialog rather than discovered afterwards. Taking somebody's
     // login is the part of this an admin does not picture when they tap.
-    text: `${person?.name ?? 'They'} loses their login when this is approved — not now.`,
+    text: `end ${person?.name ?? 'their'}${person?.name ? "'s" : ''} login`,
   });
 
   return {

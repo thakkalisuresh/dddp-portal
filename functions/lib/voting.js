@@ -19,7 +19,7 @@ import { istToday } from './time.js';
 
 /** Every unsettled maintenance bill, with the approval flag the rule reads. */
 const OPEN_BILLS_SQL =
-  `SELECT b.id, b.flat, b.quarter, b.total, b.status,
+  `SELECT b.id, b.flat, b.quarter, b.total, b.status, b.late_fee, b.claimed_at,
           EXISTS (SELECT 1 FROM maint_approval_requests r
                    WHERE r.bill_id = b.id AND r.status = 'pending') AS pending_approval
      FROM maint_bills b

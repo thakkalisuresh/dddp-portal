@@ -481,16 +481,23 @@ export function flatVotingStatus({ bills, pollCreatedAt, exemption = null, today
   return {
     canVote: false,
     reason: claimed ? 'arrears-claimed' : 'arrears',
-    // PLACEHOLDER. Every resident-visible string in this feature goes to the
-    // committee in the wording pass before testing; these two are drafts so the
-    // slot exists and the card can be built against it.
     message: claimed
-      ? 'Your payment is with the treasurer. Your vote unlocks as soon as it is confirmed.'
-      : 'This flat has maintenance outstanding from a closed quarter.',
+      ? 'Your payment is with the treasurer'
+      : 'Voting is locked while maintenance charges are unpaid',
     // Shown on the poll itself, beside a Pay button, because a block with no
     // number attached is a dead end rather than something a resident can act on.
     owed: blocking.reduce((sum, b) => sum + Number(b.total ?? 0), 0),
     quarters: blocking.map((b) => b.quarter).sort(),
+    // Whether a late fee is part of that figure, so the card can say "including
+    // the late fee" only when it is true. A resident who is told their ₹9,750
+    // includes a fee that was waived will bring the screenshot to a meeting.
+    lateFee: blocking.reduce((sum, b) => sum + Number(b.late_fee ?? 0), 0),
+    // When they said they had paid — the screenshot date the claimed card
+    // quotes back to them. Null unless something is actually claimed, and the
+    // latest of them when more than one quarter is outstanding.
+    claimedAt: claimed
+      ? blocking.map((b) => b.claimed_at).filter(Boolean).sort().pop() ?? null
+      : null,
     // The bills themselves, oldest quarter first, so the card beside the number
     // can be a Pay button rather than an instruction to go and find it. A block
     // with no way out of it on the same screen is the dead end this whole card

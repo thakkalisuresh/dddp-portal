@@ -471,9 +471,7 @@ function maintCreditRow(d) {
       // would settle it and names the door that takes an admin's word for a
       // payment instead of leaving them to find it.
       (d.candidates ?? []).some((c) => c.short > 0) && !(d.candidates ?? []).some((c) => c.short <= 0)
-        ? el('div', { class: 'small muted' },
-            'The bill settles when the rest arrives. To credit this part payment now, '
-            + 'record it as an offline payment on the Maintenance tab — that needs a second admin.')
+        ? el('div', { class: 'small muted' }, shortRefusal(d))
         : null,
       ask),
     el('div', { class: 'qact' },
@@ -486,6 +484,26 @@ function maintCreditRow(d) {
         onclick: (e) => assign(c.billId, `Flat ${c.flat}`, e.target),
       }, `Assign to ${c.flat}`)),
       picker));
+}
+
+/**
+ * The short-of-the-bill refusal, naming the amount and the route out.
+ *
+ * The figures come from the nearest candidate rather than being described in
+ * the abstract: "₹500 short of flat 2B's ₹7,000" is a thing a treasurer can
+ * check against a statement, where "this does not settle the bill" is a thing
+ * they have to work out for themselves — and the working out is where they
+ * reach for the nearest plausible flat instead.
+ */
+function shortRefusal(d) {
+  const nearest = (d.candidates ?? [])
+    .filter((c) => c.short > 0)
+    .sort((a, b) => a.short - b.short)[0];
+  const head = nearest
+    ? `${money(nearest.short)} short of flat ${nearest.flat}'s ${money(nearest.total)}. `
+    : '';
+  return `${head}The bill settles when the rest arrives. To record a part payment, `
+    + 'use Record offline payment on the Maintenance page.';
 }
 
 function confirmedRow(c) {

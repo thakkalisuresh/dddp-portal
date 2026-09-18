@@ -16,7 +16,8 @@
  * explicitly confirmed. That is the user's own instruction and it is not a
  * warning anybody can scroll past.
  *
- * Every resident-visible string here is placeholder under PLACEHOLDER_COPY.
+ * The wording here is the committee's, approved in the pass that took
+ * PLACEHOLDER_COPY down. Changing it is their decision, not a tidy-up.
  */
 
 import { api } from './api.js';
@@ -427,7 +428,9 @@ function tenancyBlock() {
   const strip = blocked.blocked
     ? el('div', { class: 'note note--warn' },
         el('p', {}, `${blocked.count} tenanc${blocked.count === 1 ? 'y needs' : 'ies need'} `
-          + 'confirming before this quarter can be scheduled.'),
+          + 'confirming before this quarter can be scheduled'),
+        el('p', { class: 'small' },
+          'A record that is out of date bills the wrong person at the wrong rate.'),
         // NAMED, because "3 tenancies" is not something anybody can act on
         // until they know which flats.
         el('p', { class: 'small' }, `Flats: ${blocked.flats.join(', ')}`))
@@ -447,11 +450,22 @@ function tenancyBlock() {
         el('thead', {}, el('tr', {},
           el('th', {}, 'Flat'),
           el('th', {}, 'Tenant'),
-          el('th', {}, 'Lease to'),
-          el('th', {}, 'Last confirmed'),
           el('th', {}, 'Flag'),
           el('th', {}, ''))),
-        el('tbody', {}, ...state.tenancies.map(tenancyRow)))));
+        el('tbody', {}, ...state.tenancies.map(tenancyRow)))),
+    // Said once under the table rather than on every row: "Still here" is the
+    // button an admin presses most and the one whose effect is least obvious.
+    //
+    // THE SECOND SENTENCE IS NOT IN THE APPROVED COPY and is here because the
+    // first one is not true of every flag. Confirming a tenancy whose lease end
+    // has already passed stamps the date and leaves the flag exactly where it
+    // was — `lease-ended` outranks `unchecked` — so an admin who read only the
+    // approved sentence would press "Still here", watch nothing happen, and
+    // press it again. Found by pressing it.
+    el('p', { class: 'small muted' },
+      '"Still here" records today\u2019s date against the tenancy and clears the '
+      + 'flag for this quarter. A lease that has already ended needs a new end '
+      + 'date instead, on Residents — confirming alone does not clear it.'));
 }
 
 function tenancyRow(row) {
@@ -511,13 +525,15 @@ function tenancyRow(row) {
     out,
   ].filter(Boolean));
 
+  // ONE LINE PER ROW rather than a column each for the lease end and the last
+  // confirmation. Four columns of dates made every row read as four separate
+  // facts to check; what an admin is actually deciding is one thing — whether
+  // this tenancy is real — and the line says only what its flag makes relevant.
   tr.replaceChildren(
     el('td', {}, row.flat),
     el('td', {},
       row.name,
-      row.since ? el('div', { class: 'small muted' }, `since ${dayLabel(row.since)}`) : null),
-    el('td', {}, row.leaseEndsAt ? dayLabel(row.leaseEndsAt) : '—'),
-    el('td', { class: 'small muted' }, row.confirmedAt ? dayLabel(row.confirmedAt) : 'never'),
+      el('div', { class: 'small muted' }, tenancyDetail(row))),
     el('td', {}, flagChip(row)),
     actions);
 
@@ -527,12 +543,69 @@ function tenancyRow(row) {
 function flagChip(row) {
   const conf = {
     current: { cls: 'chip--paid', label: 'Current' },
-    'lease-ended': { cls: 'chip--overdue',
-      label: `Lease ended${row.endedDaysAgo ? ` ${row.endedDaysAgo}d ago` : ''}` },
-    'missing-date': { cls: 'chip--awaiting', label: 'No lease date' },
-    unchecked: { cls: 'chip--awaiting', label: '2+ years unchecked' },
+    'lease-ended': { cls: 'chip--overdue', label: 'Lease ended' },
+    'missing-date': { cls: 'chip--awaiting', label: 'No end date' },
+    unchecked: { cls: 'chip--awaiting', label: 'Not checked in 2 years' },
   }[row.flag];
   return el('span', { class: `chip ${conf.cls}` }, conf.label);
+}
+
+/** '2027-03-14' -> '03/27'. Month precision, which is how leases are talked about. */
+function monthYear(iso) {
+  const [y, m] = String(iso ?? '').split('-');
+  return y && m ? `${m}/${y.slice(2)}` : '';
+}
+
+/** 86 -> 'two months'. Words up to a year, because "86d ago" is not a sentence. */
+function agoInWords(days) {
+  const n = Number(days ?? 0);
+  if (n < 14) return `${n} day${n === 1 ? '' : 's'}`;
+  const months = Math.round(n / 30);
+  if (months < 1) return `${Math.round(n / 7)} weeks`;
+  if (months >= 12) return 'over a year';
+  const words = ['', 'one', 'two', 'three', 'four', 'five', 'six',
+    'seven', 'eight', 'nine', 'ten', 'eleven'];
+  return `${words[months]} month${months === 1 ? '' : 's'}`;
+}
+
+/**
+ * The one line under a tenant's name, by flag.
+ *
+ * Each flag is a different question, so each line answers a different one: a
+ * current tenancy is asking to be trusted, an ended one is asking to be acted
+ * on, and an unconfirmed one is asking when anybody last looked. Showing all
+ * four facts on all four rows was how the table became unreadable.
+ */
+function tenancyDetail(row) {
+  if (row.flag === 'lease-ended') {
+    return `Lease ended ${monthYear(row.leaseEndsAt)}, ${agoInWords(row.endedDaysAgo)} ago`;
+  }
+  if (row.flag === 'unchecked') {
+    // NOT ALWAYS "never". The flag covers both a tenancy nobody has ever
+    // confirmed and one last confirmed three years ago, and telling an admin
+    // "never confirmed" about a row they themselves confirmed in 2024 is how a
+    // screen loses their trust. Written here rather than approved: the wording
+    // pass gave the "never" case only.
+    const since = row.since ? `Tenant since ${monthYear(row.since)}, ` : '';
+    return row.confirmedAt
+      ? `${since}last confirmed ${monthYear(row.confirmedAt)}`
+      : `${since || 'Tenant'}never confirmed`.replace('Tenantnever', 'Never');
+  }
+  if (row.flag === 'missing-date') {
+    return row.since
+      ? `Tenant since ${monthYear(row.since)}, no lease end recorded`
+      : 'No lease end recorded';
+  }
+  const parts = [];
+  if (row.leaseEndsAt) parts.push(`Lease to ${monthYear(row.leaseEndsAt)}`);
+  if (row.confirmedAt) parts.push(`confirmed ${shortDay(row.confirmedAt)}`);
+  return parts.join(' · ') || 'On record';
+}
+
+/** '2026-07-12' -> '12 Jul'. The short form, for a line that is already long. */
+function shortDay(iso) {
+  return dayLabel(iso).replace(
+    /\s(\w{3})\w*$/, (_, abbr) => ` ${abbr}`);
 }
 
 /**
@@ -738,17 +811,21 @@ function scheduleBody() {
 
     // BOTH DATES, SEPARATELY. The fee lands the day AFTER the due date, and the
     // gas screens have already taught residents to misread those as one day.
+    // THE THREE DATES IN ONE SENTENCE. They were three sentences, and the one
+    // that matters — that the fee lands the day AFTER the due date, not on it —
+    // was the third of them.
     el('p', { class: 'small muted' },
-      `Due ${dayLabel(c.dueDate)}. The late fee of ${money(state.row.late_fee)} is `
-      + `charged overnight after ${dayLabel(c.dueDate)} — the first bills carrying it `
-      + `are dated ${dayLabel(c.lateFeeDate)}.`),
+      `Issuing on ${dayLabel(c.issueDate ?? state.issueDate)} means due `
+      + `${dayLabel(c.dueDate)}, and a ${money(state.row.late_fee)} late fee on `
+      + `${dayLabel(c.lateFeeDate)}.`),
 
     el('div', { class: 'note' },
-      el('p', {}, `Issuing raises ${c.willBill} bills totalling ${money(c.total)}.`),
+      el('p', {}, `On the issue date: ${c.willBill} bills are raised, and each flat's `
+        + 'tenant and owner are emailed. A reminder follows three days before the due date.'),
+      // Kept under it: the split is the number the committee is least sure of,
+      // and it is the difference between ₹7,500 and ₹9,000 ninety times over.
       el('p', { class: 'small' },
-        `${c.tenantCount} at the rented rate, ${c.ownerCount} at the owner rate. `
-        + 'Letters go to whoever is billed, and to the owner of a let flat. '
-        + 'A reminder follows three days before the due date.')),
+        `${c.tenantCount} at the rented rate, ${c.ownerCount} at the owner rate.`)),
 
     letterPreview(),
 
@@ -799,14 +876,22 @@ function scheduleBody() {
 
 function scheduledReceipt() {
   const out = el('p', { class: 'small' });
+  const flats = state.row.scheduled_flats ?? state.consequences.willBill;
+  const total = state.row.scheduled_total ?? state.consequences.total;
+  const who = state.row.scheduled_by_name;
+  const when = state.row.scheduled_at ? dayLabel(state.row.scheduled_at) : null;
+
   return el('div', { class: 'stack' },
     el('div', { class: 'note note--good' },
-      el('p', {}, `${state.row.scheduled_flats ?? state.consequences.willBill} bills, `
-        + `${money(state.row.scheduled_total ?? state.consequences.total)}, `
-        + `going out ${dayLabel(state.issueDate)}.`),
+      el('p', {},
+        // Who and when first: this is a receipt, and a receipt with no name on
+        // it does not tell a second admin who to ask about it.
+        (who && when ? `Scheduled by ${who} on ${when}. ` : who ? `Scheduled by ${who}. ` : '')
+        + `${state.quarterLabel} issues on ${dayLabel(state.issueDate)}: `
+        + `${flats} flats, ${money(total)}.`),
       el('p', { class: 'small' },
-        `Due ${dayLabel(state.consequences.dueDate)}.`
-        + (state.row.scheduled_at ? ` Scheduled ${dayLabel(state.row.scheduled_at)}.` : ''))),
+        'Nothing has been sent. You can still unschedule or change this until '
+        + `${dayLabel(state.issueDate)}.`)),
 
     el('button', {
       class: 'btn btn--ghost', type: 'button',

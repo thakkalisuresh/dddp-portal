@@ -237,10 +237,19 @@ describe('votingCard', () => {
     expect(card.quarters.join('')).not.toMatch(/\d{4}-Q\d/);
   });
 
+  it('carries the blocking bills, so the locked poll card can offer a way out', () => {
+    // Lost once already: routing the poll payload through this shaper dropped
+    // billIds, and the locked card's Pay button vanished with them.
+    const card = votingCard({ canVote: false, reason: 'arrears', owed: 9750, billIds: [7, 9] });
+    expect(card.billIds).toEqual([7, 9]);
+  });
+
   it('carries no person — the copy names the debt, never who owes it', () => {
     // A tenant's arrears lock the owner's vote. The one case where naming is
     // most tempting is the one where it does most damage.
     const card = votingCard({ canVote: false, reason: 'arrears', owed: 9750, quarters: ['2026-Q3'] });
-    expect(Object.keys(card)).toEqual(['canVote', 'reason', 'message', 'owed', 'quarters']);
+    expect(Object.keys(card)).toEqual([
+      'canVote', 'reason', 'message', 'owed', 'quarters', 'billIds', 'lateFee', 'claimedAt',
+    ]);
   });
 });

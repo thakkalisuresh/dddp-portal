@@ -25,6 +25,7 @@ import { mailToken, sendEmail, mailConfigured } from './mailer.js';
 import { letterFor, MAIL_KINDS } from './maint-mail.js';
 import { renderEmail, para, figure, details, action, aside, SITE } from './email-template.js';
 import { istToday } from './time.js';
+import { dayAndMonth } from './reminders.js';
 import { fail } from './errors.js';
 
 /**
@@ -118,25 +119,37 @@ export async function confirmRecipients(env, quarter) {
   return eligible.length ? eligible : admins;
 }
 
-/** PLACEHOLDER COPY — the committee approves wording before testing. */
+/**
+ * The nightly nudge to an admin while a quarter is still a draft.
+ *
+ * WRITTEN HERE, not approved in the wording pass: the pass covered what
+ * residents see and the admin screens, and this letter belongs to neither. It
+ * is kept in the same register — plain, figures grouped, the dates named — and
+ * it is flagged to the committee as written rather than approved.
+ *
+ * ADMIN-FACING, so it says the thing an admin needs and a resident never sees:
+ * that nothing has gone out yet, and that confirming fixes the rates.
+ */
 export function confirmEmail({ quarter, issueDate, dueDate, preview, origin = '' }) {
   const site = origin || SITE;
+  const money = (n) => `₹${Math.round(Number(n ?? 0)).toLocaleString('en-IN')}`;
   return renderEmail({
     title: `Confirm maintenance for ${describeQuarter(quarter)}`,
-    preview: `${preview.willBill} flats, ₹${preview.total}. Nothing has been sent to residents.`,
+    preview: `${preview.willBill} flats, ${money(preview.total)}. Nothing has been sent to residents.`,
     blocks: [
       para(`The draft for ${describeQuarter(quarter)} is ready and needs an admin to `
         + 'confirm it. Nothing reaches residents until somebody does.'),
-      figure(`₹${preview.total}`, `${preview.willBill} flats`),
+      figure(money(preview.total), `${preview.willBill} flats`),
       details([
         ['Owner-occupied', `${preview.ownerCount} flats`],
         ['Let', `${preview.tenantCount} flats`],
-        ['Issue date', issueDate],
-        ['Due date', dueDate],
+        ['Issue date', dayAndMonth(issueDate)],
+        ['Due date', dayAndMonth(dueDate)],
       ]),
       ...(preview.unresolved.length
-        ? [para(`${preview.unresolved.length} flat(s) have somebody living there and no `
-            + 'owner on record, so they cannot be billed. They need fixing first: '
+        ? [para(`${preview.unresolved.length} flat${preview.unresolved.length === 1 ? '' : 's'} `
+            + `${preview.unresolved.length === 1 ? 'has' : 'have'} somebody living there and no `
+            + 'owner on record, so they cannot be billed. Fix these first: '
             + preview.unresolved.map((u) => u.flat).join(', '))]
         : []),
       action('Review and schedule', `${site}/admin`),
