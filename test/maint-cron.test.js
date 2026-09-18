@@ -736,7 +736,10 @@ describe('draining the outbox', () => {
     gmail.restore();
 
     const subjects = gmail.calls.map((c) => subjectOf(c.raw));
-    expect(subjects.every((s) => /due on 11 October/i.test(s))).toBe(true);
+    // The three-days-early subject, not the issued one: the row's kind decides
+    // the letter, and a drain that sent whichever letter was newest would tell
+    // everybody the wrong thing at exactly the moment it matters.
+    expect(subjects.every((s) => /due in 3 days/i.test(s))).toBe(true);
     expect(rows(db, "SELECT * FROM maint_mail WHERE kind = 'due_soon' AND status = 'sent'"))
       .toHaveLength(2);
   });

@@ -43,7 +43,7 @@ describe('previewLetter', () => {
     expect(p.projected).toBe(true);
     expect(p.basis).toBe('owner');
     expect(p.subject).toMatch(/Q4 2026/);
-    expect(p.text).toContain('7500');
+    expect(p.text).toContain('₹7,500');
     expect(p.text).toContain('4A');
   });
 
@@ -54,7 +54,7 @@ describe('previewLetter', () => {
     const p = await previewLetter(env, '2026-Q4', { flat: '4B', today: TODAY });
 
     expect(p.basis).toBe('tenant');
-    expect(p.text).toContain('9000');
+    expect(p.text).toContain('₹9,000');
   });
 
   it('writes nothing to the outbox — not one row, not for any kind', async () => {
@@ -76,7 +76,7 @@ describe('previewLetter', () => {
 
     const p = await previewLetter(env, '2026-Q4', { flat: '4A', today: '2026-10-01' });
     expect(p.projected).toBe(false);
-    expect(p.text).toContain('7500');
+    expect(p.text).toContain('₹7,500');
   });
 
   it('refuses a flat this quarter would not bill', async () => {

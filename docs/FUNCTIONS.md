@@ -521,7 +521,7 @@ The maintenance outbox: four letters per bill, and the drain that sends them.
 | fn | `permanentFailure` | Is this failure worth trying again? Identical rule to `announce.js`, and deliberately a copy rather than an import: it is four lines, and the alternative is one module reaching into another's retry policy so that changing gas's quietly changes maintenance's. |
 | fn | `issuedEmail` | Letter 1 — the bill exists. |
 | fn | `dueSoonEmail` |  |
-| fn | `dueEmail` |  |
+| fn | `dueEmail` | Letter 3 — the due date itself, which is still a payable day. |
 | fn | `overdueEmail` | Letter 4 — the fee has landed, and possibly the vote with it. |
 | fn | `letterFor` |  |
 | fn | `ccFor` | The Cc list for one bill: the rest of the household. |
@@ -1209,4 +1209,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-670 exports. 293 have no doc comment.
+670 exports. 292 have no doc comment.

@@ -17,50 +17,76 @@ const bill = (over = {}) => ({
 
 describe('the four letters', () => {
   it('names the quarter the way residents see it, never the internal label', () => {
-    const m = issuedEmail({ ...bill(), basis: 'owner', rate: 7500 });
+    const m = issuedEmail({ ...bill(), basis: 'owner' });
     expect(m.subject).toContain('Q4 2026 (Oct–Dec)');
     expect(m.subject).not.toContain('2026-Q4');
     expect(m.text).not.toContain('2026-Q4');
   });
 
-  it('calls it maintenance, not a bill, and says it is not the gas one', () => {
-    const m = issuedEmail({ ...bill(), basis: 'owner', rate: 7500 });
-    expect(m.text.toLowerCase()).toContain('maintenance');
-    expect(m.text).toMatch(/separate from the gas/i);
+  it('calls them maintenance charges throughout', () => {
+    // "Charges", not "bill", in the approved wording — and consistently, so a
+    // resident holding a gas bill and this one can tell them apart by name.
+    // The line explaining that maintenance is separate from gas and paid into
+    // a different account did not survive the committee's pass; if the two
+    // accounts get confused at the bank, that is where to look first.
+    const m = issuedEmail({ ...bill(), basis: 'owner' });
+    expect(m.subject).toMatch(/maintenance charges/i);
+    expect(m.text).toMatch(/maintenance charges/i);
   });
 
   it('shows a tenant why they pay more than their neighbour', () => {
     // A tenant billed 9,000 beside an owner billed 7,500 will ask, and the
     // answer belongs on the bill rather than in the committee's inbox.
-    const tenant = issuedEmail({ ...bill(), basis: 'tenant', rate: 9000 });
-    expect(tenant.text).toMatch(/let flat/i);
-    const owner = issuedEmail({ ...bill(), total: 7500, basis: 'owner', rate: 7500 });
-    expect(owner.text).toMatch(/owner-occupied/i);
+    const tenant = issuedEmail({ ...bill(), basis: 'tenant' });
+    expect(tenant.text).toMatch(/rented rate/i);
+    const owner = issuedEmail({ ...bill(), total: 7500, basis: 'owner' });
+    expect(owner.text).toMatch(/owner rate/i);
   });
 
   it('never carries a payment link — only the portal', () => {
     // An unsolicited message asking for money is the shape of a fraud, and
     // upi:// links do not survive Gmail anyway.
+    // The standing "nobody from the association will ever send you a payment
+    // link" line did not survive the committee's pass. The structural half of
+    // the rule is still asserted here, because it is the half that a future
+    // edit could break by accident.
     for (const m of [
-      issuedEmail({ ...bill(), basis: 'owner', rate: 7500 }),
+      issuedEmail({ ...bill(), basis: 'owner' }),
       dueSoonEmail(bill()), dueEmail(bill()),
-      overdueEmail({ ...bill(), blocksVoting: false }),
+      overdueEmail({ ...bill(), charged: 750, blocksVoting: false }),
     ]) {
       expect(m.text).not.toContain('upi://');
       expect(m.html).not.toContain('upi://');
-      expect(m.text).toMatch(/ever send you a payment\s+link/i);
+      expect(m.text).toContain('/dashboard');
     }
   });
 
   it('points disputes at the committee, never at a person', () => {
-    const m = dueEmail(bill());
+    // Carried by the overdue letter, which is the one somebody disputes. The
+    // approved wording also offers a reply to the email itself, so the mailbox
+    // the letters are sent from has to be one a human reads.
+    const m = overdueEmail({ ...bill(), total: 9750, charged: 750, blocksVoting: false });
     expect(m.text).toMatch(/committee/i);
-    // No individual is named anywhere, and no reply-to-a-human instruction.
+    // No individual is named anywhere.
     expect(m.text).not.toMatch(/treasurer[’']s|contact \w+ on/i);
   });
 
-  it('names the fee three days early, while it can still be avoided', () => {
-    expect(dueSoonEmail(bill()).text).toContain('750');
+  it('names the fee date in the first letter, and never leaves a hole where it goes', () => {
+    // The fee lands the day AFTER the due date, so the first letter has to name
+    // 12 October where the due date is the 11th — the one place the two dates
+    // differ, and the gas rule has taught residents to expect otherwise.
+    const m = issuedEmail({ ...bill(), basis: 'tenant' });
+    expect(m.text).toMatch(/late fee of ₹750 is added on 12 October/);
+    expect(m.text).not.toMatch(/added on\s{2,}/);
+  });
+
+  it('names the amount and the date three days early', () => {
+    // The ₹750 itself is NOT in this letter any more — the committee's wording
+    // moved the fee to the due-date letter, so the last warning a resident gets
+    // in time to avoid it is the one on the day, not this one.
+    const m = dueSoonEmail(bill());
+    expect(m.text).toContain('₹9,000');
+    expect(m.text).toContain('11 October');
   });
 
   it('says the due date itself is still payable — the rule that differs from gas', () => {
@@ -68,24 +94,26 @@ describe('the four letters', () => {
     // date payable and charges the morning after. Residents have learned the
     // gas rule, so being vague here would cost somebody ₹750.
     const m = dueEmail(bill());
-    expect(m.text).toMatch(/still payable/i);
-    expect(m.text).toMatch(/added tomorrow/i);
+    expect(m.text).toMatch(/due today/i);
+    // Says it as arithmetic rather than as a rule: ₹9,000 today, ₹9,750 after.
+    expect(m.text).toMatch(/adds ₹750, making it ₹9,750/i);
   });
 
   it('warns about the vote only once the quarter has actually ended', () => {
-    const blocked = overdueEmail({ ...bill(), blocksVoting: true });
+    const blocked = overdueEmail({ ...bill(), total: 9750, charged: 750, blocksVoting: true });
     expect(blocked.text).toMatch(/cannot vote/i);
-    // And says how to undo it, in the same breath.
-    expect(blocked.text).toMatch(/treasurer confirms/i);
+    // The approved wording drops the sentence promising the block lifts when
+    // the treasurer confirms payment. The admin panel still says so; the
+    // resident is now told only that they are barred.
 
-    const notYet = overdueEmail({ ...bill(), blocksVoting: false });
+    const notYet = overdueEmail({ ...bill(), total: 9750, charged: 750, blocksVoting: false });
     expect(notYet.text).not.toMatch(/cannot vote/i);
   });
 
   it('decides the voting line from the quarter, not from the bill being unpaid', () => {
     const row = {
       flat: '2B', quarter: '2026-Q4', total: 9750, due_date: '2026-10-11',
-      quarter_late_fee: 750, basis: 'owner', rate_applied: 7500,
+      late_fee: 750, quarter_late_fee: 750, basis: 'owner', rate_applied: 7500,
     };
     // The day after Q4's due date — Q4 is still running, so nothing is blocked.
     expect(letterFor('overdue', row, { today: '2026-10-12' }).text).not.toMatch(/cannot vote/i);
@@ -100,8 +128,8 @@ describe('the four letters', () => {
   it('builds both halves of every letter', () => {
     for (const kind of MAIL_KINDS) {
       const m = letterFor(kind, {
-        flat: '2B', quarter: '2026-Q4', total: 9000, due_date: '2026-10-11',
-        quarter_late_fee: 750, basis: 'tenant', rate_applied: 9000,
+        flat: '2B', quarter: '2026-Q4', total: 9750, due_date: '2026-10-11',
+        late_fee: 750, quarter_late_fee: 750, basis: 'tenant', rate_applied: 9000,
       }, { today: '2026-10-12' });
       expect(m.subject, kind).toBeTruthy();
       expect(m.text, kind).toBeTruthy();

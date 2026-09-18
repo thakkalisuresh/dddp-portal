@@ -26,7 +26,7 @@
 import { mailToken, sendEmail, mailConfigured } from './mailer.js';
 import { renderEmail, para, figure, details, action, aside, SITE } from './email-template.js';
 import { dayAndMonth } from './reminders.js';
-import { describeQuarter, quarterHasEnded } from './maint.js';
+import { describeQuarter, quarterHasEnded, lateFeeDateFor } from './maint.js';
 
 /**
  * A flag, not a comment, so nothing ships by accident.
@@ -71,80 +71,88 @@ export function permanentFailure(reason) {
    NO PAYMENT LINK IN ANY OF THEM, matching gas and for the same two reasons:
    an unsolicited message asking for money is the shape of a fraud, and B19
    found that `upi://` links do not survive Gmail anyway. The portal, where the
-   working and the Pay button are, is the only thing to tap.                  */
+   working and the Pay button are, is the only thing to tap.
 
-/** Common footer line. Disputes go to the committee, never to a named person. */
-const DISPUTE_LINE = 'If something here looks wrong, raise it with the committee '
-  + 'through the portal rather than replying to this message.';
+   THE WORDING IS THE COMMITTEE'S, approved as rendered. Where a line here
+   reads oddly against the comment above it, the comment is describing why the
+   information is present, not claiming authorship of the sentence.           */
 
-const FRAUD_LINE = 'Nobody from the association will ever send you a payment link '
-  + 'in a message.';
+/** ₹9,000, not ₹9000. Whole rupees: the schema will not store anything else. */
+const money = (n) => `₹${Math.round(Number(n ?? 0)).toLocaleString('en-IN')}`;
+
+/** '11 October 2026'. The year only where the letter is read long before the date. */
+const dayMonthYear = (iso) => `${dayAndMonth(iso)} ${String(iso).slice(0, 4)}`;
+
+/** 'rented rate' or 'owner rate' — from the bill's basis, never composed. */
+const rateWord = (basis) => (basis === 'tenant' ? 'rented rate' : 'owner rate');
 
 /**
  * Letter 1 — the bill exists.
  *
- * The basis is shown as a line rather than left implicit. A tenant paying
+ * The basis is named in the caption rather than left implicit. A tenant paying
  * ₹9,000 where their neighbour pays ₹7,500 is entitled to see, on the bill
  * itself, that the difference is the rate for a let flat and not a mistake —
  * and the alternative is the committee fielding that question ninety times.
  */
-export function issuedEmail({ flat, quarter, total, dueDate, basis, rate, origin = '' }) {
+export function issuedEmail({ flat, quarter, total, dueDate, basis, lateFee, lateFeeDate, origin = '' }) {
   const site = origin || SITE;
+  // Derived rather than required. A caller that forgot it would otherwise
+  // produce "a late fee of ₹750 is added on  if the charges are unpaid" — a
+  // sentence with a hole in it, which renders and sends perfectly happily.
+  const feeDate = lateFeeDate ?? lateFeeDateFor(dueDate);
   return renderEmail({
-    title: `Maintenance charges for ${describeQuarter(quarter)}`,
-    preview: `₹${total} for flat ${flat}, due ${dayAndMonth(dueDate)}.`,
+    title: `Maintenance charges for ${describeQuarter(quarter)} · Flat ${flat}`,
+    preview: `${money(total)} due ${dayMonthYear(dueDate)}`,
     blocks: [
-      para(`The maintenance charge for flat ${flat} is ready.`),
-      figure(`₹${total}`, `due ${dayAndMonth(dueDate)}`),
-      details([
-        ['Flat', flat],
-        ['Quarter', describeQuarter(quarter)],
-        ['Rate', basis === 'tenant' ? `₹${rate} — let flat` : `₹${rate} — owner-occupied`],
-      ]),
-      para('Maintenance is charged once a quarter and is separate from the gas '
-        + 'bill, which is monthly and paid into a different account.'),
-      action('Pay on the portal', `${site}/dashboard`),
-      aside(`${FRAUD_LINE} ${DISPUTE_LINE}`),
+      para(`Your maintenance charges for ${describeQuarter(quarter)} are due.`),
+      figure(money(total),
+        `Flat ${flat} · ${rateWord(basis)} · due ${dayMonthYear(dueDate)}`),
+      action('Pay now', `${site}/dashboard`),
+      // The fee and the screenshot in one line: the two things a resident has
+      // to do something about, said where they will still be read.
+      aside(`A late fee of ${money(lateFee)} is added on ${dayAndMonth(feeDate)} `
+        + 'if the charges are unpaid. After paying, upload your payment screenshot '
+        + 'in the portal so the treasurer can confirm it.'),
     ],
   });
 }
 
 /** Letter 2 — three days out. The only one that exists purely to be helpful. */
-export function dueSoonEmail({ flat, quarter, total, dueDate, lateFee, origin = '' }) {
+export function dueSoonEmail({ flat, quarter, total, dueDate, origin = '' }) {
   const site = origin || SITE;
   return renderEmail({
-    title: `Maintenance for ${describeQuarter(quarter)} is due on ${dayAndMonth(dueDate)}`,
-    preview: `₹${total} for flat ${flat}.`,
+    title: `Maintenance charges due in 3 days · Flat ${flat}`,
+    preview: `${money(total)} due ${dayAndMonth(dueDate)}`,
     blocks: [
-      para(`A reminder that the maintenance charge for flat ${flat} is due on `
-        + `${dayAndMonth(dueDate)}.`),
-      figure(`₹${total}`, `due ${dayAndMonth(dueDate)}`),
-      // The fee is named now rather than sprung later. A resident who is going
-      // to be charged ₹750 should hear the number while they can still avoid
-      // it, which is the entire point of sending anything three days early.
-      para(`A late fee of ₹${lateFee} is added the day after the due date.`),
-      action('Pay on the portal', `${site}/dashboard`),
-      aside(`${FRAUD_LINE} ${DISPUTE_LINE}`),
+      para(`${money(total)} for ${describeQuarter(quarter)} is due on ${dayAndMonth(dueDate)}.`),
+      action(`Pay ${money(total)}`, `${site}/dashboard`),
+      // The reminder that is wrong for one reader in ten is the one that makes
+      // them distrust the other nine: somebody who paid yesterday is told what
+      // to do about this message rather than left to wonder.
+      aside('Already paid? Upload your screenshot so the treasurer can match it, '
+        + 'and ignore this reminder.'),
     ],
   });
 }
 
-/** Letter 3 — the due date itself, which is still a payable day. */
+/**
+ * Letter 3 — the due date itself, which is still a payable day.
+ *
+ * The figure carries the consequence rather than a separate sentence. Gas is
+ * charged ON the due date at midnight; maintenance leaves the due date payable
+ * and charges the morning after, and residents have learned the gas rule.
+ * Being vague here would cost somebody ₹750.
+ */
 export function dueEmail({ flat, quarter, total, lateFee, origin = '' }) {
   const site = origin || SITE;
   return renderEmail({
-    title: `Maintenance for ${describeQuarter(quarter)} is due today`,
-    preview: `₹${total} for flat ${flat}.`,
+    title: `Maintenance charges due today · Flat ${flat}`,
+    preview: `${money(total)} due today`,
     blocks: [
-      para(`The maintenance charge for flat ${flat} is due today.`),
-      figure(`₹${total}`, 'due today'),
-      // Stated because the rule is not the gas rule and residents have learned
-      // the gas one. Gas is charged ON the due date at midnight; maintenance
-      // leaves the due date payable and charges the morning after. Being vague
-      // here would cost somebody ₹750.
-      para(`Today is still payable. A late fee of ₹${lateFee} is added tomorrow.`),
-      action('Pay on the portal', `${site}/dashboard`),
-      aside(`${FRAUD_LINE} ${DISPUTE_LINE}`),
+      para(`${money(total)} for ${describeQuarter(quarter)} is due today.`),
+      figure(money(total),
+        `Paying after today adds ${money(lateFee)}, making it ${money(total + lateFee)}`),
+      action(`Pay ${money(total)}`, `${site}/dashboard`),
     ],
   });
 }
@@ -156,23 +164,28 @@ export function dueEmail({ flat, quarter, total, lateFee, origin = '' }) {
  * actually ended. A bill that is overdue inside its own quarter does not block
  * anything, and telling someone their vote is at risk when it is not would be
  * both untrue and the most alarming sentence the portal sends.
+ *
+ * `charged` is the fee ON THIS BILL, not the quarter's setting: a fee that was
+ * waived, or a quarter whose fee was edited after the fact, must not produce a
+ * letter whose arithmetic does not add up in front of the person paying it.
  */
-export function overdueEmail({ flat, quarter, total, lateFee, blocksVoting, origin = '' }) {
+export function overdueEmail({ flat, quarter, total, charged, dueDate, blocksVoting, origin = '' }) {
   const site = origin || SITE;
+  const base = total - charged;
   return renderEmail({
-    title: `Maintenance for ${describeQuarter(quarter)} is overdue`,
-    preview: `₹${total} for flat ${flat}, including a ₹${lateFee} late fee.`,
+    title: `Maintenance charges overdue · Flat ${flat} · ${money(total)}`,
+    preview: `${money(charged)} late fee added`,
     blocks: [
-      para(`The maintenance charge for flat ${flat} was due yesterday, so a late `
-        + `fee of ₹${lateFee} has been added.`),
-      figure(`₹${total}`, 'now payable'),
+      para(`${describeQuarter(quarter)} maintenance charges were due on `
+        + `${dayAndMonth(dueDate)}, and a late fee of ${money(charged)} has been added.`),
+      figure(money(total), `${money(base)} maintenance charges + ${money(charged)} late fee`),
+      action(`Pay ${money(total)}`, `${site}/dashboard`),
       ...(blocksVoting
-        ? [para('While maintenance from a closed quarter is unpaid, this flat '
-            + 'cannot vote in polls. Voting is restored as soon as the treasurer '
-            + 'confirms the payment.')]
+        ? [aside('While maintenance charges from a past quarter are unpaid, this '
+            + 'flat cannot vote in new polls.')]
         : []),
-      action('Pay on the portal', `${site}/dashboard`),
-      aside(`${FRAUD_LINE} ${DISPUTE_LINE}`),
+      aside('If you think this is wrong, reply to this email or contact the '
+        + 'committee through the portal.'),
     ],
   });
 }
@@ -184,13 +197,19 @@ export function letterFor(kind, row, { origin = '', today } = {}) {
     dueDate: row.due_date, lateFee: row.quarter_late_fee, origin,
   };
   if (kind === 'issued') {
-    return issuedEmail({ ...base, basis: row.basis, rate: row.rate_applied });
+    return issuedEmail({
+      ...base, basis: row.basis, lateFeeDate: lateFeeDateFor(row.due_date),
+    });
   }
   if (kind === 'due_soon') return dueSoonEmail(base);
   if (kind === 'due') return dueEmail(base);
   if (kind === 'overdue') {
     return overdueEmail({
       ...base,
+      // The fee ACTUALLY on this bill, falling back to the quarter's only when
+      // the row has none — which is the preview of a quarter not yet issued.
+      // A waived fee must not reappear in the arithmetic of the letter.
+      charged: row.late_fee || row.quarter_late_fee,
       // Asked of the quarter, not of the bill's status: the block is about a
       // quarter having ENDED, and on the day after a due date inside the
       // quarter it has not.

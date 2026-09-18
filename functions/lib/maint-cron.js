@@ -641,10 +641,12 @@ export async function previewLetter(env, quarterLabel, { flat, kind = 'issued', 
       quarter: quarterLabel,
       basis: assessment.basis,
       rate_applied: rate,
-      // The projected total is the rate. The late fee is NOT added here even
-      // for the overdue letter: a fee that has not been charged is not part of
-      // what anybody owes, and letterFor names the fee separately anyway.
-      total: rate,
+      // The projected total is the rate — except for the overdue letter, which
+      // is by definition read after the fee has landed and whose figure breaks
+      // itself down as charges plus fee. Previewing it against the bare rate
+      // would show an admin arithmetic that does not add up, which is exactly
+      // the kind of thing this button exists to catch before residents see it.
+      total: kind === 'overdue' ? rate + quarter.late_fee : rate,
       due_date: quarter.due_date,
       quarter_late_fee: quarter.late_fee,
     };
