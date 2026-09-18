@@ -114,6 +114,7 @@ Ask the bot a code and it will explain it.
 | `DDP-RECON-006` | warn | live | Abandoned statement session swept — rows deleted unreviewed |
 | `DDP-RECON-007` | warn | live | PDF statement has no text layer — CSV needed |
 | `DDP-RECON-008` | **fatal** | live | Statement rows survived the finish step — deletion did not take |
+| `DDP-RECON-009` | error | live | Credit could not be assigned to a maintenance bill |
 
 ## NOTICE
 
@@ -189,7 +190,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-119 codes across 12 domains — 13 fatal, 3 awaiting their call site, 3 retired.
+120 codes across 12 domains — 13 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

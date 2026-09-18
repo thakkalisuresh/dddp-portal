@@ -40,6 +40,7 @@ import {
 } from './lib/approvals.js';
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { validateStatement, parseStatement, reconcile, bucketReconciliation, sweepAbandonedStatements } from './lib/statement.js';
+import { maintAccountHint } from './lib/upi.js';
 import { readReceipt, visionAvailable } from './lib/vision.js';
 import { runScheduled, runLateFees, isLateFeeCron, applyLateFees, staleIntents } from './lib/cron.js';
 import { listPolls, getPoll, createPoll, castVote, closePoll, publishPoll, unpublishPoll,
@@ -558,9 +559,13 @@ export default {
         if (request.method === 'PATCH' && /^\/api\/admin\/bills\/\d+$/.test(path)) {
           return patchBill(request, env, session, path);
         }
+        if (route === 'GET /api/admin/statement') return statementLanding(env);
         if (route === 'POST /api/admin/statement') return uploadStatement(request, env, session, ctx);
         if (request.method === 'GET' && /^\/api\/admin\/statement\/\d+$/.test(path)) {
           return statementReport(env, path);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/statement\/\d+\/assign$/.test(path)) {
+          return assignCredit(request, env, session, path);
         }
         if (request.method === 'POST' && /^\/api\/admin\/statement\/\d+\/finish$/.test(path)) {
           return finishStatement(env, session, path);
@@ -3897,8 +3902,75 @@ async function proofQueue(env) {
 // — or by the 3am sweep if they walk away. The original file is never written
 // anywhere: not to R2, not to D1. See migration 0017 and lib/statement.js.
 
-/** Everything the matcher needs about the current state of the books. */
-async function reconciliationInputs(env) {
+/**
+ * The two accounts a statement can come from.
+ *
+ * 0042 put maintenance in a DIFFERENT bank account from gas, so "the
+ * statement" stopped being a single thing. An upload says which account it is,
+ * and everything downstream — which proofs are eligible, which bills can be
+ * settled, whether an amount means anything at all — follows from that one
+ * word. Nothing is ever matched across the two: a gas claim cannot be settled
+ * by maintenance money, and the screens do not offer the option.
+ */
+export const STATEMENT_ACCOUNTS = ['gas', 'maintenance'];
+
+/** Unknown, missing or misspelt all read as gas, which is what every statement was before 0044. */
+function statementAccount(value) {
+  return STATEMENT_ACCOUNTS.includes(value) ? value : 'gas';
+}
+
+/**
+ * What the account picker shows, with the payee as a quiet second line.
+ *
+ * THE SECOND LINE IS BUILT AT RUNTIME AND NEVER STORED. This repository is
+ * public; `maintAccountHint` returns four digits and never the IFSC, for the
+ * same reason the account number is a Pages secret rather than a var. Enough to
+ * tell a treasurer which of two statements they are holding, which is all this
+ * line is for.
+ */
+function statementAccountList(env, { maintenanceIssued }) {
+  return [
+    { id: 'gas', label: 'Gas', hint: env.UPI_VPA ?? null, ready: true },
+    {
+      id: 'maintenance', label: 'Maintenance', hint: maintAccountHint(env),
+      // Shown even when there is nothing to reconcile yet, with an empty state
+      // rather than a missing control. A tab that is not there reads as broken;
+      // one that is there and says "no quarter has issued yet" reads as early.
+      ready: maintenanceIssued,
+    },
+  ];
+}
+
+/** Everything the matcher needs about the current state of the books, for one account. */
+async function reconciliationInputs(env, account = 'gas') {
+  if (account === 'maintenance') {
+    const [proofs, openBills] = await Promise.all([
+      env.DB.prepare(
+        // `period` rather than `quarter` in the alias, because the matcher and
+        // every verdict shape downstream speak one word for "the billing window
+        // this is about". 0042 chose separate tables, not a separate vocabulary.
+        `SELECT p.id AS proofId, p.maint_bill_id AS billId, p.utr, p.parsed_amount AS claimedAmount,
+                p.created_at AS createdAt, b.flat, b.quarter AS period, b.total AS billed, o.name
+           FROM payment_proofs p
+           JOIN maint_bills b ON b.id = p.maint_bill_id
+           ${ownerJoin('p.owner_id')}
+          WHERE p.status = 'pending' AND p.deleted_at IS NULL
+          ORDER BY p.created_at`
+      ).all(),
+      env.DB.prepare(
+        // A cancelled bill is deliberately not here. 0042 made cancellation the
+        // way a bill raised against the wrong party is withdrawn, so offering it
+        // as somewhere to put money would undo the withdrawal by the back door.
+        `SELECT b.id, b.flat, b.quarter AS period, b.total, o.name
+           FROM maint_bills b
+           ${ownerJoin('b.owner_id')}
+          WHERE b.status IN ('unpaid', 'initiated', 'awaiting')
+          ORDER BY b.quarter, b.flat`
+      ).all(),
+    ]);
+    return { proofs: proofs.results ?? [], openBills: openBills.results ?? [] };
+  }
+
   const [proofs, openBills] = await Promise.all([
     env.DB.prepare(
       // See ownerJoin: joining on the flat alone duplicates the proof, and a
@@ -3922,16 +3994,91 @@ async function reconciliationInputs(env) {
   return { proofs: proofs.results ?? [], openBills: openBills.results ?? [] };
 }
 
-async function reportFor(env, sessionId) {
+async function reportFor(env, sessionId, account = null) {
+  const acct = account ?? statementAccount(
+    (await env.DB.prepare('SELECT account FROM statement_sessions WHERE id = ?').bind(sessionId).first())?.account
+  );
   const rows = await env.DB.prepare(
     'SELECT txn_date AS date, amount, reference, narration FROM statement_credits WHERE session_id = ? ORDER BY txn_date, id'
   ).bind(sessionId).all();
-  const { proofs, openBills } = await reconciliationInputs(env);
-  const result = reconcile({ credits: rows.results ?? [], proofs, openBills });
+  const { proofs, openBills } = await reconciliationInputs(env, acct);
+  const result = reconcile({
+    credits: rows.results ?? [], proofs, openBills,
+    // The whole no-fingerprint rule, expressed once. See lib/statement.js.
+    amountIdentifiesPayer: acct !== 'maintenance',
+  });
+
+  if (acct === 'maintenance') await foldInAssignments(env, sessionId, result);
+
   // Bucketed HERE rather than in the browser, so the rule for "is this probably
   // a resident" lives in exactly one place. A second copy in admin-statement.js
   // would be a weaker restatement of a rule reconcile() already answered.
-  return { ...result, buckets: bucketReconciliation(result) };
+  return {
+    ...result,
+    account: acct,
+    // The full open list, once for the whole report rather than once per credit.
+    // Every maintenance credit of a given amount has the same candidates — that
+    // is the problem, not an optimisation — so the picker that lets an admin
+    // reach past the ranked five reads from one list.
+    assignableBills: acct === 'maintenance' ? openBills : [],
+    buckets: bucketReconciliation(result),
+  };
+}
+
+/**
+ * Put the assignments already made in this review back onto their credits.
+ *
+ * WITHOUT THIS THE SCREEN GOES BACKWARDS. Assigning marks the bill paid, which
+ * takes it out of the open list — so on the next refresh the credit that was
+ * just assigned would show with its candidates gone and nothing in their place,
+ * reading as money nobody can explain. The reconciliation row written at assign
+ * time is the record, and this reads it back.
+ *
+ * Matched on the three statement facts the row keeps — reference, amount, date.
+ * The narration is deliberately not among them: 0017 refuses to store it,
+ * because it names other members.
+ */
+async function foldInAssignments(env, sessionId, result) {
+  const rows = await env.DB.prepare(
+    `SELECT r.maint_bill_id AS billId, r.reference, r.amount, r.txn_date AS txnDate,
+            b.flat, b.quarter AS period, b.total, o.name, a.name AS assignedByName
+       FROM reconciliations r
+       JOIN maint_bills b ON b.id = r.maint_bill_id
+       LEFT JOIN owners o ON o.id = b.owner_id
+       LEFT JOIN owners a ON a.id = r.assigned_by
+      WHERE r.session_id = ? AND r.assigned_by IS NOT NULL`
+  ).bind(sessionId).all();
+
+  const key = (r) => `${r.reference ?? ''}|${Math.round((r.amount ?? 0) * 100)}|${r.txnDate ?? ''}`;
+  const byCredit = new Map((rows.results ?? []).map((r) => [key(r), r]));
+
+  for (const d of result.discrepancies) {
+    if (d.kind !== 'credit_no_proof') continue;
+    const hit = byCredit.get(key({ reference: d.reference, amount: d.amount, txnDate: d.txnDate }));
+    if (!hit) continue;
+    d.assignedTo = {
+      billId: hit.billId, flat: hit.flat, name: hit.name,
+      period: hit.period, total: hit.total, by: hit.assignedByName,
+    };
+    d.candidates = [];
+  }
+
+  // The tallies have to move with the assignments, and cannot be computed
+  // inside `reconcile` — it is pure and has never heard of this session's
+  // reconciliation rows. Leaving them alone was the bug this paragraph exists
+  // to explain: after assigning ₹7,000 the screen still read "Confirmed 0" and
+  // "Unexplained money in ₹34,542", which is the opposite of what the treasurer
+  // had just done and exactly the figure they would have carried to the
+  // committee.
+  const assigned = result.discrepancies.filter((d) => d.kind === 'credit_no_proof' && d.assignedTo);
+  const sum = (list) => Math.round(list.reduce((t, d) => t + (d.amount ?? 0), 0) * 100) / 100;
+  result.totals = {
+    ...result.totals,
+    assignedCount: assigned.length,
+    assignedTotal: sum(assigned),
+    unmatchedCreditTotal:
+      Math.round((result.totals.unmatchedCreditTotal - sum(assigned)) * 100) / 100,
+  };
 }
 
 async function uploadStatement(request, env, session, ctx) {
@@ -3940,6 +4087,7 @@ async function uploadStatement(request, env, session, ctx) {
   if (!file || typeof file === 'string') {
     return problem(400, 'DDP-RECON-001', 'Attach the bank statement as CSV or PDF.');
   }
+  const account = statementAccount(form?.get('account'));
 
   const check = validateStatement({ type: file.type, size: file.size, name: file.name });
   if (!check.ok) return problem(400, 'DDP-RECON-001', check.message);
@@ -3962,9 +4110,9 @@ async function uploadStatement(request, env, session, ctx) {
   const total = Math.round(credits.reduce((t, c) => t + c.amount, 0) * 100) / 100;
 
   const created = await env.DB.prepare(
-    `INSERT INTO statement_sessions (created_by, filename, row_count, credit_total, status, created_at)
-     VALUES (?, ?, ?, ?, 'open', ?) RETURNING id`
-  ).bind(session.actor.id, String(file.name ?? '').slice(0, 120), credits.length, total, now).first();
+    `INSERT INTO statement_sessions (created_by, filename, row_count, credit_total, status, account, created_at)
+     VALUES (?, ?, ?, ?, 'open', ?, ?) RETURNING id`
+  ).bind(session.actor.id, String(file.name ?? '').slice(0, 120), credits.length, total, account, now).first();
 
   // Chunked: a year's statement is a few hundred rows and D1 batches are finite.
   for (let i = 0; i < credits.length; i += 50) {
@@ -3974,22 +4122,25 @@ async function uploadStatement(request, env, session, ctx) {
       ).bind(created.id, c.date, c.amount, c.reference, String(c.narration ?? '').slice(0, 300))));
   }
 
-  const report = await reportFor(env, created.id);
+  const report = await reportFor(env, created.id, account);
   await audit(env, session, 'statement.upload',
-    { sessionId: created.id, rows: credits.length, discrepancies: report.discrepancies.length });
+    { sessionId: created.id, account, rows: credits.length, discrepancies: report.discrepancies.length });
 
   return json({ sessionId: created.id, warnings: warnings ?? [], ...report }, { status: 201 });
 }
 
 async function statementReport(env, path) {
   const id = Number(path.split('/')[4]);
-  const row = await env.DB.prepare('SELECT id, status, filename, created_at FROM statement_sessions WHERE id = ?')
+  const row = await env.DB.prepare('SELECT id, status, filename, account, created_at FROM statement_sessions WHERE id = ?')
     .bind(id).first();
   if (!row) return problem(404, 'DDP-RECON-001', 'That reconciliation could not be found.');
   if (row.status !== 'open') {
     return problem(409, 'DDP-RECON-001', 'That reconciliation is closed — the statement has been deleted.');
   }
-  return json({ sessionId: id, filename: row.filename, ...(await reportFor(env, id)) });
+  return json({
+    sessionId: id, filename: row.filename,
+    ...(await reportFor(env, id, statementAccount(row.account))),
+  });
 }
 
 /**
@@ -4002,33 +4153,50 @@ async function statementReport(env, path) {
  */
 async function finishStatement(env, session, path) {
   const id = Number(path.split('/')[4]);
-  const row = await env.DB.prepare('SELECT id, status FROM statement_sessions WHERE id = ?').bind(id).first();
+  const row = await env.DB.prepare('SELECT id, status, account FROM statement_sessions WHERE id = ?').bind(id).first();
   if (!row) return problem(404, 'DDP-RECON-001', 'That reconciliation could not be found.');
   if (row.status !== 'open') return problem(409, 'DDP-RECON-001', 'That reconciliation is already closed.');
 
-  const report = await reportFor(env, id);
+  const account = statementAccount(row.account);
+  const isMaint = account === 'maintenance';
+  const report = await reportFor(env, id, account);
   const now = new Date().toISOString();
+
+  // 0017 gave the verdict table one bill column, pointing at `bills`. 0044
+  // added the maintenance twin rather than widening that key, so which column a
+  // verdict lands in is decided by the account the statement came from — the
+  // same discriminator payment_proofs uses, read off the session instead of the
+  // row. Writing a maint_bills id into `bill_id` would either fail the key or,
+  // worse, silently name an unrelated gas bill with the same number.
+  const billColumn = (billId) => (isMaint
+    ? { billId: null, maintBillId: billId ?? null }
+    : { billId: billId ?? null, maintBillId: null });
 
   const rows = [
     ...report.confirmed.map((c) => ({
-      proofId: c.proofId, billId: c.billId, verdict: 'confirmed',
+      proofId: c.proofId, ...billColumn(c.billId), verdict: 'confirmed',
       reference: c.reference, amount: c.amount, txnDate: c.txnDate, matchedBy: c.how,
     })),
-    ...report.discrepancies.map((d) => ({
-      proofId: d.proofId ?? null, billId: d.billId ?? null, verdict: d.kind,
-      // Narration is deliberately not carried across: it names other members.
-      reference: d.reference ?? null,
-      amount: d.bankAmount ?? d.amount ?? null,
-      txnDate: d.txnDate ?? null, matchedBy: null,
-    })),
+    ...report.discrepancies
+      // An assigned credit already has its row, written the moment the admin
+      // assigned it. Writing a second one here would double-count the money on
+      // every report that reads this table afterwards.
+      .filter((d) => d.assignedTo == null)
+      .map((d) => ({
+        proofId: d.proofId ?? null, ...billColumn(d.billId), verdict: d.kind,
+        // Narration is deliberately not carried across: it names other members.
+        reference: d.reference ?? null,
+        amount: d.bankAmount ?? d.amount ?? null,
+        txnDate: d.txnDate ?? null, matchedBy: null,
+      })),
   ];
 
   for (let i = 0; i < rows.length; i += 50) {
     await env.DB.batch(rows.slice(i, i + 50).map((r) =>
       env.DB.prepare(
-        `INSERT INTO reconciliations (session_id, proof_id, bill_id, verdict, reference, amount, txn_date, matched_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(id, r.proofId, r.billId, r.verdict, r.reference, r.amount, r.txnDate, r.matchedBy, now)));
+        `INSERT INTO reconciliations (session_id, proof_id, bill_id, maint_bill_id, verdict, reference, amount, txn_date, matched_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(id, r.proofId, r.billId, r.maintBillId, r.verdict, r.reference, r.amount, r.txnDate, r.matchedBy, now)));
   }
 
   await env.DB.batch([
@@ -4055,9 +4223,140 @@ async function finishStatement(env, session, path) {
   }
 
   await audit(env, session, 'statement.finish',
-    { sessionId: id, saved: rows.length, deletedRows: report.totals.creditRows });
+    { sessionId: id, account, saved: rows.length, deletedRows: report.totals.creditRows });
 
   return json({ sessionId: id, saved: rows.length, statementDeleted: true, totals: report.totals });
+}
+
+/**
+ * Assign a statement credit to a maintenance bill.
+ *
+ * WHY THIS EXISTS AT ALL. Gas settles itself: a ₹310.40 credit belongs to
+ * whoever was billed ₹310.40, and the matcher says so. Maintenance cannot —
+ * 0042 spells it out, forty-one flats owe the same rupee — so the last step is
+ * a person reading the evidence and saying which flat this money is. This is
+ * that step.
+ *
+ * ONE ADMIN, DELIBERATELY. The credit is the bank's own record that the money
+ * arrived; assigning it is reading that evidence, which is the same act as
+ * approving a payment screenshot and carries the same one signature. Asserting
+ * a payment with NO bank evidence is a different act and 0042 gave it two, on
+ * the offline-payment path. Keeping the two doors apart is what stops either
+ * becoming a way round the other — so this endpoint will only ever settle a
+ * bill against a credit that is ON THE STATEMENT IN FRONT OF IT, checked below
+ * rather than taken from the request.
+ */
+/**
+ * What the reconciliation screen needs before any statement exists.
+ *
+ * The two accounts with their labels, and whichever review is still open. The
+ * open one matters: a treasurer who reloads mid-review should come back to it
+ * rather than to an upload box that looks like their work is gone, and the
+ * screen defaults to gas — the monthly visit — only when nothing is open.
+ */
+async function statementLanding(env) {
+  const [issued, open] = await Promise.all([
+    env.DB.prepare("SELECT 1 AS n FROM maint_quarters WHERE status IN ('issued','locked') LIMIT 1").first(),
+    env.DB.prepare(
+      "SELECT id, account, filename FROM statement_sessions WHERE status = 'open' ORDER BY id DESC LIMIT 1"
+    ).first(),
+  ]);
+  return json({
+    accounts: statementAccountList(env, { maintenanceIssued: Boolean(issued) }),
+    open: open ? { sessionId: open.id, account: statementAccount(open.account), filename: open.filename } : null,
+  });
+}
+
+async function assignCredit(request, env, session, path) {
+  const id = Number(path.split('/')[4]);
+  const body = await readJson(request);
+  const billId = Number(body?.billId);
+
+  const row = await env.DB.prepare('SELECT id, status, account, filename FROM statement_sessions WHERE id = ?')
+    .bind(id).first();
+  if (!row) return problem(404, 'DDP-RECON-001', 'That reconciliation could not be found.');
+  if (row.status !== 'open') {
+    return problem(409, 'DDP-RECON-001', 'That reconciliation is closed — the statement has been deleted.');
+  }
+  if (statementAccount(row.account) !== 'maintenance') {
+    return problem(400, 'DDP-RECON-009',
+      'Credits are assigned by hand only on the maintenance account. A gas credit is matched by its amount.');
+  }
+
+  // THE CREDIT MUST BE ON THE STATEMENT. Not "the client says it is" — the
+  // amount, the date and the reference are looked up in the rows parsed on
+  // upload. Without this the endpoint would be a way for one admin to mark any
+  // bill paid by describing a payment, which is precisely the second-admin door
+  // next to it.
+  const credit = await env.DB.prepare(
+    `SELECT id, amount, txn_date AS txnDate, reference FROM statement_credits
+      WHERE session_id = ? AND txn_date IS ? AND ROUND(amount * 100) = ROUND(? * 100)
+        AND COALESCE(reference, '') = COALESCE(?, '')
+      LIMIT 1`
+  ).bind(id, body?.txnDate ?? null, Number(body?.amount), body?.reference ?? null).first();
+  if (!credit) {
+    return problem(404, 'DDP-RECON-009', 'That credit is not on the statement being reviewed.');
+  }
+
+  const bill = await env.DB.prepare(
+    'SELECT id, flat, quarter, total, status FROM maint_bills WHERE id = ?'
+  ).bind(billId).first();
+  if (!bill) return problem(404, 'DDP-RECON-009', 'That maintenance bill could not be found.');
+  if (!['unpaid', 'initiated', 'awaiting'].includes(bill.status)) {
+    return problem(409, 'DDP-RECON-009',
+      `That bill is already ${bill.status}. Nothing has been changed.`);
+  }
+
+  // A CREDIT SHORT OF THE BILL DOES NOT SETTLE IT. Assigning marks the bill
+  // paid, so letting ₹6,500 clear a ₹7,000 bill would forgive ₹500 with nobody
+  // deciding to — an outcome indistinguishable, a month later, from a waiver
+  // that at least somebody signed. The part payment is real and the flat it
+  // came from is often obvious, which is exactly why the screen still shows it
+  // and says how short it is; what it does not do is close the debt on the
+  // strength of it. An overpayment is allowed through: the surplus is an
+  // advance, which 0042 gave its own table and its own two signatures.
+  const shortfall = Math.round(((bill.total ?? 0) - credit.amount) * 100) / 100;
+  if (shortfall > 0) {
+    return problem(409, 'DDP-RECON-009',
+      `That credit is ₹${shortfall} short of ${bill.flat}'s ₹${bill.total} bill, so it cannot settle it. `
+      + 'Record it as a part payment on the maintenance screen instead.');
+  }
+
+  // One credit settles one bill. Re-tapping a slow button, or two admins
+  // working the same list from two laptops, must not pay the same bill twice
+  // or spend the same credit twice.
+  const spent = await env.DB.prepare(
+    `SELECT id FROM reconciliations
+      WHERE session_id = ? AND assigned_by IS NOT NULL
+        AND (maint_bill_id = ?
+             OR (COALESCE(reference, '') = COALESCE(?, '') AND ROUND(amount * 100) = ROUND(? * 100)
+                 AND txn_date IS ?))
+      LIMIT 1`
+  ).bind(id, billId, credit.reference ?? null, credit.amount, credit.txnDate ?? null).first();
+  if (spent) {
+    return problem(409, 'DDP-RECON-009', 'That credit has already been assigned in this review.');
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE maint_bills SET status = 'paid', paid_at = ?, paid_method = 'bank-statement', paid_reference = ?
+        WHERE id = ? AND status IN ('unpaid', 'initiated', 'awaiting')`
+    ).bind(now, credit.reference ?? `statement ${credit.txnDate ?? ''}`.trim(), billId),
+    env.DB.prepare(
+      `INSERT INTO reconciliations
+         (session_id, proof_id, bill_id, maint_bill_id, verdict, reference, amount, txn_date, matched_by, assigned_by, created_at)
+       VALUES (?, NULL, NULL, ?, 'confirmed', ?, ?, ?, NULL, ?, ?)`
+    ).bind(id, billId, credit.reference ?? null, credit.amount, credit.txnDate ?? null, session.actor.id, now),
+  ]);
+
+  await audit(env, session, 'statement.assign',
+    { sessionId: id, billId, flat: bill.flat, quarter: bill.quarter, amount: credit.amount });
+
+  return json({
+    sessionId: id, filename: row.filename ?? null,
+    ...(await reportFor(env, id, 'maintenance')),
+  });
 }
 
 async function discardStatement(env, session, path) {

@@ -828,6 +828,8 @@ Bank statement reconciliation.
 | fn | `parseStatement` |  |
 | fn | `reconcile` | Match credits to proofs, then report what is left over on both sides. |
 | fn | `bucketReconciliation` | Split a reconciliation into what a treasurer actually has to DO about it. |
+| const | `MAX_CANDIDATES` |  |
+| fn | `rankCandidates` | The flats a credit could belong to, best first. |
 
 ### `functions/lib/summary.js`
 
@@ -911,6 +913,8 @@ UPI deep links.
 | fn | `maintPayeeMode` |  |
 | fn | `maintPayee` | The address residents actually pay, and what to show beside it. |
 | fn | `maintNote` | The note that lands on the bank statement: `(2B_MAINT_Q4_26)`. |
+| fn | `parseMaintNote` | Read a maintenance note back out of a bank statement narration. |
+| fn | `maintAccountHint` | What to show beside "Maintenance" on the reconciliation account picker. |
 | fn | `buildMaintUpiLinks` | The pay links for a maintenance bill. |
 | fn | `manualMaintPayment` |  |
 | fn | `manualPayment` |  |
@@ -930,6 +934,14 @@ Reading a payment screenshot with a vision model.
 ## Server — router
 
 One router. Route table at the top, handlers below it.
+
+### `functions/index.js`
+
+DD Diamond Park portal — Worker entry.
+
+| | Export | What it does |
+|---|---|---|
+| const | `STATEMENT_ACCOUNTS` | The two accounts a statement can come from. |
 
 ## Browser
 
@@ -1176,4 +1188,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-658 exports. 290 have no doc comment.
+663 exports. 291 have no doc comment.

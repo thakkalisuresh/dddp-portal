@@ -233,6 +233,56 @@ export function maintNote(flat, quarter) {
 }
 
 /**
+ * Read a maintenance note back out of a bank statement narration.
+ *
+ * THE INVERSE OF `maintNote`, and deliberately sitting against it: the format
+ * is agreed between the payment sheet that writes it and reconciliation that
+ * reads it, and two copies of that agreement in two files is how one of them
+ * quietly stops matching. Change the shape above and this fails in the same
+ * commit.
+ *
+ * This is the SECOND of the two things reconciliation has for maintenance -- the
+ * first being the reference -- and 0042 is explicit that they are all it has.
+ * A narration carrying `(2B_MAINT_Q4_26)` names the flat AND the quarter, which
+ * is a stronger claim than the amount could ever make, because the amount is
+ * the same rupee for forty-one flats.
+ *
+ * Tolerant about what surrounds it and strict about the note itself: banks pad,
+ * truncate and upper-case narrations freely, so the note is searched for rather
+ * than anchored, but a partial one is not guessed at. Returns null when there
+ * is nothing certain to say.
+ *
+ * The two-digit year is widened to 20xx. This portal did not exist in 1926 and
+ * will be somebody else's problem in 2126.
+ */
+export function parseMaintNote(narration) {
+  const m = /\(\s*([A-Za-z0-9-]{1,10})_MAINT_Q([1-4])_(\d{2})\s*\)/i.exec(String(narration ?? ''));
+  if (!m) return null;
+  return { flat: m[1].toUpperCase(), quarter: `20${m[3]}-Q${m[2]}` };
+}
+
+/**
+ * What to show beside "Maintenance" on the reconciliation account picker.
+ *
+ * LAST FOUR DIGITS, NEVER MORE, and never the IFSC. The whole reason the
+ * account and the IFSC are secrets rather than vars is that this repository is
+ * public; a helper that renders them in full on an admin screen would put them
+ * one screenshot away from being public too. Four digits are enough for a
+ * treasurer to tell which of two statements they are holding, which is the only
+ * question this line exists to answer.
+ *
+ * Returns null when the payee is not configured yet, so the picker can say so
+ * rather than drawing a blank second line nobody can interpret.
+ */
+export function maintAccountHint(env) {
+  const payee = maintPayee(env);
+  if (!payee.ok) return null;
+  if (payee.mode === 'upi') return payee.vpa;
+  const digits = String(env?.MAINT_ACCOUNT_NUMBER ?? '').replace(/\D/g, '');
+  return digits.length >= 4 ? `the account ending ${digits.slice(-4)}` : null;
+}
+
+/**
  * The pay links for a maintenance bill.
  *
  * Deliberately thin over buildUpiLinks: the platform quirks it handles — the

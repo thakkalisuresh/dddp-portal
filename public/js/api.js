@@ -330,9 +330,12 @@ export const api = {
      * The file is parsed server-side and never stored; only its credit rows are
      * held, and only until `finishStatement` or the nightly sweep.
      */
-    async uploadStatement(file) {
+    async uploadStatement(file, account = 'gas') {
       const form = new FormData();
       form.append('statement', file, file.name || 'statement.csv');
+      // Which bank account this statement came from. Gas and maintenance are
+      // different accounts (0042) and are never matched against each other.
+      form.append('account', account);
       const res = await fetch('/api/admin/statement', {
         method: 'POST', credentials: 'same-origin', body: form,
       });
@@ -343,7 +346,10 @@ export const api = {
       }
       return data;
     },
+    statementAccounts: ()  => request('GET',    '/api/admin/statement'),
     statementReport:  (id) => request('GET',    `/api/admin/statement/${id}`),
+    /** Maintenance only: an admin says which flat a credit belongs to. */
+    assignCredit: (id, body) => request('POST', `/api/admin/statement/${id}/assign`, body),
     finishStatement:  (id) => request('POST',   `/api/admin/statement/${id}/finish`),
     discardStatement: (id) => request('DELETE', `/api/admin/statement/${id}`),
     deleteProof:   (id)      => request('DELETE', `/api/admin/proofs/${id}`),

@@ -169,6 +169,7 @@ export const ERROR_CODES = {
   'DDP-RECON-006': { severity: 'warn',  message: 'Abandoned statement session swept — rows deleted unreviewed' },
   'DDP-RECON-007': { severity: 'warn',  message: 'PDF statement has no text layer — CSV needed' },
   'DDP-RECON-008': { severity: 'fatal', message: 'Statement rows survived the finish step — deletion did not take' },
+  'DDP-RECON-009': { severity: 'error', message: 'Credit could not be assigned to a maintenance bill' },
 
   // ── ADMIN ──────────────────────────────────────────────────────────────
   'DDP-ADMIN-001': { severity: 'error', message: 'Bulk import parsed a flat that does not exist' },
