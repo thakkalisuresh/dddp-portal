@@ -1635,7 +1635,11 @@ async function votingOverview(env) {
     // saying "clear" is a screen nobody reads to the bottom of.
     flats: [...statuses]
       .filter(([, v]) => !v.canVote || v.reason === 'exempt')
-      .map(([flat, v]) => ({ flat, ...v }))
+      // Described, through the same helper the resident card uses. An internal
+      // key is defensible on an admin screen in isolation; two screens naming
+      // the same blocked quarter two ways is how a shared phrasing quietly
+      // stops being shared.
+      .map(([flat, v]) => ({ ...v, flat, quarters: (v.quarters ?? []).map(describeQuarter) }))
       .sort((a, b) => String(a.flat).localeCompare(String(b.flat))),
     exemptions: exemptions.results ?? [],
     today: istToday(),
