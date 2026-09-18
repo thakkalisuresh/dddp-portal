@@ -22,6 +22,7 @@
 import { fail } from './errors.js';
 // The notice board's own visibility rule, borrowed rather than reimplemented.
 import { canSeeNotice } from './notices.js';
+import { votingStatusFor, votingStatuses } from './voting.js';
 // The shared rules. Re-exported below so every existing importer — and the
 // tests — keep asking this module, which is where polls are reasoned about.
 // Imported for USE. `export ... from` below re-exports the rest for callers,
@@ -416,11 +417,16 @@ export async function getPoll(env, id, viewer, { now = new Date().toISOString() 
   ).bind(id).first();
   if (!poll || !canSeePoll(poll, viewer)) return null;
 
-  const [{ results: options }, { results: mine }] = await Promise.all([
+  const [{ results: options }, { results: mine }, voting] = await Promise.all([
     env.DB.prepare('SELECT id, label, sort FROM poll_options WHERE poll_id = ? ORDER BY sort')
       .bind(id).all(),
     env.DB.prepare('SELECT option_id, cast_at FROM poll_votes WHERE poll_id = ? AND flat = ?')
       .bind(id, viewer?.flat ?? '').all(),
+    // Asked as of the POLL's creation, not today: a quarter that had not ended
+    // when the poll opened must not start barring people halfway through it.
+    canVote(viewer)
+      ? votingStatusFor(env, viewer.flat, { pollCreatedAt: poll.created_at })
+      : Promise.resolve(null),
   ]);
 
   const closed = isClosed(poll, now);
@@ -433,9 +439,22 @@ export async function getPoll(env, id, viewer, { now = new Date().toISOString() 
     maxChoices: poll.max_choices,
     showTenants: Boolean(poll.show_tenants),
     closesAt: poll.closes_at,
+    createdAt: poll.created_at,
     closed,
     published: Boolean(poll.published_at),
-    canVote: canVote(viewer) && !closed,
+    // THE SAME ANSWER THE VOTE ENDPOINT WILL GIVE. It used to be only "you are
+    // not a tenant and the poll is open", which meant a flat in arrears was
+    // shown a live ballot and refused on submit — the one shape of refusal a
+    // resident experiences as the portal being broken rather than as a rule.
+    canVote: canVote(viewer) && !closed && (voting?.canVote ?? true),
+    // WHY, when the answer is no, carried with the amount and the quarters so
+    // the card can name the debt and offer the way out of it rather than
+    // greying a button and saying nothing.
+    //
+    // Null for a tenant, deliberately. The vote is the owner's and always was;
+    // a card explaining the block would read as a penalty for a rule that is
+    // not about them.
+    voting: voting ?? null,
     // The options are always sent. A closed poll still shows a resident what
     // the question was and what their flat chose, whether or not the count was
     // ever published — see docs/POLLS-PLAN.md.
@@ -470,11 +489,36 @@ export async function getPoll(env, id, viewer, { now = new Date().toISOString() 
       env.DB.prepare(VOTING_FLATS_SQL).first(),
     ]);
     const counted = tally(options ?? [], votes ?? []);
+
     shaped.result = {
       options: counted.options, flats: counted.flats,
       flatsTotal: total?.n ?? 0,
       tied: counted.tied, leaders: counted.leaders,
     };
+
+    // WHO COULD NOT VOTE, AND WHO WAS LET VOTE ANYWAY — FOR THE COMMITTEE ONLY.
+    //
+    // The user was asked directly and chose the narrow answer: a resident sees
+    // the count per option and a plain turnout, "28 of 42", and nothing else.
+    // Blocked flats sit in that denominator and read as non-voters.
+    //
+    // NOT THE NUMBERS EITHER, not only the names. A published "3 flats could
+    // not vote" is a statement about the building's arrears posted to the
+    // building, and on a small poll it is close to naming them — this is the
+    // part of the portal that has already had a privacy bug, and the cheapest
+    // way not to have a second one is to send nothing.
+    //
+    // The committee gets both, because they are the ones who have to answer
+    // "why 28 of 42" at a general body meeting.
+    if (canManagePoll(poll, viewer)) {
+      const statuses = await votingStatuses(env, { pollCreatedAt: poll.created_at });
+      const blocked = [...statuses].filter(([, v]) => !v.canVote).map(([flat]) => flat).sort();
+      const exempt = [...statuses].filter(([, v]) => v.reason === 'exempt').map(([flat]) => flat).sort();
+      shaped.result.blockedCount = blocked.length;
+      shaped.result.exemptCount = exempt.length;
+      shaped.result.blockedFlats = blocked;
+      shaped.result.exemptFlats = exempt;
+    }
   }
   return shaped;
 }
@@ -491,6 +535,22 @@ export async function castVote(env, { pollId, optionIds, viewer, now = new Date(
   const poll = await env.DB.prepare('SELECT * FROM polls WHERE id = ?').bind(pollId).first();
   if (!poll || !canSeePoll(poll, viewer)) fail('DDP-POLL-001', { id: pollId });
   assertCanVote(poll, viewer, now);
+
+  // THE MAINTENANCE BLOCK IS ENFORCED HERE, not only drawn on the card.
+  //
+  // A rule that lives in the browser is a rule anybody with the developer tools
+  // open does not have. This one decides who may vote at a general body
+  // meeting, so the screen greying the button is a courtesy and this is the
+  // rule; the two agree because both call `flatVotingStatus` through
+  // lib/voting.js rather than each having an opinion.
+  //
+  // ASKED AS OF THE POLL'S CREATION, which is the whole reason `pollCreatedAt`
+  // exists: a quarter that had not ended when the poll opened must not start
+  // barring people halfway through the vote. The block does LIFT mid-poll, in
+  // the other direction — it is evaluated on read, so a flat that pays on
+  // Tuesday votes on Tuesday.
+  const status = await votingStatusFor(env, viewer.flat, { pollCreatedAt: poll.created_at });
+  if (!status.canVote) fail('DDP-POLL-010', { id: pollId, flat: viewer.flat, reason: status.reason });
 
   const { results: options } = await env.DB.prepare(
     'SELECT id FROM poll_options WHERE poll_id = ?'

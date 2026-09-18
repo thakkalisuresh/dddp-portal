@@ -51,6 +51,12 @@ export function resolveReturn(from) {
   const value = String(from ?? '');
   if (value === '/dashboard' || value === '/') return '/dashboard';
   if (/^\/polls(#poll-\d+)?$/.test(value)) return value;
+  // One poll, which is where the voting block's Pay button sends somebody from.
+  // Same shape as the bill pattern below and allowed for the same reason: a
+  // fixed prefix and digits, so there is nothing here for an open redirect to
+  // hold. Without it that button returned them to the dashboard, which is the
+  // one place they were not trying to get back to.
+  if (/^\/polls\?id=\d+$/.test(value)) return value;
   if (/^\/bill\?id=\d+$/.test(value)) return value;
   return '/dashboard';
 }

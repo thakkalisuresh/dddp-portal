@@ -19,7 +19,7 @@ import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
 import { $, el, esc, renderViewBanner, showError, setChildren } from './ui.js';
-import { deadlineLabel, closesIn, stampLabel } from './i18n.js';
+import { deadlineLabel, closesIn, stampLabel, money } from './i18n.js';
 // The SAME rules the Worker enforces, not a second copy of them.
 import { validatePoll, deliveryWarnings, MAX_OPTIONS } from './poll-rules.js';
 
@@ -90,6 +90,40 @@ function pollRow(p) {
     p.closed ? null : el('p', { class: 'small' }, deadlineLabel(p.closesAt)));
 }
 
+/**
+ * The flat cannot vote because it owes maintenance.
+ *
+ * PLACEHOLDER COPY. Every resident-visible string in this feature goes to the
+ * committee in one wording pass; `message` comes from `flatVotingStatus` and is
+ * a draft, and so is everything around it here.
+ *
+ * NAMES THE DEBT AND OFFERS THE WAY OUT. A block a resident cannot act on from
+ * the screen they met it on is a dead end, and this one lifts the moment the
+ * treasurer confirms payment — the rule is evaluated on read, so a flat that
+ * pays on Tuesday votes on Tuesday. The Pay button carries `from` so the
+ * payment sheet comes back to this poll rather than leaving them somewhere else
+ * in the portal.
+ */
+function lockedCard(p) {
+  const v = p.voting;
+  const billId = v.billIds?.[0] ?? null;
+  return el('div', { class: 'note note--warn stack', style: 'gap:var(--s-3)' },
+    el('p', { class: 'label' }, 'This flat cannot vote yet'),
+    el('p', { class: 'small' }, v.message ?? 'This flat has maintenance outstanding.'),
+    v.owed
+      ? el('p', { class: 'small' },
+          `${money(v.owed)} outstanding${v.quarters?.length ? ` · ${v.quarters.join(', ')}` : ''}.`)
+      : null,
+    // No button when the payment is already with the treasurer: they have done
+    // their part, and a Pay button would be asking them to pay twice.
+    billId && v.reason !== 'arrears-claimed'
+      ? el('a', {
+          class: 'btn btn--sm',
+          href: `/pay?bill=${encodeURIComponent(billId)}&from=${encodeURIComponent(`/polls?id=${p.id}`)}`,
+        }, 'Pay the maintenance')
+      : null);
+}
+
 /* ── one poll ──────────────────────────────────────────────────────────── */
 
 async function showPoll(id) {
@@ -118,10 +152,13 @@ function draw() {
     el('p', { class: 'notice__body' }, p.body),
     noticeCard(p),
 
-    // A tenant on a poll the committee chose to show them. Said plainly rather
-    // than by greying a control with no explanation beside it.
+    // WHY THE BALLOT IS NOT LIVE, and it is never just a greyed control. Two
+    // different people land here: a tenant, for whom the vote was never theirs,
+    // and an owner whose flat is in arrears, for whom it is a rule with a way
+    // out of it. Telling the second one the first one's sentence would be
+    // wrong, and telling them nothing at all is the dead end this replaces.
     !p.canVote && !p.closed
-      ? note('You can follow this, but the vote is your flat’s owner’s.')
+      ? (p.voting && !p.voting.canVote ? lockedCard(p) : note('You can follow this, but the vote is your flat’s owner’s.'))
       : null,
 
     el('div', { class: 'stack' }, ...p.options.map((o) => option(o, { voting, p }))),
@@ -231,6 +268,35 @@ function results(p) {
           class: `result__bar ${o.votes === top && top > 0 ? 'is-top' : ''}`,
           style: `width:${total ? Math.round((o.votes / total) * 100) : 0}%`,
         })))),
+    // WHY THE TURNOUT IS NOT THE WHOLE STORY. Blocked flats stay in the
+    // denominator — they are entitled voters who were barred, not absent ones —
+    // so a bare "51 of 89" invites an argument the committee then has to have
+    // at the meeting. One line answers it.
+    // THE COMMITTEE'S VIEW OF THE TURNOUT, and only theirs. The server sends
+    // these to nobody else: a resident sees the count per option and a plain
+    // "28 of 42", with blocked flats sitting in that denominator as
+    // non-voters. A published "3 flats could not vote" is a statement about the
+    // building's arrears posted to the building, and on a small poll it is
+    // close to naming them.
+    //
+    // Two different states, said separately. A flat barred by the rule and a
+    // flat the committee excused from it are not the same thing, and one
+    // sentence covering both would label the excused ones as being in arrears.
+    p.result.blockedCount
+      ? note(`${p.result.blockedCount} flat${p.result.blockedCount === 1 ? '' : 's'} could not vote — `
+        + 'maintenance outstanding from a closed quarter.')
+      : null,
+    p.result.exemptCount
+      ? note(`${p.result.exemptCount} flat${p.result.exemptCount === 1 ? '' : 's'} `
+        + 'the committee had excused from that rule voted as normal.')
+      : null,
+    p.result.blockedFlats?.length
+      ? el('p', { class: 'small muted' }, `Blocked: ${p.result.blockedFlats.join(', ')}.`)
+      : null,
+    p.result.exemptFlats?.length
+      ? el('p', { class: 'small muted' }, `Excused: ${p.result.exemptFlats.join(', ')}.`)
+      : null,
+
     // Reported, never resolved. These polls are advisory; inventing a
     // tie-break would be the portal claiming an authority nobody gave it.
     p.result.tied ? note('This poll is tied. The committee will decide from here.') : null);

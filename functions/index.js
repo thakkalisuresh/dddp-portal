@@ -42,6 +42,7 @@ import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { validateStatement, parseStatement, reconcile, bucketReconciliation, sweepAbandonedStatements } from './lib/statement.js';
 import { maintAccountHint } from './lib/upi.js';
 import { describeDeparture, departureInputs } from './lib/tenancy-change.js';
+import { votingBlockedFlats, votingStatusFor, votingStatuses } from './lib/voting.js';
 import { readReceipt, visionAvailable } from './lib/vision.js';
 import { runScheduled, runLateFees, isLateFeeCron, applyLateFees, staleIntents } from './lib/cron.js';
 import { listPolls, getPoll, createPoll, castVote, closePoll, publishPoll, unpublishPoll,
@@ -314,6 +315,13 @@ export default {
         if (route === 'PUT /api/admin/maint/rates') return putMaintRates(request, env, session);
         if (route === 'POST /api/admin/maint/schedule') return postMaintSchedule(request, env, session);
         if (route === 'POST /api/admin/maint/unschedule') return postMaintUnschedule(request, env, session);
+        if (route === 'GET /api/admin/maint/voting') return votingOverview(env);
+        if (route === 'POST /api/admin/maint/voting/exempt') {
+          return grantVotingExemption(request, env, session);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/maint\/voting\/exempt\/\d+\/approve$/.test(path)) {
+          return approveVotingExemption(env, session, path);
+        }
         if (route === 'POST /api/admin/tenancy/departure/preview') {
           return previewDeparture(request, env);
         }
@@ -1110,51 +1118,6 @@ async function listResidents(env, session, url) {
   return json({ residents, mailConfigured: mailConfigured(env) });
 }
 
-/**
- * Which flats cannot vote today, decided by the same function the ballot uses.
- *
- * One query for every unsettled maintenance bill and one for the exemptions,
- * then the rule applied per flat in JavaScript. That is deliberately not clever:
- * the alternative is expressing "the quarter has ended, unless an approval is in
- * flight, unless the committee granted an exemption" in SQL, and the moment that
- * drifts from flatVotingStatus the directory and the poll disagree about who may
- * vote.
- */
-async function votingBlockedFlats(env, today = istToday()) {
-  const [bills, exemptions] = await Promise.all([
-    env.DB.prepare(
-      `SELECT b.flat, b.quarter, b.total, b.status,
-              EXISTS (SELECT 1 FROM maint_approval_requests r
-                       WHERE r.bill_id = b.id AND r.status = 'pending') AS pending_approval
-         FROM maint_bills b
-        WHERE b.status NOT IN ('paid','waived','cancelled')`
-    ).all(),
-    env.DB.prepare('SELECT flat, ends_at, approved_by FROM voting_exemptions').all(),
-  ]);
-
-  const byFlat = new Map();
-  for (const bill of bills.results ?? []) {
-    if (!byFlat.has(bill.flat)) byFlat.set(bill.flat, []);
-    byFlat.get(bill.flat).push(bill);
-  }
-  const exemptFor = new Map((exemptions.results ?? []).map((e) => [e.flat, e]));
-
-  const blocked = new Set();
-  for (const [flat, flatBills] of byFlat) {
-    const status = flatVotingStatus({
-      bills: flatBills,
-      // Asked as of today: "could this flat vote if a poll opened now". A real
-      // poll re-asks it against its own creation date, because a quarter that
-      // had not ended when the poll opened must not start blocking mid-poll.
-      pollCreatedAt: today,
-      exemption: exemptFor.get(flat) ?? null,
-      today,
-    });
-    if (!status.canVote) blocked.add(flat);
-  }
-  return blocked;
-}
-
 async function resetPassword(request, env, session, path) {
   const ownerId = Number(path.split('/')[4]);
   const target = await env.DB.prepare(
@@ -1637,6 +1600,106 @@ async function postTenancyConfirm(request, env, session) {
   return json({ confirmed: true, at, leaseEndsAt: leaseEnd });
 }
 
+/* ── the voting block, and the committee's exceptions ────────────────────
+   The rule itself is `flatVotingStatus` and it is enforced at the ballot
+   (lib/polls.js). What an admin needs is to SEE it — which flats it catches and
+   why — and to excuse a flat the committee has decided about. 0042 gave the
+   exemption two signatures at the schema, in the CHECK that the grantor and the
+   approver differ, for the same reason every other maintenance decision has
+   them: this one restores a vote.                                             */
+
+async function votingOverview(env) {
+  const [statuses, exemptions] = await Promise.all([
+    votingStatuses(env),
+    env.DB.prepare(
+      `SELECT e.*, g.name AS granted_by_name, a.name AS approved_by_name
+         FROM voting_exemptions e
+         LEFT JOIN owners g ON g.id = e.granted_by
+         LEFT JOIN owners a ON a.id = e.approved_by
+        ORDER BY e.granted_at DESC`
+    ).all(),
+  ]);
+
+  return json({
+    // Only the flats the rule has something to say about. Ninety-nine rows
+    // saying "clear" is a screen nobody reads to the bottom of.
+    flats: [...statuses]
+      .filter(([, v]) => !v.canVote || v.reason === 'exempt')
+      .map(([flat, v]) => ({ flat, ...v }))
+      .sort((a, b) => String(a.flat).localeCompare(String(b.flat))),
+    exemptions: exemptions.results ?? [],
+    today: istToday(),
+  });
+}
+
+/** One admin proposes an exemption. It does nothing until another agrees. */
+async function grantVotingExemption(request, env, session) {
+  const body = await readJson(request);
+  const flat = String(body?.flat ?? '').trim().toUpperCase();
+  const reason = String(body?.reason ?? '').trim();
+  // NOT NULLABLE HERE even though the column allows it. 0042 left `ends_at`
+  // open-ended on purpose — a flat in a long dispute is a deliberate committee
+  // decision — but an open-ended exemption is the one an admin grants by
+  // accident and nobody ever revisits, so it has to be asked for explicitly.
+  const endsAt = body?.endsAt ? String(body.endsAt).slice(0, 10) : null;
+  const openEnded = Boolean(body?.openEnded);
+
+  if (!flat) return problem(400, 'DDP-ADMIN-004', 'Which flat?');
+  if (!reason) return problem(400, 'DDP-ADMIN-004', 'Say why, for the record.');
+  if (!endsAt && !openEnded) {
+    return problem(400, 'DDP-MAINT-002',
+      'Give an end date, or say plainly that this one is open-ended.');
+  }
+  if (endsAt && !/^\d{4}-\d{2}-\d{2}$/.test(endsAt)) {
+    return problem(400, 'DDP-MAINT-002', 'That is not a date.');
+  }
+
+  const exists = await env.DB.prepare('SELECT flat FROM flats WHERE flat = ?').bind(flat).first();
+  if (!exists) return problem(404, 'DDP-ADMIN-004', 'No such flat.');
+
+  const now = new Date().toISOString();
+  const created = await env.DB.prepare(
+    `INSERT INTO voting_exemptions (flat, reason, ends_at, granted_by, granted_at)
+     VALUES (?, ?, ?, ?, ?) RETURNING id`
+  ).bind(flat, reason.slice(0, 300), openEnded ? null : endsAt, session.actor.id, now).first();
+
+  await audit(env, session, 'maint.voting.exempt.grant',
+    { id: created.id, flat, endsAt: openEnded ? null : endsAt });
+  return json({ id: created.id, flat, approved: false }, { status: 201 });
+}
+
+/**
+ * A second admin agrees, and only now does the vote come back.
+ *
+ * The rule is in the schema: 0042 CHECKs that granted_by and approved_by
+ * differ, and `isVotingExemptOn` refuses an unapproved row outright. Both
+ * belts are deliberate — an exemption restores a right, and one admin restoring
+ * it for their own flat is exactly the shape this is guarding against.
+ */
+async function approveVotingExemption(env, session, path) {
+  const id = Number(path.split('/')[6]);   // /api/admin/maint/voting/exempt/:id/approve
+  const row = await env.DB.prepare('SELECT * FROM voting_exemptions WHERE id = ?').bind(id).first();
+  if (!row) return problem(404, 'DDP-ADMIN-017', 'No such exemption.');
+  if (row.approved_by) return problem(409, 'DDP-ADMIN-017', 'That exemption is already approved.');
+  if (row.granted_by === session.actor.id) {
+    return problem(403, 'DDP-ADMIN-017', 'You granted this one, so you cannot approve it.');
+  }
+  // An admin's own flat, for the reason approvalPolicy gives at length: an
+  // admin has a flat like everybody else, and their own is precisely where a
+  // quiet restoration looks worst.
+  if (String(session.actor.flat) === String(row.flat)) {
+    return problem(403, 'DDP-ADMIN-017', 'This is your own flat.');
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    'UPDATE voting_exemptions SET approved_by = ?, approved_at = ? WHERE id = ? AND approved_by IS NULL'
+  ).bind(session.actor.id, now, id).run();
+
+  await audit(env, session, 'maint.voting.exempt.approve', { id, flat: row.flat });
+  return json({ id, flat: row.flat, approved: true });
+}
+
 /* ── a tenant moving out ─────────────────────────────────────────────────
    Recording a departure re-rates the quarter, moves an unpaid bill to somebody
    who did not incur it, switches who the letters go to, and takes away a
@@ -2072,6 +2135,16 @@ async function castPollVote(request, env, session, path) {
     await audit(env, session, 'poll.vote', { pollId, flat: session.subject.flat });
     return json({ ok: true, options: cast });
   } catch (err) {
+    // The maintenance block gets its own sentence. The card on the poll already
+    // explains it, so reaching here means the screen and the rule disagreed —
+    // a stale tab, or somebody calling the API by hand — and "that vote could
+    // not be recorded" would leave a resident with no idea why. PLACEHOLDER
+    // COPY, like the rest of this feature's resident-visible wording.
+    if (err?.code === 'DDP-POLL-010') {
+      return problem(409, 'DDP-POLL-010',
+        'This flat has maintenance outstanding from a closed quarter, so it cannot vote yet. '
+        + 'The vote unlocks as soon as the treasurer confirms payment.');
+    }
     // The validation message is the useful half — it names what to change.
     return problem(400, err?.code ?? 'DDP-POLL-005',
       err?.detail?.message ?? 'That vote could not be recorded.');

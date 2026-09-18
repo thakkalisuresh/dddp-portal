@@ -242,6 +242,7 @@ export const ERROR_CODES = {
   // One notice, one poll. The unique index is what makes it true; this is the
   // sentence the committee gets instead of a constraint violation.
   'DDP-POLL-009': { severity: 'warn',  message: 'Poll attached to a notice that already has one' },
+  'DDP-POLL-010': { severity: 'warn',  message: 'Vote refused — the flat has maintenance outstanding' },
 };
 
 /** Domains in registry order, for the generated docs. */

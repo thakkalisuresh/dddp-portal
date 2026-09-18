@@ -20,7 +20,7 @@
  */
 
 import { api } from './api.js';
-import { el, esc, showError, askFirst } from './ui.js';
+import { el, esc, showError, askFirst, setChildren } from './ui.js';
 import { money, dayLabel } from './i18n.js';
 import { trackAction } from './track.js';
 
@@ -28,8 +28,20 @@ let state = null;
 let step = 1;
 let root = null;
 
-export async function maintPanel(mount) {
-  root = mount;
+/**
+ * The Maintenance tab.
+ *
+ * RETURNS ITS NODE. The tab dispatcher in admin-console.js calls every panel as
+ * `main.replaceChildren(await tab.render())` — no argument, node back — and this
+ * one took a mount instead, so `root` was undefined and the whole tab rendered
+ * "Cannot read properties of undefined (reading 'replaceChildren')" from the
+ * moment step 6 shipped it. The suite never saw it: every function below is
+ * tested, and none of them is the one that was wrong.
+ *
+ * `mount` is still accepted, so a caller that has a node to fill keeps working.
+ */
+export async function maintPanel(mount = null) {
+  root = mount ?? el('div');
   root.replaceChildren(el('p', { class: 'muted' }, 'Loading the quarter…'));
   try {
     state = await api.admin.maint();
@@ -38,6 +50,7 @@ export async function maintPanel(mount) {
   } catch (err) {
     showError(root, err);
   }
+  return root;
 }
 
 /**
@@ -83,7 +96,151 @@ function render() {
     header(),
     rail,
     state.readOnly ? null : panels(),
+    votingPanel(),
   ].filter(Boolean));
+}
+
+/**
+ * The voting block, and the committee's exceptions to it.
+ *
+ * NOT A STEP. The four steps are a quarter's life and run in order; this is a
+ * standing view of a rule that is true between quarters as much as during one,
+ * so it sits below the rail rather than pretending to be step five.
+ *
+ * The rule itself is `flatVotingStatus`, read from the server. Nothing here
+ * recomputes who is blocked — the resident's poll card, the ballot endpoint and
+ * this screen all ask the same function, which is the only way the portal can
+ * avoid showing somebody a vote it is about to refuse.
+ */
+function votingPanel() {
+  const body = el('div', {}, el('p', { class: 'muted' }, 'Loading…'));
+  const panel = el('div', { class: 'panel stack' },
+    el('h2', {}, 'Voting'),
+    el('p', { class: 'small muted' },
+      'A flat with maintenance outstanding from a closed quarter cannot vote in a poll. '
+      + 'The block lifts the moment the treasurer confirms payment.'),
+    body);
+
+  const load = async () => {
+    try {
+      const data = await api.admin.voting();
+      setChildren(body, votingBody(data, load));
+    } catch (err) {
+      setChildren(body, el('p', { class: 'note note--bad' },
+        err.message ?? 'Could not load the voting block.'));
+    }
+  };
+  load();
+  return panel;
+}
+
+function votingBody(data, reloadVoting) {
+  const blocked = (data.flats ?? []).filter((f) => !f.canVote);
+  const pending = (data.exemptions ?? []).filter((e) => !e.approved_by);
+
+  return el('div', { class: 'stack' },
+    blocked.length
+      ? el('div', { class: 'scroll-x' },
+          el('table', { class: 'table' },
+            el('thead', {}, el('tr', {},
+              el('th', {}, 'Flat'), el('th', {}, 'Owes'),
+              el('th', {}, 'Quarters'), el('th', {}, ''))),
+            el('tbody', {}, ...blocked.map((f) => el('tr', {},
+              el('td', {}, f.flat),
+              el('td', { class: 'r' }, money(f.owed)),
+              el('td', {}, (f.quarters ?? []).join(', ')),
+              el('td', {}, exemptButton(f.flat, reloadVoting)))))))
+      : el('p', { class: 'note note--good' }, 'No flat is blocked from voting.'),
+
+    // WAITING ON A SECOND ADMIN, shown to everybody rather than only to the
+    // approver: an admin who cannot see that their own grant is still pending
+    // will raise it again or telephone about it, which is what the queue
+    // replaced. They see the row and no button.
+    pending.length
+      ? el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+          el('p', { class: 'label' }, 'Waiting for a second admin'),
+          ...pending.map((e) => el('div', { class: 'note note--warn' },
+            el('p', { class: 'small' },
+              `${e.flat} — “${e.reason}” · `
+              + (e.ends_at ? `until ${e.ends_at}` : 'open-ended')
+              + ` · granted by ${e.granted_by_name ?? 'an admin'}`),
+            el('button', {
+              class: 'btn btn--sm', type: 'button',
+              onclick: async (ev) => {
+                ev.target.disabled = true;
+                try { await api.admin.approveVotingExemption(e.id); await reloadVoting(); }
+                catch (err) { ev.target.disabled = false; ev.target.after(
+                  el('span', { class: 'small bad' }, ` ${err.message ?? 'Refused.'}`)); }
+              },
+            }, 'Approve'))))
+      : null,
+
+    approvedExemptions(data));
+}
+
+/** The exceptions in force, so an open-ended one cannot quietly hide. */
+function approvedExemptions(data) {
+  const live = (data.exemptions ?? []).filter((e) => e.approved_by);
+  if (!live.length) return null;
+  return el('details', {},
+    el('summary', { class: 'small muted' }, `${live.length} exemption${live.length === 1 ? '' : 's'} granted`),
+    ...live.map((e) => el('p', { class: 'small muted' },
+      `${e.flat} — “${e.reason}” · `
+      + (e.ends_at ? `until ${e.ends_at}` : 'open-ended')
+      + ` · ${e.granted_by_name ?? 'an admin'}, approved by ${e.approved_by_name ?? 'an admin'}`)));
+}
+
+/**
+ * Propose an exemption. One admin asks; it does nothing until another agrees.
+ *
+ * The end date is ASKED FOR rather than defaulted. 0042 allows an open-ended
+ * exemption deliberately — a flat in a long dispute is a real committee
+ * decision — but an open-ended one granted by accident is the one nobody ever
+ * revisits, so saying so has to be a separate act.
+ */
+function exemptButton(flat, reloadVoting) {
+  const slot = el('span', {});
+  const open = () => {
+    const reason = el('input', {
+      class: 'input input--sm', placeholder: 'In dispute with the committee',
+      'aria-label': `Why ${flat} is excused from the voting block`,
+    });
+    const until = el('input', { class: 'input input--sm', type: 'date',
+                                'aria-label': `Excused until when` });
+    const forever = el('input', { type: 'checkbox' });
+    const out = el('span', { class: 'small' });
+
+    setChildren(slot, el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+      el('div', { class: 'field' }, el('label', {}, 'Why'), reason),
+      el('div', { class: 'field' }, el('label', {}, 'Excused until'), until),
+      el('label', { class: 'small', style: 'display:flex;gap:var(--s-2)' },
+        forever, 'No end date — the committee decided this one is open-ended'),
+      el('div', { class: 'row', style: 'gap:var(--s-3);flex-wrap:wrap' },
+        el('button', {
+          class: 'btn btn--sm', type: 'button',
+          onclick: async (ev) => {
+            ev.target.disabled = true;
+            try {
+              await api.admin.grantVotingExemption({
+                flat, reason: reason.value || reason.placeholder,
+                endsAt: until.value || null, openEnded: forever.checked,
+              });
+              await reloadVoting();
+            } catch (err) {
+              ev.target.disabled = false;
+              out.textContent = err.message ?? 'Could not grant that.';
+            }
+          },
+        }, 'Send for a second admin'),
+        el('button', { class: 'linkish small', type: 'button',
+                       onclick: () => slot.replaceChildren() }, 'Cancel'),
+        out)));
+    reason.focus();
+  };
+
+  return el('span', {},
+    el('button', { class: 'btn btn--sm btn--quiet', type: 'button', onclick: open }, 'Excuse'),
+    slot);
 }
 
 function header() {

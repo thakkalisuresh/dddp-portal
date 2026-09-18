@@ -211,6 +211,12 @@ export const api = {
     decideDeparture: (id, ok) =>
       request('POST', `/api/admin/tenancy/departures/${id}/${ok ? 'approve' : 'reject'}`),
 
+    /** The voting block: who it catches, and the committee's exceptions to it. */
+    voting:        ()   => request('GET',  '/api/admin/maint/voting'),
+    grantVotingExemption: (body) => request('POST', '/api/admin/maint/voting/exempt', body),
+    approveVotingExemption: (id) =>
+      request('POST', `/api/admin/maint/voting/exempt/${id}/approve`),
+
     confirmTenancy: (id, leaseEndsAt = null) =>
                                request('POST', '/api/admin/maint/tenancy/confirm',
                                        { id, leaseEndsAt }),

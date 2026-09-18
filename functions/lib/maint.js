@@ -454,7 +454,7 @@ export function flatVotingStatus({ bills, pollCreatedAt, exemption = null, today
   // exempt flat that also happens to owe nothing should still read as exempt to
   // an admin looking at why it can vote.
   if (exemption && isVotingExemptOn(exemption, today)) {
-    return { canVote: true, reason: 'exempt', owed: 0, quarters: [] };
+    return { canVote: true, reason: 'exempt', owed: 0, quarters: [], billIds: [] };
   }
 
   const blocking = (bills ?? []).filter((bill) => {
@@ -466,7 +466,7 @@ export function flatVotingStatus({ bills, pollCreatedAt, exemption = null, today
     return quarterHasEnded(bill.quarter, pollCreatedAt);
   });
 
-  if (!blocking.length) return { canVote: true, reason: 'clear', owed: 0, quarters: [] };
+  if (!blocking.length) return { canVote: true, reason: 'clear', owed: 0, quarters: [], billIds: [] };
 
   // A CLAIM DOES NOT UNLOCK THE VOTE, BUT IT CHANGES WHAT THE CARD SAYS.
   //
@@ -491,6 +491,15 @@ export function flatVotingStatus({ bills, pollCreatedAt, exemption = null, today
     // number attached is a dead end rather than something a resident can act on.
     owed: blocking.reduce((sum, b) => sum + Number(b.total ?? 0), 0),
     quarters: blocking.map((b) => b.quarter).sort(),
+    // The bills themselves, oldest quarter first, so the card beside the number
+    // can be a Pay button rather than an instruction to go and find it. A block
+    // with no way out of it on the same screen is the dead end this whole card
+    // exists to avoid.
+    billIds: blocking
+      .slice()
+      .sort((a, b) => String(a.quarter).localeCompare(String(b.quarter)))
+      .map((b) => b.id)
+      .filter((id) => id != null),
   };
 }
 

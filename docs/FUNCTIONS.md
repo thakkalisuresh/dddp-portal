@@ -941,6 +941,16 @@ Reading a payment screenshot with a vision model.
 | fn | `safeJson` |  |
 | fn | `bytesToBase64` |  |
 
+### `functions/lib/voting.js`
+
+Who may vote, read from the database.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `votingStatuses` | The voting status of every flat that has anything to say about it. |
+| fn | `votingStatusFor` |  |
+| fn | `votingBlockedFlats` |  |
+
 ## Server — router
 
 One router. Route table at the top, handlers below it.
@@ -972,7 +982,7 @@ The Maintenance tab — step 6.
 
 | | Export | What it does |
 |---|---|---|
-| fn | `maintPanel` |  |
+| fn | `maintPanel` | The Maintenance tab. |
 
 ### `public/js/api.js`
 
@@ -1198,4 +1208,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-666 exports. 292 have no doc comment.
+669 exports. 293 have no doc comment.
