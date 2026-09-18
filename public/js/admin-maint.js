@@ -808,13 +808,57 @@ function scheduleBody() {
     },
   });
 
-  const blocked = state.blocked?.blocked;
   // The rows whose only problem is a missing lease end. These do not stop the
   // quarter for ever — the roster is filled in over time and refusing to bill
   // until every date is entered would miss the quarter entirely — but they must
   // be scheduled past DELIBERATELY. The server refuses without this.
   const undated = state.tenancies.filter((t) => t.flag === 'missing-date');
+
+  // WHAT THE ACKNOWLEDGEMENT CANNOT CLEAR, which is not the same as "anything
+  // flagged". A lease that has ended and a tenancy nobody has confirmed in two
+  // years are both fixed on the row itself — "Add date", "Still here", "Moved
+  // out" — so they stay hard blocks. A missing lease end has no such fix until
+  // the roster exists, and the checkbox IS its explicit confirmation.
+  //
+  // THIS WAS THE REHEARSAL'S FIRST FINDING. The checkbox was offered only when
+  // nothing was blocking, and the undated rows were themselves the block — so
+  // on staging, where all 11 flagged tenancies were undated, the box never
+  // appeared and "Schedule this quarter" could not be pressed at all. The
+  // server has always accepted this case on the acknowledgement; only the
+  // screen refused, which is the wrong way round for a guard that lives on the
+  // server. It is also the exact case 1 October will be in, since there is no
+  // roster and no lease dates.
+  const byFlag = state.blocked?.byFlag ?? {};
+  const hardBlocks = (byFlag['lease-ended'] ?? 0) + (byFlag.unchecked ?? 0);
   const ack = el('input', { type: 'checkbox', id: 'ack-undated' });
+  const needsAck = hardBlocks === 0 && undated.length > 0;
+  const blocked = hardBlocks > 0 || needsAck;
+
+  const scheduleButton = el('button', {
+    class: 'btn btn--lg', type: 'button',
+    // Disabled ON THE FLAGS, which is the whole point of step 2. The server
+    // refuses it too — this is the explanation, not the guard.
+    disabled: blocked || null,
+    onclick: async () => {
+      out.textContent = 'Scheduling…';
+      try {
+        trackAction('maint.schedule');
+        state = await api.admin.maintSchedule(
+          state.quarter, dateInput.value, ack.checked);
+        await reload(3);
+      } catch (err) {
+        out.textContent = err.message ?? 'Could not schedule that quarter.';
+        out.style.color = 'var(--overdue)';
+      }
+    },
+  }, 'Schedule this quarter');
+
+  // The checkbox has to DO something, and re-rendering the step on every tick
+  // would take the focus off it. Nothing else on the screen changes, so this is
+  // the one control it touches.
+  ack.addEventListener('change', () => {
+    scheduleButton.disabled = hardBlocks > 0 || (undated.length > 0 && !ack.checked);
+  });
 
   return el('div', { class: 'stack' },
     el('label', { class: 'field' },
@@ -841,16 +885,16 @@ function scheduleBody() {
 
     letterPreview(),
 
-    blocked
+    hardBlocks
       ? el('div', { class: 'note note--warn' },
-          `Step 2 has ${state.blocked.count} tenanc${state.blocked.count === 1 ? 'y' : 'ies'} `
+          `Step 2 has ${hardBlocks} tenanc${hardBlocks === 1 ? 'y' : 'ies'} `
           + 'still to confirm. Scheduling fixes every rate at once, so they have to be '
           + 'settled first.')
       : null,
 
-    // Offered only once nothing else is blocking, so it cannot become the box
-    // an admin ticks to get past step 2 without reading it.
-    !blocked && undated.length
+    // Offered only once nothing an admin can actually fix is outstanding, so it
+    // cannot become the box they tick to get past step 2 without reading it.
+    needsAck
       ? el('label', { class: 'row', style: 'gap:var(--s-2);align-items:flex-start' },
           ack,
           el('span', { class: 'small' },
@@ -859,24 +903,7 @@ function scheduleBody() {
             + 'Schedule anyway — I know these dates are missing.'))
       : null,
 
-    el('button', {
-      class: 'btn btn--lg', type: 'button',
-      // Disabled ON THE FLAGS, which is the whole point of step 2. The server
-      // refuses it too — this is the explanation, not the guard.
-      disabled: blocked || null,
-      onclick: async () => {
-        out.textContent = 'Scheduling…';
-        try {
-          trackAction('maint.schedule');
-          state = await api.admin.maintSchedule(
-            state.quarter, dateInput.value, ack.checked);
-          await reload(3);
-        } catch (err) {
-          out.textContent = err.message ?? 'Could not schedule that quarter.';
-          out.style.color = 'var(--overdue)';
-        }
-      },
-    }, 'Schedule this quarter'),
+    scheduleButton,
     out,
 
     // No typed confirmation and no second admin. Scheduling is reversible and

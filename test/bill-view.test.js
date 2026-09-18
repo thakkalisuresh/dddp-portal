@@ -170,17 +170,20 @@ describe('billDetailPayload', () => {
 });
 
 describe('paySheetPayload', () => {
-  it('offers only the apps that accept a bank account in account mode', async () => {
-    // PhonePe and Paytm refuse <account>@<IFSC>.ifsc.npci outright. Offering
-    // them would be two dead buttons, and a resident whose payment app "does
-    // not work" blames the portal.
+  it('offers every app in account mode too, on the ₹1 evidence', async () => {
+    // This asserted the opposite, on the published guidance that PhonePe and
+    // Paytm refuse <account>@<IFSC>.ifsc.npci addresses. On 18 September 2026
+    // all three of Google Pay, PhonePe and Paytm accepted a ₹1 payment to the
+    // real account from an iPhone and all three completed. Android is untested
+    // and its mechanism differs; if it refuses, the fix is a per-platform list,
+    // not a warning that is wrong on one platform.
     const { db, env } = building();
     putMaintBill(db, { id: 1 });
     const sheet = await paySheetPayload(env, viewer(3, '4B', 'tenant'), 1);
     expect(sheet.mode).toBe('account');
     expect(sheet.apps).toEqual(ACCOUNT_MODE_APPS);
-    expect(sheet.apps).not.toContain('phonepe');
-    expect(sheet.apps).not.toContain('paytm');
+    expect(sheet.apps).toContain('phonepe');
+    expect(sheet.apps).toContain('paytm');
   });
 
   it('offers every app once the association has a UPI ID of its own', async () => {

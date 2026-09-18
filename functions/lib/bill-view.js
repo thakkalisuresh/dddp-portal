@@ -29,12 +29,22 @@ import { describeQuarter } from './maint.js';
 /**
  * Apps that can pay a BANK ACCOUNT rather than a UPI ID.
  *
- * PhonePe and Paytm refuse `<account>@<IFSC>.ifsc.npci` addresses outright.
- * Offering them anyway would put two dead buttons on the sheet, and a resident
- * whose payment app "does not work" blames the portal — so in account mode the
- * list is these two and the sheet says why the others are missing.
+ * ALL FOUR, on evidence. This was `['gpay', 'bhim']` on the published guidance
+ * that PhonePe and Paytm refuse `<account>@<IFSC>.ifsc.npci` addresses. On
+ * 18 September 2026 the user paid ₹1 to the association's real account address
+ * from an iPhone through Google Pay, PhonePe and Paytm; all three accepted it
+ * and all three payments completed. The guidance is wrong, at least on iOS, and
+ * the cost of believing it was two apps most residents have being hidden from
+ * them on the one screen that asks them for money.
+ *
+ * ANDROID IS UNTESTED, and the mechanism differs there — an Android tap goes
+ * through an intent rather than a scheme URL. If Android turns out to refuse
+ * where iOS accepted, the honest answer is a per-platform list rather than a
+ * warning that is wrong on one of them.
+ *
+ * BHIM stays: untested rather than known-bad, and it is NPCI's own app.
  */
-export const ACCOUNT_MODE_APPS = ['gpay', 'bhim'];
+export const ACCOUNT_MODE_APPS = ['gpay', 'phonepe', 'paytm', 'bhim'];
 
 /** Every app, for the day the association has a UPI ID of its own. */
 export const UPI_MODE_APPS = ['gpay', 'phonepe', 'paytm', 'bhim'];

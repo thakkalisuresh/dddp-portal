@@ -218,17 +218,14 @@ function payBlock(sheet) {
           el('a', { class: 'pay-app', href: hrefFor(key), onclick: handoff },
             appMark(key), APPS[key].label))));
 
-    // WHY TWO APPS ARE MISSING. In account mode the address is
-    // <account>@<IFSC>.ifsc.npci, which PhonePe and Paytm refuse outright.
-    // Offering them would be two dead buttons, and a resident whose payment app
-    // "does not work" blames the portal — so they are absent and this says why.
-    if (mode === 'account') {
-      block.append(
-        el('p', { class: 'small muted' },
-          'PhonePe and Paytm do not allow payments to a bank account. '
-          + 'Use one of the apps above, or transfer from your own bank app '
-          + 'using the details below.'));
-    }
+    // NO WARNING ABOUT PHONEPE AND PAYTM. There was one, on the published
+    // guidance that they refuse a bank-account address; a ₹1 test from an
+    // iPhone through all three apps completed against the real account, so the
+    // claim is not merely unproven but contradicted. It is not softened either
+    // — a hedged version of a sentence we have evidence against is still that
+    // sentence. The bank-transfer fold below is now the only thing on this
+    // screen making a claim about failure, and it claims only that an app did
+    // not open, which is the thing we can actually observe.
   } else {
     block.append(
       el('a', { class: 'btn btn--block btn--lg', href: links.generic, onclick: handoff },
