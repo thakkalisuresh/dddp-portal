@@ -10,6 +10,11 @@ import { createSession, resolveSession, COOKIE } from '../functions/lib/session.
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NOW = new Date('2026-09-16T16:00:00.000Z');          // 21:30 IST
+// resolveSession is the one thing here that reads the real clock, so a session
+// it must accept has to outlive the real today, not the frozen NOW above.
+// ahead() is anchored to NOW and so goes stale on the wall clock; FUTURE does
+// not. Same constant as session-inactive/router-gates/depart-resident.
+const FUTURE = new Date(Date.now() + 86_400_000).toISOString();
 const ago = (min) => new Date(NOW.getTime() - min * 60_000).toISOString();
 const ahead = (days) => new Date(NOW.getTime() + days * 86_400_000).toISOString();
 
@@ -143,7 +148,7 @@ describe('sessions before migration 0041', () => {
   it('resolveSession writes no presence when the row has no last_seen_at column', async () => {
     const writes = [];
     const base = {
-      token: 'tok', actor_id: 1, subject_id: 1, mode: 'normal', expires_at: ahead(1),
+      token: 'tok', actor_id: 1, subject_id: 1, mode: 'normal', expires_at: FUTURE,
       actor_name: 'P', actor_role: 'owner', actor_flat: '4A', actor_active: 1,
       subject_name: 'P', subject_role: 'owner', subject_flat: '4A', subject_active: 1,
     };
