@@ -78,6 +78,8 @@ Ask the bot a code and it will explain it.
 | `DDP-MAINT-006` | error | live | Unknown mid-quarter occupancy change |
 | `DDP-MAINT-007` | error | live | Maintenance quarter does not exist |
 | `DDP-MAINT-008` | warn | live | Maintenance quarter is not in a state that allows this |
+| `DDP-MAINT-009` | warn | live | Unknown maintenance letter kind |
+| `DDP-MAINT-010` | warn | live | This quarter would not bill that flat, so there is no letter to preview |
 
 ## PAY
 
@@ -191,7 +193,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-121 codes across 12 domains — 13 fatal, 3 awaiting their call site, 3 retired.
+123 codes across 12 domains — 13 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

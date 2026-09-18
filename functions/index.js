@@ -14,7 +14,7 @@ import {
   SETTLED_STATUSES, isQuarterLabel, dueDateFor, describeQuarter, flatVotingStatus,
 } from './lib/maint.js';
 import { maintAdminPayload, duesReport, adminHomeCard } from './lib/maint-admin.js';
-import { scheduleQuarter } from './lib/maint-cron.js';
+import { scheduleQuarter, previewLetter } from './lib/maint-cron.js';
 import { dashboardPayload } from './lib/dashboard.js';
 import { billPdf, istSlashDate } from './lib/bill-pdf.js';
 // The Worker's own date label — the browser's lives in js/i18n.js.
@@ -316,6 +316,16 @@ export default {
         if (route === 'POST /api/admin/maint/schedule') return postMaintSchedule(request, env, session);
         if (route === 'POST /api/admin/maint/unschedule') return postMaintUnschedule(request, env, session);
         if (route === 'GET /api/admin/maint/voting') return votingOverview(env);
+        // Read-only, and it writes nothing — see previewLetter. The flat must
+        // be one the quarter would bill, so this exposes nothing the Bills
+        // screen does not.
+        if (route === 'GET /api/admin/maint/preview') {
+          return json(await previewLetter(env, url.searchParams.get('quarter'), {
+            flat: url.searchParams.get('flat'),
+            kind: url.searchParams.get('kind') || 'issued',
+            origin: url.origin,
+          }));
+        }
         if (route === 'POST /api/admin/maint/voting/exempt') {
           return grantVotingExemption(request, env, session);
         }

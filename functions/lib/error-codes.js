@@ -134,6 +134,12 @@ export const ERROR_CODES = {
   // twice, not a fault. At `error` it would reach Telegram on every double-tap.
   'DDP-MAINT-008': { severity: 'warn',  message: 'Maintenance quarter is not in a state that allows this' },
 
+  // Both from the letter preview, and both `warn` for DDP-MAINT-008's reason:
+  // an admin asking for a letter kind that does not exist, or for a flat this
+  // quarter would not bill, is a misdirected click on a read-only screen.
+  'DDP-MAINT-009': { severity: 'warn',  message: 'Unknown maintenance letter kind' },
+  'DDP-MAINT-010': { severity: 'warn',  message: 'This quarter would not bill that flat, so there is no letter to preview' },
+
   // ── MAIL ───────────────────────────────────────────────────────────────
   'DDP-MAIL-001': { severity: 'error', message: 'Reset email could not be sent' },
 

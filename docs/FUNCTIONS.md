@@ -489,6 +489,7 @@ The maintenance quarter's life, as scheduled work: draft, confirm, issue, charge
 | fn | `applyLateFeeToMaintBill` | Charge ONE bill, now, if it is due one. |
 | fn | `queueDueLetters` | Queue the two reminders that fall between issuing and the due date. |
 | fn | `runMaintenance` | The maintenance half of the 08:30 run: draft, remind, issue, queue. |
+| fn | `previewLetter` | The letters a quarter WOULD send, rendered for one flat, sending nothing. |
 
 ### `functions/lib/maint-home.js`
 
@@ -1208,4 +1209,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-669 exports. 293 have no doc comment.
+670 exports. 293 have no doc comment.

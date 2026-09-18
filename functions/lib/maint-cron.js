@@ -22,6 +22,7 @@ import {
   tenancyReadiness, DEFAULT_OWNER_RATE, DEFAULT_TENANT_RATE, DEFAULT_LATE_FEE, DUE_DAYS,
 } from './maint.js';
 import { mailToken, sendEmail, mailConfigured } from './mailer.js';
+import { letterFor, MAIL_KINDS } from './maint-mail.js';
 import { renderEmail, para, figure, details, action, aside, SITE } from './email-template.js';
 import { istToday } from './time.js';
 import { fail } from './errors.js';
@@ -578,4 +579,90 @@ export async function runMaintenance(env, { today = istToday(), origin = '' } = 
   const letters = await queueDueLetters(env, { today }).catch(() => ({ dueSoon: 0, due: 0 }));
 
   return { draft, reminded, issued, letters };
+}
+
+/* ── the letter preview ───────────────────────────────────────────────────  */
+
+/**
+ * The letters a quarter WOULD send, rendered for one flat, sending nothing.
+ *
+ * This is the button above "Schedule this quarter": the admin commits the
+ * building to four letters, and until now could not read one. It is also where
+ * the committee reads the final copy in place once the wording pass lands.
+ *
+ * WRITES NOTHING, and the outbox is the reason it is worth saying twice. A row
+ * in `maint_mail` is keyed UNIQUE (bill_id, kind), and the drain skips a key
+ * that is already there — so a preview that queued its own row would silently
+ * cost a resident the real letter. The worst possible failure for a button
+ * whose entire job is reassurance. Nothing here touches `maint_mail`, and a
+ * test asserts the table is untouched after a preview.
+ *
+ * READS ONLY THE QUARTER'S OWN DRAFTS. The flat must be one this quarter would
+ * bill, so the preview cannot become a way to read a letter about a flat the
+ * Bills screen would not already show.
+ *
+ * Before a quarter is issued there are no bills, so the row is PROJECTED with
+ * exactly the rule that will issue it — `assessFlat` then `rateFor`, the same
+ * two calls `issueQuarter` makes. A preview computed any other way would be a
+ * letter nobody is going to receive.
+ */
+export async function previewLetter(env, quarterLabel, { flat, kind = 'issued', today = istToday(), origin = '' } = {}) {
+  if (!MAIL_KINDS.includes(kind)) fail('DDP-MAINT-009', { kind });
+
+  const quarter = await env.DB.prepare('SELECT * FROM maint_quarters WHERE quarter = ?')
+    .bind(quarterLabel).first();
+  if (!quarter) fail('DDP-MAINT-007', { quarter: quarterLabel });
+
+  // An issued quarter has the real row, and the real row is what the resident
+  // will be reading against — including a late fee that has already landed.
+  const bill = await env.DB.prepare(
+    'SELECT * FROM maint_bills WHERE quarter = ? AND flat = ?'
+  ).bind(quarterLabel, flat).first();
+
+  let row;
+  if (bill) {
+    row = {
+      ...bill,
+      due_date: quarter.due_date,
+      quarter_late_fee: quarter.late_fee,
+    };
+  } else {
+    const found = (await flatsWithPeople(env)).find((r) => r.flat === flat);
+    const assessment = found
+      ? assessFlat({ flat, people: found.people, issueDate: quarter.issue_date })
+      : null;
+    // Not "flat not found": the honest answer is that this quarter would not
+    // bill it, which is also true of an empty flat and of one whose only
+    // resident moved out before the issue date.
+    if (!assessment?.bill) fail('DDP-MAINT-010', { quarter: quarterLabel, flat });
+    const rate = rateFor(assessment.basis, quarter);
+    row = {
+      flat,
+      quarter: quarterLabel,
+      basis: assessment.basis,
+      rate_applied: rate,
+      // The projected total is the rate. The late fee is NOT added here even
+      // for the overdue letter: a fee that has not been charged is not part of
+      // what anybody owes, and letterFor names the fee separately anyway.
+      total: rate,
+      due_date: quarter.due_date,
+      quarter_late_fee: quarter.late_fee,
+    };
+  }
+
+  const letter = letterFor(kind, row, { origin, today });
+  return {
+    quarter: quarterLabel,
+    quarterLabel: describeQuarter(quarterLabel),
+    flat,
+    kind,
+    basis: row.basis,
+    // Whether the admin is reading a real bill or a projection of one. The
+    // difference matters: before issuing, every figure here is still subject to
+    // a tenancy change, and the screen says so rather than implying otherwise.
+    projected: !bill,
+    subject: letter.subject,
+    text: letter.text,
+    html: letter.html,
+  };
 }

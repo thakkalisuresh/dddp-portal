@@ -231,7 +231,10 @@ describe('votingCard', () => {
     });
     expect(card.canVote).toBe(false);
     expect(card.owed).toBe(9750);
-    expect(card.quarters).toEqual(['2026-Q3']);
+    // Described, not the internal key: this is the resident-facing shape, and
+    // "2026-Q3" reached the home page's voting card once already.
+    expect(card.quarters).toEqual(['Q3 2026 (Jul–Sep)']);
+    expect(card.quarters.join('')).not.toMatch(/\d{4}-Q\d/);
   });
 
   it('carries no person — the copy names the debt, never who owes it', () => {

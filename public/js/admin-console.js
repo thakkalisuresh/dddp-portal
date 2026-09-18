@@ -150,6 +150,34 @@ function scrollTabIntoView(nav) {
   syncTabFade(nav);
 }
 
+/**
+ * Which tab is on screen, so the hash router below can tell a real navigation
+ * from `show()` writing the hash it just landed on.
+ */
+let shown = null;
+
+/**
+ * The hash IS the console's router, and until now only on a page load.
+ *
+ * Every panel that sends the admin somewhere else does it the same way — the
+ * tenancy dialog's "Yes, they have left" goes to Residents to finish the job,
+ * Collect links to Bills for the quarter — and all of them wrote a hash onto
+ * the page they were already on. A same-document hash is not a navigation: the
+ * browser does not reload, `init` never runs again, and the panel the admin
+ * asked to leave stays exactly where it was. The links looked live and did
+ * nothing, which is worse than not offering them, because the "Yes, they have
+ * left" path deliberately does not write anything itself — it exists only to
+ * hand the admin to Residents.
+ *
+ * Found by clicking it, not by the suite: every one of these is a string
+ * assignment no test observes.
+ */
+addEventListener('hashchange', () => {
+  const id = location.hash.slice(1);
+  if (!id || id === shown) return;
+  show(id);
+});
+
 async function show(id) {
   // The same role test as renderTabs, applied to the destination rather than
   // to the tab strip. Hiding a tab only hides the button: /admin/#errors typed
@@ -158,6 +186,7 @@ async function show(id) {
   // should simply land somewhere sensible.
   const visible = (t) => t.render && (!t.superadmin || me.role === 'superadmin');
   const tab = TABS.find((t) => t.id === id && visible(t)) ?? TABS.find(visible);
+  shown = tab.id;
   location.hash = tab.id;
   // Tabs change the view without a page load, so trackPage never fires for
   // them. Without this, an admin's whole session reads as one visit to /admin.

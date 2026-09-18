@@ -296,7 +296,13 @@ export function votingCard(status) {
     reason: status.reason,
     message: status.message ?? null,
     owed: status.owed ?? 0,
-    quarters: status.quarters ?? [],
+    // DESCRIBED, not the internal key. `flatVotingStatus` works in '2026-Q2'
+    // because the rule compares quarters; a resident reads "Q2 2026 (Apr–Jun)"
+    // everywhere else in the portal, and the raw key reached the home page's
+    // voting card as "₹7750 outstanding · 2026-Q2". Done here because this
+    // function IS the resident-facing shape of the status — the poll card
+    // comes through it for the same reason.
+    quarters: (status.quarters ?? []).map(describeQuarter),
   };
 }
 

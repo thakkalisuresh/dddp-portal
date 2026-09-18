@@ -199,6 +199,12 @@ export const api = {
                                        { quarter, issueDate, acknowledgeUndated }),
     maintUnschedule: (quarter) =>
                                request('POST', '/api/admin/maint/unschedule', { quarter }),
+    // Read-only, and deliberately so: it renders a letter and queues nothing.
+    maintPreviewLetter: (quarter, flat, kind = 'issued') =>
+                               request('GET', '/api/admin/maint/preview'
+                                 + `?quarter=${encodeURIComponent(quarter)}`
+                                 + `&flat=${encodeURIComponent(flat)}`
+                                 + `&kind=${encodeURIComponent(kind)}`),
     /** "Still here" — and the lease end too, when that is what was missing. */
     /**
      * A tenant moving out. The PREVIEW is the consequences, recomputed on the

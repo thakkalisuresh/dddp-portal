@@ -561,6 +561,74 @@ function movedOut(row, tr) {
   });
 }
 
+/**
+ * Read the letter before committing the building to it.
+ *
+ * Sits directly above "Schedule this quarter" because that is the moment it is
+ * for: scheduling commits ninety-odd people to four letters, and until this
+ * existed an admin could not read one of them. It is also where the committee
+ * reads the final wording in place once the copy pass lands.
+ *
+ * It was a button pointing at `/admin/#messages` — a tab that stopped existing
+ * in the fourteen-to-eight consolidation, on a hash that did not route anyway.
+ * It did nothing at all, and no test could see that.
+ *
+ * NOTHING IS SENT AND NOTHING IS QUEUED; the endpoint writes no outbox row, for
+ * the reason given there. The flats offered are the ones this quarter would
+ * bill, taken from the preview the page already has rather than a second query.
+ */
+function letterPreview() {
+  const KINDS = [
+    ['issued', 'When the bill is raised'],
+    ['due_soon', 'Three days before it is due'],
+    ['due', 'On the due date'],
+    ['overdue', 'The day after, with the late fee'],
+  ];
+
+  const flats = (state.preview?.bills ?? []).map((b) => b.flat);
+  // No rates yet means no preview to read; step 1 is where that is fixed and
+  // an empty picker would be a worse way of saying so.
+  if (!flats.length) return null;
+
+  const out = el('div', { class: 'stack' });
+  const flatPick = el('select', { class: 'input' },
+    ...flats.map((f) => el('option', { value: f }, f)));
+  const kindPick = el('select', { class: 'input' },
+    ...KINDS.map(([value, label]) => el('option', { value }, label)));
+
+  const read = async () => {
+    setChildren(out, el('p', { class: 'muted small' }, 'Reading…'));
+    try {
+      trackAction('maint.preview-letter');
+      const p = await api.admin.maintPreviewLetter(state.quarter, flatPick.value, kindPick.value);
+      setChildren(out,
+        el('div', { class: 'note' },
+          el('p', {}, el('strong', {}, p.subject)),
+          // Said plainly, because every figure in a projection can still move:
+          // a tenancy confirmed tomorrow changes the rate and the recipient.
+          p.projected
+            ? el('p', { class: 'small muted' },
+                'Not a bill yet — this is what would be sent on the issue date, '
+                + `at the ${p.basis === 'tenant' ? 'rented' : 'owner'} rate.`)
+            : null,
+          el('pre', { class: 'small', style: 'white-space:pre-wrap;margin:0' }, p.text),
+          el('p', { class: 'small muted' },
+            'Nothing was sent, and nothing is queued by reading this.')));
+    } catch (err) {
+      showError(out, err);
+    }
+  };
+
+  return el('details', { class: 'panel-sub' },
+    el('summary', {}, 'Preview an email'),
+    el('div', { class: 'stack' },
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', { class: 'label' }, 'Flat'), flatPick),
+        el('label', { class: 'field' }, el('span', { class: 'label' }, 'Letter'), kindPick)),
+      el('button', { class: 'btn btn--sm', type: 'button', onclick: read }, 'Read it'),
+      out));
+}
+
 function billingBlock() {
   const p = state.preview;
   const byFlat = new Map(p.bills.map((b) => [b.flat, b]));
@@ -682,10 +750,7 @@ function scheduleBody() {
         + 'Letters go to whoever is billed, and to the owner of a let flat. '
         + 'A reminder follows three days before the due date.')),
 
-    el('button', {
-      class: 'btn btn--ghost', type: 'button',
-      onclick: () => { location.href = `/admin/#messages`; },
-    }, 'Preview an email'),
+    letterPreview(),
 
     blocked
       ? el('div', { class: 'note note--warn' },

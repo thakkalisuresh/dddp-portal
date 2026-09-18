@@ -23,6 +23,7 @@ import { fail } from './errors.js';
 // The notice board's own visibility rule, borrowed rather than reimplemented.
 import { canSeeNotice } from './notices.js';
 import { votingStatusFor, votingStatuses } from './voting.js';
+import { votingCard } from './maint-home.js';
 // The shared rules. Re-exported below so every existing importer — and the
 // tests — keep asking this module, which is where polls are reasoned about.
 // Imported for USE. `export ... from` below re-exports the rest for callers,
@@ -454,7 +455,10 @@ export async function getPoll(env, id, viewer, { now = new Date().toISOString() 
     // Null for a tenant, deliberately. The vote is the owner's and always was;
     // a card explaining the block would read as a penalty for a rule that is
     // not about them.
-    voting: voting ?? null,
+    // Through `votingCard`, the one resident-facing shape of this status, so
+    // the poll card and the home page cannot describe the same block two ways
+    // — the home page said "Q2 2026 (Apr–Jun)" and this said "2026-Q2".
+    voting: voting ? votingCard(voting) : null,
     // The options are always sent. A closed poll still shows a resident what
     // the question was and what their flat chose, whether or not the count was
     // ever published — see docs/POLLS-PLAN.md.
