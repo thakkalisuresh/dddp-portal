@@ -465,7 +465,8 @@ function tenancyBlock() {
     el('p', { class: 'small muted' },
       '"Still here" records today\u2019s date against the tenancy and clears the '
       + 'flag for this quarter. A lease that has already ended needs a new end '
-      + 'date instead, on Residents — confirming alone does not clear it.'));
+      + 'date — "Add date" on that row — because confirming alone does not '
+      + 'clear it.'));
 }
 
 function tenancyRow(row) {
@@ -491,10 +492,21 @@ function tenancyRow(row) {
   };
 
   // "Add date" is the same call with a date on it. Confirming a row whose
-  // problem IS the missing date would stamp a record that is still missing the
-  // thing that made it a problem.
+  // problem IS the date would stamp a record that is still missing, or still
+  // carrying, the thing that made it a problem.
+  //
+  // OFFERED ON A LEASE THAT HAS ENDED TOO, not only on one with no date at all.
+  // `lease-ended` is the flag that actually blocks the quarter, and until now
+  // the only way to clear it was to leave for Residents — the screen complained
+  // and then sent you elsewhere to fix it, which is how a console becomes
+  // something people work around.
   const addDate = () => {
-    const input = el('input', { class: 'input input--sm', type: 'date' });
+    const input = el('input', {
+      class: 'input input--sm', type: 'date',
+      // The existing end date, where there is one, so extending a lease by a
+      // year is an edit rather than a re-entry.
+      value: row.leaseEndsAt ?? '',
+    });
     const save = el('button', {
       class: 'btn btn--sm', type: 'button',
       onclick: () => {
@@ -507,7 +519,7 @@ function tenancyRow(row) {
   };
 
   actions.replaceChildren(...[
-    row.flag === 'missing-date'
+    row.flag === 'missing-date' || row.flag === 'lease-ended'
       ? el('button', { class: 'btn btn--sm btn--ghost', type: 'button', onclick: addDate },
           'Add date')
       : null,
