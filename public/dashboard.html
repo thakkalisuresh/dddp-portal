@@ -3,43 +3,55 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Your gas bill — Diamond Park</title>
+<title>Home — Diamond Park</title>
 <link rel="icon" href="/img/favicon.ico" type="image/x-icon">
 <link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/app.css">
 <style>
-  /* Dashboard-only layout. The bill is the hero; everything else is
-     subordinate — one dominant element per screen (plan §5.4). */
-  .bill-hero { display: flex; flex-direction: column; gap: var(--s-2); }
-  .bill-hero__top { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); }
-  .pay-block { display: flex; flex-direction: column; gap: var(--s-2); margin-top: var(--s-4); }
-  .pay-apps { display: flex; flex-direction: column; gap: var(--s-2); }
-  .pay-app {
-    display: flex; align-items: center; gap: var(--s-3); min-height: var(--touch);
-    border: 1px solid var(--border); border-radius: var(--radius);
-    padding: var(--s-2) var(--s-4); font-family: var(--font-ui); font-weight: 500;
-    background: var(--surface); color: var(--ink); text-decoration: none;
+  /* Home. Four lists of cards, not one hero — the hero moved to /bill when
+     maintenance arrived beside gas and a resident could owe two things at once.
+
+     A CARD IS NOT ONE ANCHOR here, unlike the notice board's `a.card`. The card
+     carries a Pay button, and an anchor inside an anchor is invalid HTML that
+     browsers recover from unpredictably. So the tappable region is a child that
+     covers everything except the button. */
+  .cards { display: flex; flex-direction: column; gap: var(--s-3); }
+
+  .card__link {
+    display: block; color: inherit; text-decoration: none;
+    margin: calc(var(--s-4) * -1); margin-bottom: var(--s-3);
+    padding: var(--s-4); border-radius: var(--radius);
   }
-  .pay-app:hover { border-color: var(--accent); }
-  /* The lettered tile shown until a brand's real SVG is dropped into
-     public/img/upi/. Deliberately the interface's own font rather than
-     anything resembling a wordmark — see appMark() in dashboard.js. */
-  .pay-app__mark {
-    width: 30px; height: 30px; border-radius: 8px; flex: none;
-    display: flex; align-items: center; justify-content: center;
-    color: #fff; font-family: var(--font-ui); font-weight: 600;
-    font-size: var(--text-xs); letter-spacing: .02em;
+  .card__link:hover .card__period { text-decoration: underline; }
+  .card__link:focus-visible { outline: var(--focus-ring) solid var(--accent); outline-offset: -2px; }
+
+  .card__top { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); }
+  /* The kind, said with an icon AND a word. The icon alone would be a guess and
+     the word alone makes every card look identical at a glance. */
+  .card__kind {
+    display: inline-flex; align-items: center; gap: var(--s-2);
+    font-family: var(--font-ui); font-size: var(--text-sm); color: var(--ink-muted);
   }
-  .helper { font-size: var(--text-sm); color: var(--ink-muted); text-align: center; }
-  .chart { display: flex; align-items: flex-end; gap: var(--s-2); height: 88px; }
-  .chart__bar { flex: 1; background: #DCE8E2; border-top: 2.5px solid var(--accent); position: relative; min-height: 2px; }
-  .chart__bar--now { background: #C4DDD1; }
-  .chart__bar span {
-    position: absolute; bottom: -22px; left: 0; right: 0; text-align: center;
-    font-family: var(--font-ui); font-size: 10px; color: var(--ink-muted);
+  .card__period { font-family: var(--font-ui); font-weight: 500; margin-top: var(--s-2); }
+  .card__amount {
+    font-family: var(--font-ui); font-weight: 600; font-size: var(--text-2xl);
+    line-height: 1.1; letter-spacing: -0.02em;
   }
-  .chart-wrap { padding-bottom: var(--s-5); }
-  #qr { display: block; margin: 0 auto; image-rendering: pixelated; }
+  /* An overdue bill is marked on the card's own edge rather than by colouring
+     the amount: the amount is the thing being read, and recolouring it makes
+     the number itself look like the error. */
+  .card--overdue { border-color: var(--overdue-line); }
+
+  /* The quieter rows used by Coming up, Waiting for you and Recently paid.
+     Deliberately not cards: none of them is a thing to act on with money, and
+     giving them card weight would put four equal-looking blocks on the page. */
+  .row--link {
+    justify-content: space-between; color: inherit; text-decoration: none;
+    min-height: var(--touch); padding: var(--s-2) 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .row--link:hover { color: var(--accent); }
+  .cards .row, .row--link:last-child { border-bottom: 0; }
 </style>
 </head>
 <body>
@@ -52,7 +64,7 @@
 </header>
 
 <main class="page stack--lg stack" id="main">
-  <p class="muted">Loading your bill…</p>
+  <p class="muted">Loading…</p>
 </main>
 
 <script type="module" src="js/dashboard.js"></script>

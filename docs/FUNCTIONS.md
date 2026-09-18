@@ -164,6 +164,20 @@ The bill as a PDF, built by hand — what a resident downloads, and what the ann
 | fn | `rupees` | `Rs.274`, `Rs.273.60` — the same rounding rule as money() in js/i18n.js. |
 | fn | `billPdf` | One bill, one A4 page. |
 
+### `functions/lib/bill-view.js`
+
+One bill, and the screen that pays it — step 5.
+
+| | Export | What it does |
+|---|---|---|
+| const | `ACCOUNT_MODE_APPS` | Apps that can pay a BANK ACCOUNT rather than a UPI ID. |
+| fn | `canPayBill` | May this viewer pay this bill? `billAccess().canPay` is FALSE for a landlord, and that is the shipped gas rule rather than an oversight: "the bill is the tenant's to settle, and two people paying one bill is a reconciliation problem nobody wants." MAINTENANCE IS DIFFERENT, and narrowly so. |
+| const | `UPI_MODE_APPS` |  |
+| fn | `resolveReturn` | Where a resident may be sent back to after paying. |
+| fn | `resolveBill` | Resolve a bill for this viewer, whichever kind it is. |
+| fn | `billDetailPayload` | The detail screen's payload. |
+| fn | `paySheetPayload` | The payment sheet's payload. |
+
 ### `functions/lib/billing.js`
 
 Pure billing arithmetic.
@@ -461,6 +475,23 @@ The maintenance quarter's life, as scheduled work: draft, confirm, issue, charge
 | fn | `applyLateFeeToMaintBill` | Charge ONE bill, now, if it is due one. |
 | fn | `queueDueLetters` | Queue the two reminders that fall between issuing and the due date. |
 | fn | `runMaintenance` | The maintenance half of the 08:30 run: draft, remind, issue, queue. |
+
+### `functions/lib/maint-home.js`
+
+The resident home payload — step 5.
+
+| | Export | What it does |
+|---|---|---|
+| const | `RECENT_LIMIT` |  |
+| const | `RECENT_DAYS` | How far back "Recently paid" looks. |
+| fn | `shapeMaintBill` | Derived presentation state for a maintenance bill. |
+| fn | `asGasCard` | The same shape, for a gas bill already shaped by lib/dashboard.js. |
+| fn | `toPay` | What a resident owes, soonest due first. |
+| fn | `comingUp` | What is coming but has not been raised yet. |
+| fn | `recentlyPaid` | What has been settled lately. |
+| fn | `waitingForYou` | Things the building is waiting on this resident for. |
+| fn | `votingCard` | The "Your vote" card. |
+| fn | `maintHomePayload` | The maintenance half of the resident home payload. |
 
 ### `functions/lib/maint-mail.js`
 
@@ -1086,6 +1117,7 @@ Small render helpers shared by every screen.
 | fn | `proofVerdict` | How a proof reads in the admin queue: the verdict, not two numbers. |
 | fn | `renderViewBanner` | The viewing-as banner. |
 | fn | `billBreakdown` |  |
+| fn | `maintBreakdown` | The maintenance twin of billBreakdown. |
 | fn | `askFirst` | Ask before something destructive, in the page rather than in a dialog. |
 | fn | `showError` | Errors say what went wrong and what to do about it — and are on screen when they say it. |
 | fn | `withReveal` | A show/hide control for a password field. |
@@ -1122,4 +1154,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-632 exports. 287 have no doc comment.
+650 exports. 289 have no doc comment.

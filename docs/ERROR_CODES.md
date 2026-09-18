@@ -64,6 +64,7 @@ Ask the bot a code and it will explain it.
 | `DDP-BILL-018` | warn | live | Bill announcement could not be emailed to the resident |
 | `DDP-BILL-019` | warn | live | Reading refused — unknown flat, a flat that is not billed, or a value below zero |
 | `DDP-BILL-020` | warn | live | Readings saved into a month that was never opened |
+| `DDP-BILL-021` | warn | live | Bill requested that does not exist or is not this viewer’s |
 
 ## MAINT
 
@@ -188,7 +189,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-118 codes across 12 domains — 13 fatal, 3 awaiting their call site, 3 retired.
+119 codes across 12 domains — 13 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

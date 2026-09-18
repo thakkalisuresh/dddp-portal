@@ -12,6 +12,11 @@ import { applyLateFeeToBill } from './cron.js';
 import { istToday } from './time.js';
 import { billAccess, occupantOf, householdIds, describeRelationship } from './tenancy.js';
 import { unreadNoticeCount } from './notices.js';
+import {
+  maintHomePayload, asGasCard, toPay, comingUp, recentlyPaid, waitingForYou,
+} from './maint-home.js';
+import { listPolls } from './polls.js';
+import { canPayBill } from './bill-view.js';
 
 const READING_HISTORY = 6;
 const BILL_HISTORY = 12;
@@ -135,7 +140,7 @@ export async function dashboardPayload(env, subject, userAgent = '', origin = ''
     ).bind(flat, READING_HISTORY).all(),
 
     env.DB.prepare(
-      `SELECT period, consumption, rate_per_kg, total, status, late_fee
+      `SELECT id, period, consumption, rate_per_kg, total, status, late_fee, paid_at
          FROM bills WHERE flat = ? AND (owner_id IS NULL OR owner_id IN (${holders}))
         ORDER BY period DESC LIMIT ?`
     ).bind(flat, ...readers, BILL_HISTORY).all(),
@@ -208,6 +213,71 @@ export async function dashboardPayload(env, subject, userAgent = '', origin = ''
     occupantName: access.reason === 'landlord' ? (occupant?.name ?? null) : null,
   };
 
+  // ── the home page's four lists ────────────────────────────────────────
+  //
+  // Assembled here rather than in a second endpoint because the home page is
+  // the FIRST screen behind the login, and two round trips on a phone on
+  // building wifi is the difference between a page that appears and a page
+  // that assembles itself in front of you.
+  //
+  // `readers` is the household the visibility rules already resolved, passed
+  // straight through: a landlord reading their tenant's gas bills reads their
+  // maintenance bills on the same basis, and neither kind gets to answer that
+  // question its own way.
+  const maint = await maintHomePayload(env, { flat, readers, subject, today: istToday() });
+
+  // Only the polls this viewer may actually act on. A closed poll is history
+  // and an unpublished one does not exist yet; a tenant sees none, because the
+  // vote is the flat's and the flat's vote is the owner's.
+  const polls = await listPolls(env, subject).catch(() => []);
+  const openPolls = polls.filter((p) => p.published && !p.closed && p.canVote && !p.voted);
+
+  // The gas bill is adapted into a card here, not replaced: shapeBill() is
+  // shared with the bill PDF and the detail screen, and changing its shape to
+  // suit this page would reach three callers that do not want it.
+  const gasCards = [asGasCard(bill)].filter(Boolean);
+
+  // Settled gas bills come from the history query, which carries no due date —
+  // enough for "Recently paid", which sorts on when it was paid.
+  const settledGas = (bills.results ?? [])
+    .filter((b) => b.status === 'paid' || b.status === 'waived')
+    .map((b) => asGasCard({
+      id: b.id ?? null, period: b.period, total: b.total, status: b.status,
+      settled: true, paidAt: b.paid_at ?? null, dueDate: null,
+      displayStatus: b.status,
+    }));
+
+  const unreadNotices = await unreadNoticeCount(env, subject);
+
+  // PER CARD, not per page. A landlord may pay their tenant's MAINTENANCE and
+  // still not their gas — see canPayBill for why that asymmetry is deliberate
+  // and why it must not be collapsed into one flag on the payload.
+  const payable = (card) => ({
+    ...card,
+    canPay: card.showPayButton && canPayBill(access, card.kind),
+  });
+
+  const home = {
+    // NO COMBINED TOTAL, HERE OR ANYWHERE. A monthly gas bill and a quarterly
+    // maintenance bill are never summed: the user rejected a single "you owe"
+    // figure on this page, and the same reasoning keeps the admin dues report
+    // split per bank account. If you are adding one, read maint-home.js first.
+    toPay: toPay([...gasCards, ...maint.cards], istToday()).map(payable),
+    comingUp: comingUp({
+      quarters: maint.quarters,
+      billedQuarters: maint.billedQuarters,
+      latestGasPeriod: billRow?.period ?? null,
+      // There is a gas month coming whenever the latest bill is settled or the
+      // meter for the next month has not been read. Kept simple deliberately:
+      // the card carries no number, so being a month early costs nothing and
+      // being silent costs the resident the warning the section exists for.
+      gasPending: Boolean(billRow?.period),
+    }),
+    waitingForYou: waitingForYou({ openPolls, unreadNotices }),
+    recentlyPaid: recentlyPaid([...settledGas, ...maint.cards], { today: istToday() }),
+    voting: maint.voting,
+  };
+
   return {
     flat,
     floor: flatRow?.floor ?? null,
@@ -221,10 +291,11 @@ export async function dashboardPayload(env, subject, userAgent = '', origin = ''
     readings: withConsumption(readings.results ?? [], billRow?.conversion_factor ?? DEFAULT_CONVERSION),
     bills: bills.results ?? [],
     tenancy,
+    home,
     // Carried on /api/me because every screen renders the nav from this payload
     // — the badge has to be available on the dashboard, not only on the notice
     // board it points at.
-    unreadNotices: await unreadNoticeCount(env, subject),
+    unreadNotices,
   };
 }
 

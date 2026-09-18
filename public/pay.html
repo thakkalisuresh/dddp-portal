@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pay — Diamond Park</title>
+<link rel="icon" href="/img/favicon.ico" type="image/x-icon">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+<style>
+  /* The payment sheet. One dominant element — the amount — and everything
+     below it is a route to paying it. Shared with the old dashboard hero's
+     styles because they are the same controls, moved. */
+  .pay-block { display: flex; flex-direction: column; gap: var(--s-2); margin-top: var(--s-4); }
+  .pay-apps { display: flex; flex-direction: column; gap: var(--s-2); }
+  .pay-app {
+    display: flex; align-items: center; gap: var(--s-3); min-height: var(--touch);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: var(--s-2) var(--s-4); font-family: var(--font-ui); font-weight: 500;
+    background: var(--surface); color: var(--ink); text-decoration: none;
+  }
+  .pay-app:hover { border-color: var(--accent); }
+  /* The lettered tile shown until a brand's real SVG is dropped into
+     public/img/upi/. Deliberately the interface's own font rather than
+     anything resembling a wordmark — see appMark() in pay.js. */
+  .pay-app__mark {
+    width: 30px; height: 30px; border-radius: 8px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-family: var(--font-ui); font-weight: 600;
+    font-size: var(--text-xs); letter-spacing: .02em;
+  }
+  .helper { font-size: var(--text-sm); color: var(--ink-muted); text-align: center; }
+  #qr { display: block; margin: 0 auto; image-rendering: pixelated; }
+</style>
+</head>
+<body>
+
+<div class="viewbar" id="viewbar" hidden></div>
+
+<header class="appbar">
+  <span class="appbar__who" id="who">Loading…</span>
+  <button class="appbar__action" id="logout" type="button">Log out</button>
+</header>
+
+<main class="page stack--lg stack" id="main">
+  <p class="muted">Loading…</p>
+</main>
+
+<script type="module" src="js/pay.js"></script>
+</body>
+</html>

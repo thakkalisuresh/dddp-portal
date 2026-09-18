@@ -75,8 +75,27 @@ export const api = {
   changePassword: (currentPassword, newPassword) =>
     request('POST', '/api/password', { currentPassword, newPassword }),
 
-  /** Records that the resident opened their UPI app. NOT proof of payment. */
-  payIntent: (billId) => request('POST', `/api/bills/${billId}/intent`),
+  /**
+   * Records that the resident opened their UPI app. NOT proof of payment.
+   *
+   * The two kinds go to two routes because they are two tables. The kind comes
+   * from the payload that produced the button, never from the URL the resident
+   * is on — see functions/lib/bill-view.js for why nothing here asserts a kind
+   * the server has not already derived from the record.
+   */
+  payIntent: (billId, kind = 'gas') => request('POST',
+    kind === 'maintenance' ? `/api/maint-bills/${billId}/intent` : `/api/bills/${billId}/intent`),
+
+  /** One bill in full, whichever kind it turns out to be. */
+  billDetail: (id) => request('GET', `/api/bill?id=${encodeURIComponent(id ?? '')}`),
+
+  /**
+   * The payment sheet for one bill. `from` is where to return afterwards; the
+   * server resolves it against an allowlist, so a value that is not an internal
+   * route comes back as Home rather than being followed.
+   */
+  paySheet: (id, from = '') => request('GET',
+    `/api/pay?bill=${encodeURIComponent(id ?? '')}&from=${encodeURIComponent(from)}`),
 
   onboard:       (body)      => request('POST', '/api/onboard', body),
   updateProfile: (name, email) => request('PATCH', '/api/me', { name, email }),

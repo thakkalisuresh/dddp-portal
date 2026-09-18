@@ -9,6 +9,8 @@ import { reportError, assertAlerting, postToTelegram, requestContextFor, describ
 import { signedInPeople, loginsToday, tokensToRevoke, PRESENCE_KINDS, LEAVE_GRACE_MS } from './lib/presence.js';
 import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex, derive,
          DEFAULT_ITERATIONS } from './lib/crypto.js';
+import { billDetailPayload, paySheetPayload, resolveBill } from './lib/bill-view.js';
+import { SETTLED_STATUSES } from './lib/maint.js';
 import { dashboardPayload } from './lib/dashboard.js';
 import { billPdf, istSlashDate } from './lib/bill-pdf.js';
 // The Worker's own date label — the browser's lives in js/i18n.js.
@@ -195,8 +197,15 @@ export default {
       if (route === 'POST /api/activity') return recordActivity(request, env, session);
       if (route === 'GET /api/capture')   return captureState(env);
       if (route === 'POST /api/clicks')   return recordClicks(request, env, session);
+      // One handler for both kinds of bill, and one visibility rule. See
+      // lib/bill-view.js for why the URL carries an id and never a kind.
+      if (route === 'GET /api/bill') return billDetail(env, session, url);
+      if (route === 'GET /api/pay')  return paySheet(env, session, request, url);
       if (request.method === 'POST' && /^\/api\/bills\/\d+\/intent$/.test(path)) {
         return logIntent(env, session, path);
+      }
+      if (request.method === 'POST' && /^\/api\/maint-bills\/\d+\/intent$/.test(path)) {
+        return logMaintIntent(env, session, path);
       }
       if (request.method === 'POST' && /^\/api\/bills\/\d+\/proof$/.test(path)) {
         return uploadProof(request, env, session, ctx, path);
@@ -749,6 +758,34 @@ async function logout(env, session) {
   return json({ ok: true }, { headers: { 'set-cookie': clearCookieHeader() } });
 }
 
+/**
+ * One bill in full — screen behind every card on Home.
+ *
+ * The bill's KIND comes from the record, not the request. A 404 covers both
+ * "no such bill" and "not yours", because telling those apart lets somebody
+ * walk the ids and learn which flats owe what.
+ */
+async function billDetail(env, session, url) {
+  const payload = await billDetailPayload(env, session.subject, url.searchParams.get('id'));
+  if (!payload) return problem(404, 'DDP-BILL-021', 'No such bill.');
+  return json(payload);
+}
+
+/**
+ * The payment sheet. Its own route rather than a sheet, so a poll's Pay button
+ * can link into it and come back — see resolveReturn for why `from` is matched
+ * against an allowlist instead of being trusted.
+ */
+async function paySheet(env, session, request, url) {
+  const payload = await paySheetPayload(env, session.subject, url.searchParams.get('bill'), {
+    userAgent: request.headers.get('user-agent') ?? '',
+    origin: url.origin,
+    from: url.searchParams.get('from') ?? '',
+  });
+  if (!payload) return problem(404, 'DDP-BILL-021', 'No such bill.');
+  return json(payload);
+}
+
 async function me(env, session, request) {
   // Subject comes from the session, never from the client.
   const payload = await dashboardPayload(
@@ -1243,6 +1280,50 @@ async function logIntent(env, session, path) {
   ]);
 
   await audit(env, session, 'payment.intent', { billId: bill.id, total: bill.total });
+  return json({ recorded: true, status: bill.status === 'unpaid' ? 'initiated' : bill.status });
+}
+
+/**
+ * The maintenance twin of logIntent — the resident opened their UPI app.
+ *
+ * NO `maint_payment_intents` TABLE, and that is deliberate rather than an
+ * omission. Migration 0042 says of `maint_bills.claimed_at` that it is "the
+ * only record of when a claim was made, and a dispute asks that question": the
+ * gas side keeps a row per tap because its late-fee hold once needed the count,
+ * and maintenance's fee does not hold on a claim at all. A table nobody reads
+ * is a table that goes stale, so the stamp on the bill is the whole record.
+ *
+ * Everything else matches gas, including the two guards that matter: an already
+ * settled bill is refused rather than re-claimed, and `claimed_at` is set only
+ * when NULL so that tapping Pay every night cannot extend anything.
+ */
+async function logMaintIntent(env, session, path) {
+  const billId = Number(path.split('/')[3]);
+
+  // Resolved through the shared rule, not a query of its own. Visibility is the
+  // one thing in this app that has already had a privacy bug.
+  const found = await resolveBill(env, session.subject, billId);
+  if (!found || found.kind !== 'maintenance') {
+    return problem(404, 'DDP-BILL-021', 'That bill could not be found.');
+  }
+
+  const bill = found.row;
+  if (SETTLED_STATUSES.includes(bill.status)) {
+    return problem(409, 'DDP-PAY-003', 'This bill is already settled.');
+  }
+
+  // Read-only impersonation must not leave footprints in a resident's record.
+  if (session.impersonating && !session.canWrite) {
+    return json({ recorded: false, reason: 'read-only session', status: bill.status });
+  }
+
+  await env.DB.prepare(
+    `UPDATE maint_bills SET status = 'initiated',
+                            claimed_at = COALESCE(claimed_at, ?)
+      WHERE id = ? AND status = 'unpaid'`
+  ).bind(new Date().toISOString(), bill.id).run();
+
+  await audit(env, session, 'maint.payment.intent', { billId: bill.id, total: bill.total });
   return json({ recorded: true, status: bill.status === 'unpaid' ? 'initiated' : bill.status });
 }
 

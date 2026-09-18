@@ -105,6 +105,13 @@ export const ERROR_CODES = {
   'DDP-BILL-019': { severity: 'warn',
     message: 'Reading refused — unknown flat, a flat that is not billed, or a value below zero' },
   'DDP-BILL-020': { severity: 'warn',  message: 'Readings saved into a month that was never opened' },
+  // Deliberately one code for two situations. The bill does not exist, or it
+  // exists and belongs to another household; the resident sees the same 404
+  // either way, because a distinguishable "not yours" lets somebody walk the
+  // ids and learn which flats owe what. `warn` rather than `error`, because a
+  // mistyped URL is not an incident: warn is logged and never sent to Telegram,
+  // so this stays readable in the log without burying the real alerts.
+  'DDP-BILL-021': { severity: 'warn',  message: 'Bill requested that does not exist or is not this viewer’s' },
 
   // ── MAINT ──────────────────────────────────────────────────────────────
   // Quarterly maintenance charges. A prefix of their own rather than more
