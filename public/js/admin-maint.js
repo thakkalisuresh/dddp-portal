@@ -257,11 +257,32 @@ function header() {
 
     // The picker. Earlier quarters open READ-ONLY: the page is for working a
     // quarter, and a past one is a record rather than something to edit.
-    state.quarters.length > 1 ? quarterPicker() : null,
+    pickable().length > 1 ? quarterPicker() : null,
 
     state.readOnly
       ? el('p', { class: 'small muted' }, 'This quarter is closed. Nothing here can be changed.')
       : null);
+}
+
+/**
+ * The quarters the picker offers: the ones that EXIST, plus the one on screen.
+ *
+ * It used to be `state.quarters` alone, and the two are not the same list. The
+ * page opens on `workingQuarter` — the quarter being drafted, or failing that
+ * the one the calendar is in — and the calendar's quarter may have no row at
+ * all. On staging that put "Q3 2026, not drafted yet" on screen with a list of
+ * one (`['2026-Q4']`), so the picker was hidden as a list of one always is, and
+ * an issued quarter holding 94 bills worth ₹7,21,500 had no route back to it
+ * from its own tab.
+ *
+ * Deduplicated and sorted newest first, so adding the working quarter cannot
+ * put a duplicate or an out-of-order entry in the list.
+ */
+function pickable() {
+  return [...new Set([...(state.quarters ?? []), state.quarter])]
+    .filter(Boolean)
+    .sort()
+    .reverse();
 }
 
 function quarterPicker() {
@@ -274,7 +295,7 @@ function quarterPicker() {
         landOnFirstUnfinishedStep();
         render();
       },
-    }, ...state.quarters.map((q) =>
+    }, ...pickable().map((q) =>
       el('option', { value: q, selected: q === state.quarter ? 'selected' : null }, q))));
 }
 
