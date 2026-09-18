@@ -842,6 +842,16 @@ What the admin console's Home screen says about the month.
 | fn | `daysOverdue` | How many days late a bill is, counted in whole days. |
 | fn | `tallyByStatus` | Turn the rows of `SELECT status, COUNT(*) GROUP BY status` into an object with every status present. |
 
+### `functions/lib/tenancy-change.js`
+
+A tenant moving out — what it would do, and doing it.
+
+| | Export | What it does |
+|---|---|---|
+| const | `REQUEST_TTL_DAYS` |  |
+| fn | `describeDeparture` | What would happen if this tenant left on this date, with the flat becoming this. |
+| fn | `departureInputs` | Everything describeDeparture needs about one flat, in one round trip. |
+
 ### `functions/lib/tenancy.js`
 
 Ownership changes: a flat is sold, or the builder hands one to a new buyer.
@@ -1188,4 +1198,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-663 exports. 291 have no doc comment.
+666 exports. 292 have no doc comment.

@@ -41,6 +41,7 @@ import {
 import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
 import { validateStatement, parseStatement, reconcile, bucketReconciliation, sweepAbandonedStatements } from './lib/statement.js';
 import { maintAccountHint } from './lib/upi.js';
+import { describeDeparture, departureInputs } from './lib/tenancy-change.js';
 import { readReceipt, visionAvailable } from './lib/vision.js';
 import { runScheduled, runLateFees, isLateFeeCron, applyLateFees, staleIntents } from './lib/cron.js';
 import { listPolls, getPoll, createPoll, castVote, closePoll, publishPoll, unpublishPoll,
@@ -313,6 +314,18 @@ export default {
         if (route === 'PUT /api/admin/maint/rates') return putMaintRates(request, env, session);
         if (route === 'POST /api/admin/maint/schedule') return postMaintSchedule(request, env, session);
         if (route === 'POST /api/admin/maint/unschedule') return postMaintUnschedule(request, env, session);
+        if (route === 'POST /api/admin/tenancy/departure/preview') {
+          return previewDeparture(request, env);
+        }
+        if (route === 'POST /api/admin/tenancy/departure') {
+          return requestDeparture(request, env, session);
+        }
+        if (route === 'GET /api/admin/tenancy/departures') {
+          return listDepartureRequests(env, session);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/tenancy\/departures\/\d+\/(approve|reject)$/.test(path)) {
+          return decideDeparture(env, session, path, path.endsWith('/approve') ? 'approve' : 'reject');
+        }
         if (route === 'POST /api/admin/maint/tenancy/confirm') {
           return postTenancyConfirm(request, env, session);
         }
@@ -1622,6 +1635,250 @@ async function postTenancyConfirm(request, env, session) {
 
   await audit(env, session, 'maint.tenancy.confirm', { id, flat: person.flat, leaseEnd });
   return json({ confirmed: true, at, leaseEndsAt: leaseEnd });
+}
+
+/* ── a tenant moving out ─────────────────────────────────────────────────
+   Recording a departure re-rates the quarter, moves an unpaid bill to somebody
+   who did not incur it, switches who the letters go to, and takes away a
+   login. 0045 holds it until a second admin agrees, for the reason 0029 held a
+   bill edit: one person should not be able to do all of that from a card while
+   nobody is looking.                                                          */
+
+/** The consequences, recomputed for whatever the dialog currently says. */
+async function previewDeparture(request, env) {
+  const body = await readJson(request);
+  const inputs = await departureInputs(env, Number(body?.personId));
+  if (!inputs) return problem(404, 'DDP-ADMIN-004', 'No such resident.');
+  if (inputs.person.relationship !== 'tenant') {
+    return problem(400, 'DDP-ADMIN-004', 'That is not a tenancy.');
+  }
+
+  const movedOutOn = String(body?.movedOutOn ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(movedOutOn)) {
+    return problem(400, 'DDP-MAINT-002', 'Pick the date they left.');
+  }
+  const becomes = ['owner', 'tenant', 'empty'].includes(body?.becomes) ? body.becomes : 'owner';
+
+  // Computed on the server and rendered by the browser, never the other way
+  // round: the dialog and the approval a week later must describe the same
+  // consequences, and a second copy of this in admin-console.js would be a
+  // dialog that quietly stopped agreeing with the request it produced.
+  return json(describeDeparture({ ...inputs, becomes, movedOutOn }));
+}
+
+/** Raise the request. Nothing about the tenancy changes here. */
+async function requestDeparture(request, env, session) {
+  const body = await readJson(request);
+  const personId = Number(body?.personId);
+  const inputs = await departureInputs(env, personId);
+  if (!inputs) return problem(404, 'DDP-ADMIN-004', 'No such resident.');
+  if (inputs.person.relationship !== 'tenant' || !inputs.person.active) {
+    return problem(400, 'DDP-ADMIN-004', 'That is not a tenancy that could end.');
+  }
+
+  const movedOutOn = String(body?.movedOutOn ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(movedOutOn)) {
+    return problem(400, 'DDP-MAINT-002', 'Pick the date they left.');
+  }
+  const becomes = ['owner', 'tenant', 'empty'].includes(body?.becomes) ? body.becomes : null;
+  if (!becomes) return problem(400, 'DDP-ADMIN-004', 'Say what the flat becomes.');
+  const reason = String(body?.reason ?? '').trim();
+  if (!reason) return problem(400, 'DDP-ADMIN-004', 'Say why, for the record.');
+
+  const plan = describeDeparture({ ...inputs, becomes, movedOutOn });
+  const now = new Date().toISOString();
+
+  // The open-request index (0045) is a UNIQUE partial, so a second one raises a
+  // constraint error rather than a duplicate. Answered here as a sentence,
+  // because two admins filing different dates for the same departure is a
+  // disagreement to resolve rather than a fault.
+  const existing = await env.DB.prepare(
+    "SELECT id FROM tenancy_change_requests WHERE person_id = ? AND status = 'pending'"
+  ).bind(personId).first();
+  if (existing) {
+    return problem(409, 'DDP-ADMIN-017',
+      'A departure is already waiting for approval for this person. Answer or withdraw that one first.');
+  }
+
+  const created = await env.DB.prepare(
+    `INSERT INTO tenancy_change_requests
+       (person_id, flat, kind, moved_out_on, becomes, reason, plan, requested_by, requested_at, expires_at)
+     VALUES (?, ?, 'moved-out', ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+  ).bind(personId, inputs.person.flat, movedOutOn, becomes, reason.slice(0, 300),
+    JSON.stringify(plan), session.actor.id, now, expiresAt(now)).first();
+
+  await audit(env, session, 'tenancy.depart.request',
+    { requestId: created.id, personId, flat: inputs.person.flat, movedOutOn, becomes });
+
+  return json({ requestId: created.id, status: 'pending', ...plan }, { status: 201 });
+}
+
+/** Open departures, with everything an approver needs to judge one. */
+async function listDepartureRequests(env, session) {
+  const rows = await env.DB.prepare(
+    `SELECT r.*, p.name AS person_name, o.name AS requested_by_name,
+            (SELECT COUNT(*) FROM tenancy_change_approvals a
+              WHERE a.request_id = r.id AND a.decision = 'approve') AS approvals
+       FROM tenancy_change_requests r
+       JOIN owners p ON p.id = r.person_id
+       LEFT JOIN owners o ON o.id = r.requested_by
+      WHERE r.status = 'pending'
+      ORDER BY r.requested_at`
+  ).all();
+
+  const bench = await approvalBench(env);
+  const out = (rows.results ?? []).map((r) => {
+    const policy = approvalPolicy({ admins: bench, requesterId: r.requested_by, billFlat: r.flat });
+    const verdict = canApprove({ policy, approver: session.actor, request: r });
+    return {
+      ...r,
+      // The snapshot the requester was shown, so an approver agrees to the same
+      // consequences rather than to a sentence summarising them.
+      plan: safeJson(r.plan),
+      required: policy.required,
+      canApprove: verdict.ok,
+      substitute: verdict.substitute ?? false,
+      blockedBecause: verdict.ok ? null : verdict.reason,
+      hoursLeft: verdict.hoursLeft ?? null,
+    };
+  });
+  return json({ requests: out });
+}
+
+async function decideDeparture(env, session, path, decision) {
+  const id = Number(path.split('/')[5]);
+  const req = await env.DB.prepare('SELECT * FROM tenancy_change_requests WHERE id = ?')
+    .bind(id).first();
+  if (!req) return problem(404, 'DDP-ADMIN-017', 'No such request.');
+
+  // Lapsed on read, as the bill-edit queue does: the expiry only has to be true
+  // at the moment somebody acts on it, and a cron for it would be one more
+  // thing to fail quietly.
+  if (req.status === 'pending' && Date.parse(req.expires_at) < Date.now()) {
+    await env.DB.prepare(
+      "UPDATE tenancy_change_requests SET status = 'expired', resolved_at = ? WHERE id = ? AND status = 'pending'"
+    ).bind(new Date().toISOString(), id).run();
+    return problem(409, 'DDP-ADMIN-017', 'That departure has lapsed. Raise it again if it still stands.');
+  }
+  if (req.status !== 'pending') {
+    return problem(409, 'DDP-ADMIN-017', `That departure is already ${req.status}.`);
+  }
+
+  const policy = approvalPolicy({
+    admins: await approvalBench(env), requesterId: req.requested_by, billFlat: req.flat,
+  });
+  const verdict = canApprove({ policy, approver: session.actor, request: req });
+  if (!verdict.ok) {
+    await reportError(env, verdict.code, { requestId: id, actor: session.actor.id, reason: verdict.reason });
+    return problem(403, verdict.code,
+      verdict.reason === 'requester' ? 'You raised this, so you cannot approve it.'
+      : verdict.reason === 'too-soon' ? `An admin still has ${verdict.hoursLeft}h to answer.`
+      : 'This is not yours to approve.');
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO tenancy_change_approvals (request_id, approver_id, decision, substitute, at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (request_id, approver_id) DO UPDATE SET
+       decision = excluded.decision, at = excluded.at, substitute = excluded.substitute`
+  ).bind(id, session.actor.id, decision, verdict.substitute ? 1 : 0, now).run();
+
+  if (decision === 'reject') {
+    await env.DB.prepare(
+      "UPDATE tenancy_change_requests SET status = 'rejected', resolved_at = ? WHERE id = ?"
+    ).bind(now, id).run();
+    await audit(env, session, 'tenancy.depart.reject', { requestId: id, personId: req.person_id });
+    return json({ ok: true, status: 'rejected' });
+  }
+
+  const approvals = await env.DB.prepare(
+    'SELECT approver_id, decision FROM tenancy_change_approvals WHERE request_id = ?'
+  ).bind(id).all();
+  if (!isSatisfied(policy, approvals.results ?? [])) {
+    const yes = (approvals.results ?? []).filter((a) => a.decision === 'approve').length;
+    await audit(env, session, 'tenancy.depart.approve',
+      { requestId: id, personId: req.person_id, yes });
+    return json({ ok: true, status: 'pending', approvals: yes, required: policy.required });
+  }
+
+  return applyDeparture(env, session, { req, id, now });
+}
+
+/**
+ * The last approval lands: now, and only now, the tenancy ends.
+ *
+ * RECOMPUTED, NOT REPLAYED. The snapshot in `plan` is what the approvers agreed
+ * to and it is kept for that reason, but a week may have passed and a bill may
+ * have been paid, waived or cancelled in it. Applying the snapshot would move
+ * money that has since settled; applying a fresh plan and recording both is
+ * what lets somebody afterwards see that the two differed and why.
+ */
+async function applyDeparture(env, session, { req, id, now }) {
+  const inputs = await departureInputs(env, req.person_id);
+  if (!inputs) return problem(404, 'DDP-ADMIN-004', 'That resident no longer exists.');
+
+  const fresh = describeDeparture({
+    ...inputs, becomes: req.becomes, movedOutOn: req.moved_out_on,
+  });
+
+  const writes = [];
+
+  for (const plan of fresh.plans) {
+    if (plan.action === 're-rate') {
+      writes.push(env.DB.prepare(
+        `UPDATE maint_bills
+            SET basis = ?, rate_applied = ?, total = ?, owner_id = COALESCE(?, owner_id),
+                reassigned_from_id = ?, reassigned_at = ?
+          WHERE id = ?`
+      ).bind(plan.basis, plan.rate, plan.total, plan.billedTo, plan.reassignedFrom, now, plan.billId));
+    } else if (plan.action === 'reassign' && plan.billedTo) {
+      // A reassignment with NO billedTo is the tenant-to-tenant case, which
+      // planOccupancyChange deliberately refuses to decide: who carries a bill
+      // raised against a departed tenant is not something arithmetic can
+      // answer, and guessing it puts somebody else's debt on their screen. It
+      // is left alone here and picked up on the Maintenance tab.
+      writes.push(env.DB.prepare(
+        `UPDATE maint_bills SET owner_id = ?, reassigned_from_id = ?, reassigned_at = ? WHERE id = ?`
+      ).bind(plan.billedTo, plan.reassignedFrom, now, plan.billId));
+    }
+  }
+
+  writes.push(env.DB.prepare(
+    "UPDATE tenancy_change_requests SET status = 'applied', resolved_at = ? WHERE id = ?"
+  ).bind(now, id));
+
+  // The departure itself, spelled the one way this codebase has spelled it
+  // since 0003: active = 0, with moved_out_at recording when. isResidentOn
+  // reads exactly these two and nothing else.
+  //
+  // LAST IN THE BATCH, AND IMMEDIATELY BEFORE THE SESSIONS GO. On 2026-09-11
+  // nine deactivated accounts on production still held thirty live sessions
+  // because nothing ended them, and a departure that left somebody signed in
+  // would be that bug with a dialog in front of it. The two statements are kept
+  // within sight of each other so the guard in session-inactive.test.js can see
+  // that they are — the test reads the source, and it is right to.
+  writes.push(env.DB.prepare('UPDATE owners SET active = 0, moved_out_at = ? WHERE id = ?')
+    .bind(req.moved_out_on, req.person_id));
+
+  await env.DB.batch(writes);
+  await destroyAllSessionsFor(env, req.person_id);
+
+  await audit(env, session, 'tenancy.depart.apply', {
+    requestId: id, personId: req.person_id, flat: req.flat,
+    movedOutOn: req.moved_out_on, becomes: req.becomes,
+    bills: fresh.plans.map((p) => ({ billId: p.billId, action: p.action })),
+    // Said out loud when the world moved under the request, which is the thing
+    // an auditor wants to find rather than to deduce.
+    changedSinceRequest: JSON.stringify(safeJson(req.plan)?.plans ?? []) !== JSON.stringify(fresh.plans),
+  });
+
+  return json({ ok: true, status: 'applied', applied: fresh.plans, lines: fresh.lines });
+}
+
+/** A stored JSON column, read without letting one bad row take down a queue. */
+function safeJson(text) {
+  try { return JSON.parse(text ?? 'null'); } catch { return null; }
 }
 
 async function postComment(request, env, session, path) {

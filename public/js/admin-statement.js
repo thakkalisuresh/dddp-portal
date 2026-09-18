@@ -466,6 +466,15 @@ function maintCreditRow(d) {
       ...(d.candidates ?? []).map((c) => el('div', { class: 'small muted' },
         `${c.flat} · ${c.period} · ${money(c.total)}${c.name ? ` · ${c.name}` : ''} — ${CANDIDATE_REASON[c.reason] ?? c.reason}`
         + (c.short ? ` · ${money(Math.abs(c.short))} ${c.short > 0 ? 'short of' : 'over'} the bill` : ''))),
+      // A dead end with nowhere to go is what gets worked around. Where a
+      // credit cannot settle the bill it plainly belongs to, the row says what
+      // would settle it and names the door that takes an admin's word for a
+      // payment instead of leaving them to find it.
+      (d.candidates ?? []).some((c) => c.short > 0) && !(d.candidates ?? []).some((c) => c.short <= 0)
+        ? el('div', { class: 'small muted' },
+            'The bill settles when the rest arrives. To credit this part payment now, '
+            + 'record it as an offline payment on the Maintenance tab — that needs a second admin.')
+        : null,
       ask),
     el('div', { class: 'qact' },
       // No button for a candidate the credit cannot settle. It stays on the

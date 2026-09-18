@@ -200,6 +200,17 @@ export const api = {
     maintUnschedule: (quarter) =>
                                request('POST', '/api/admin/maint/unschedule', { quarter }),
     /** "Still here" — and the lease end too, when that is what was missing. */
+    /**
+     * A tenant moving out. The PREVIEW is the consequences, recomputed on the
+     * server every time the dialog's date or occupier changes — never worked out
+     * in the browser, so the dialog and the approval a week later agree.
+     */
+    departurePreview: (body) => request('POST', '/api/admin/tenancy/departure/preview', body),
+    requestDeparture:  (body) => request('POST', '/api/admin/tenancy/departure', body),
+    departures:        ()     => request('GET',  '/api/admin/tenancy/departures'),
+    decideDeparture: (id, ok) =>
+      request('POST', `/api/admin/tenancy/departures/${id}/${ok ? 'approve' : 'reject'}`),
+
     confirmTenancy: (id, leaseEndsAt = null) =>
                                request('POST', '/api/admin/maint/tenancy/confirm',
                                        { id, leaseEndsAt }),

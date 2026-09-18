@@ -699,7 +699,114 @@ function personCard(p, status, group = null, reload = async () => {}) {
             + 'login page — a code goes to their own email, so nobody else ever holds '
             + `their password. If their email is wrong, ask ${ADMINISTRATOR.name}.`)),
 
-    departControl(p, group, reload, inactive || lockedToMe));
+    departControl(p, group, reload, inactive || lockedToMe),
+    movedOutControl(p, reload, inactive || lockedToMe));
+}
+
+/**
+ * A tenant has moved out.
+ *
+ * ON THE PERSON'S ROW, not on the flat card. The card is the flat; the
+ * departure is a fact about somebody, and a flat may hold two tenant logins
+ * (0040) — the row is the only thing that says which one left.
+ *
+ * NOTHING HERE WRITES. It raises a request that a second admin approves, for
+ * the reason 0045 gives: recording a departure re-rates the quarter, moves an
+ * unpaid bill to somebody who did not incur it, switches who the letters go to
+ * and takes away a login, and one admin should not do all of that from a card
+ * while nobody is looking.
+ */
+function movedOutControl(p, reload, locked) {
+  if (locked || p.relationship !== 'tenant' || p.active === 0) return null;
+
+  const slot = el('div');
+  const open = () => {
+    // A DATE, not the month picker the tenancy START uses, and the two
+    // conventions differ on purpose. A start is remembered as a month; a
+    // departure decides which side of the issue date it falls on, and a month
+    // cannot express 30 September against 3 October — a re-rate and a
+    // reassignment respectively. 0045 says the same thing in the schema.
+    const when = el('input', {
+      class: 'input', type: 'date', value: todayInput(),
+      'aria-label': `The day ${p.name} left ${p.flat}`,
+    });
+    const becomes = el('select', { class: 'input', 'aria-label': `What ${p.flat} becomes` },
+      el('option', { value: 'owner' }, 'The owner moves in'),
+      el('option', { value: 'tenant' }, 'A new tenant moves in'),
+      el('option', { value: 'empty' }, 'It stands empty'));
+    const reason = el('input', {
+      class: 'input', placeholder: 'Lease ended, moved to Bangalore',
+      'aria-label': `Why ${p.name} is no longer in ${p.flat}`,
+    });
+
+    const consequences = el('div', { class: 'stack', style: 'gap:var(--s-2)' });
+    const out = el('div');
+    const go = el('button', { class: 'btn btn--sm', type: 'button' }, 'Send for approval');
+
+    // RECOMPUTED WHENEVER THE INPUTS MOVE, and computed on the server so this
+    // dialog and the approval a week later describe the same thing. A dialog
+    // whose consequences go stale while its date is being fiddled with is worse
+    // than one that shows none: it looks authoritative and is not.
+    const recompute = async () => {
+      setChildren(consequences, el('p', { class: 'small muted' }, 'Working out what this would do…'));
+      try {
+        const plan = await api.admin.departurePreview({
+          personId: p.id, movedOutOn: when.value, becomes: becomes.value,
+        });
+        setChildren(consequences,
+          el('p', { class: 'label' }, 'What this would do'),
+          el('ul', { class: 'conseq' },
+            ...plan.lines.map((l) => el('li', { class: 'small' }, l.text))));
+      } catch (err) {
+        setChildren(consequences, el('p', { class: 'small bad' },
+          err.message ?? 'Could not work out what this would do.'));
+      }
+    };
+    when.addEventListener('change', recompute);
+    becomes.addEventListener('change', recompute);
+
+    go.addEventListener('click', async () => {
+      if (!when.value) { setChildren(out, el('p', { class: 'small bad' }, 'Pick the day they left.')); return; }
+      go.disabled = true;
+      try {
+        await api.admin.requestDeparture({
+          personId: p.id, movedOutOn: when.value, becomes: becomes.value,
+          reason: reason.value || reason.placeholder,
+        });
+        setChildren(slot, el('p', { class: 'note note--good small' },
+          `Sent. ${p.name} keeps their login and stays on the letters until another admin agrees.`));
+        await reload();
+      } catch (err) { go.disabled = false; showError(out, err); }
+    });
+
+    setChildren(slot, el('div', { class: 'note note--warn stack', style: 'gap:var(--s-3)',
+                                  role: 'alertdialog' },
+      el('p', { class: 'label' }, `Tenant moved out · Flat ${p.flat}`),
+      el('p', { class: 'small muted' },
+        `${p.name}${p.moved_in_at ? `, tenant since ${monthLabel(p.moved_in_at) ?? p.moved_in_at}` : ''}.`),
+      el('div', { class: 'field' }, el('label', {}, 'The day they left'), when),
+      el('div', { class: 'field' }, el('label', {}, 'Who is in the flat now'), becomes),
+      consequences,
+      el('div', { class: 'field' }, el('label', {}, 'Why (kept with the approval)'), reason),
+      el('p', { class: 'small' },
+        'Nothing changes until another admin agrees — including their login, which they keep '
+        + 'until then.'),
+      out,
+      el('div', { class: 'row', style: 'gap:var(--s-3);flex-wrap:wrap' }, go,
+        el('button', { class: 'linkish small', type: 'button',
+                       onclick: () => slot.replaceChildren() }, 'They still live here'))));
+    recompute();
+  };
+
+  return el('div', { style: 'margin-top:var(--s-3)' },
+    el('button', { class: 'btn btn--sm btn--quiet', type: 'button', onclick: open },
+      'Tenant moved out'),
+    slot);
+}
+
+/** Today, as a date input wants it. The building's own date, not the browser's UTC. */
+function todayInput() {
+  return new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
 }
 
 /**
@@ -749,6 +856,87 @@ function departControl(p, group, reload, locked) {
   return el('div', { style: 'margin-top:var(--s-3)' },
     el('button', { class: 'btn btn--sm btn--quiet', type: 'button', onclick: ask },
       'No longer lives here'),
+    slot);
+}
+
+/**
+ * When the tenancy started, when the lease ends, and when a human last checked.
+ *
+ * THE THREE DATES THAT DECIDE A RATE, on the card where an admin already is.
+ * Until now the lease end and the confirmation stamp existed only on the
+ * Maintenance tab's step 2, which meant the screen that shows who lives in a
+ * flat could not tell you whether that record was trustworthy — and step 2 is
+ * the thing that blocks a quarter going out.
+ *
+ * `lease_ends_at` DOES NOT DECIDE WHO PAYS, and the wording here is careful not
+ * to suggest it does. A lapsed lease with the tenant still in the flat is the
+ * common case in this building (isResidentOn in lib/maint.js says so at
+ * length); the date is a data-quality signal that a person resolves, not an
+ * occupancy fact. "Ends" rather than "ended", and never "no longer a tenant".
+ */
+function tenancyDates(tenant, reload) {
+  const out = el('span', { class: 'small' });
+  const slot = el('div');
+
+  const save = async (leaseEndsAt) => {
+    out.textContent = 'Saving…';
+    try {
+      await api.admin.confirmTenancy(tenant.id, leaseEndsAt);
+      slot.replaceChildren();
+      await reload();
+    } catch (err) {
+      out.textContent = err.message ?? 'Could not save that.';
+    }
+  };
+
+  const editLease = () => {
+    const input = el('input', {
+      class: 'input', type: 'date', value: (tenant.lease_ends_at ?? '').slice(0, 10),
+      'aria-label': `When ${tenant.name}'s lease ends`,
+    });
+    slot.replaceChildren(el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+      el('div', { class: 'field' }, el('label', {}, 'Lease ends'), input),
+      el('div', { class: 'row', style: 'gap:var(--s-3);flex-wrap:wrap' },
+        el('button', {
+          class: 'btn btn--sm', type: 'button',
+          onclick: () => {
+            if (!input.value) { out.textContent = 'Pick a date first.'; return; }
+            save(input.value);
+          },
+        }, 'Save'),
+        el('button', { class: 'linkish small', type: 'button',
+                       onclick: () => slot.replaceChildren() }, 'Cancel'))));
+    input.focus();
+  };
+
+  const confirmed = tenant.tenancy_confirmed_at
+    ? `Last confirmed ${dayLabel(tenant.tenancy_confirmed_at)} `
+      + `${new Date(tenant.tenancy_confirmed_at).getUTCFullYear()}.`
+    // Said plainly rather than left blank: an unchecked tenancy is what holds a
+    // quarter up, and a card that omits the fact reads as one that is fine.
+    : 'Nobody has confirmed this tenancy.';
+
+  return el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+    el('p', { class: 'small muted' },
+      (tenant.moved_in_at
+        ? `Tenancy started ${monthLabel(tenant.moved_in_at) ?? tenant.moved_in_at}. `
+        : '')
+      + (tenant.lease_ends_at
+        // Written out, like every other date on this screen. A bare ISO string
+        // beside "Last confirmed 14 Sep 2026" reads as a different kind of fact.
+        ? `Lease ends ${dayLabel(tenant.lease_ends_at)} `
+          + `${new Date(tenant.lease_ends_at).getUTCFullYear()}. `
+        : 'No lease end on record. ')
+      + confirmed),
+    el('div', { class: 'row', style: 'gap:var(--s-3);flex-wrap:wrap' },
+      el('button', { class: 'btn btn--sm btn--quiet', type: 'button', onclick: editLease },
+        tenant.lease_ends_at ? 'Change the lease end' : 'Add the lease end'),
+      // The cheapest way to clear step 2's `unchecked` flag, and the only one
+      // that changes nothing about the tenancy: it records that a human looked.
+      el('button', {
+        class: 'btn btn--sm btn--quiet', type: 'button', onclick: () => save(null),
+      }, 'Still here'),
+      out),
     slot);
 }
 
@@ -2111,10 +2299,7 @@ function occupancyControl(group, status, reload) {
   return el('div', { class: 'stack', style: 'gap:var(--s-3);margin:var(--s-3) 0' },
     el('div', { class: 'field' },
       el('label', { for: `occ-${group.flat}` }, 'Who is in this flat'), select),
-    curTenant?.moved_in_at
-      ? el('p', { class: 'small muted' },
-          `Tenancy started ${monthLabel(curTenant.moved_in_at) ?? curTenant.moved_in_at}.`)
-      : null,
+    curTenant ? tenancyDates(curTenant, reload) : null,
     panel);
 
   function occupancyResult(r, flat) {

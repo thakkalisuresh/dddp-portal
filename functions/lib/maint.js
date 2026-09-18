@@ -522,7 +522,10 @@ export function isVotingExemptOn(exemption, date) {
  * `change` is 'tenant-to-owner' (the tenant left, the owner moved in),
  * 'tenant-to-tenant' (one tenant replaced by another) or 'owner-to-tenant'.
  */
-export function planOccupancyChange({ bill, change, quarter, owner, incomingTenant = null }) {
+export function planOccupancyChange({
+  bill, change, quarter, owner, incomingTenant = null,
+  movedOutOn = null, issueDate = null,
+}) {
   // ALREADY PAID IS CLOSED. No refund, no re-rate, no proration — the quarter
   // was billed at the rate that was true on the issue date and the money is in
   // the account. Reopening a settled bill to hand back ₹1,500 is a new class of
@@ -531,7 +534,42 @@ export function planOccupancyChange({ bill, change, quarter, owner, incomingTena
     return { action: 'none', reason: 'settled', needsApproval: false, emailsTo: owner ? [owner.id] : [] };
   }
 
-  if (change === 'tenant-to-owner') {
+  // WHICH SIDE OF THE ISSUE DATE THE DEPARTURE FALLS ON DECIDES EVERYTHING.
+  //
+  // 0042 fixes a quarter's rate on the issue date, and says why: a flat let on
+  // 3 October is rented for all of Q4, and a tenant who leaves on the 4th does
+  // not turn Q4 back into an owner quarter by arithmetic. So a departure AFTER
+  // the issue date leaves the rate alone — the bill was right when it was
+  // raised — and only moves the debt, because the person it was raised against
+  // has gone and a debt does not leave with them. A departure BEFORE it means
+  // the flat was not rented on the day that mattered, and the ₹9,000 should
+  // never have been ₹9,000: that is a re-rate.
+  //
+  // Both are null when the caller does not know, which is every caller that
+  // existed before this paragraph. Unknown reads as "not after the issue date",
+  // the stricter of the two, so the old behaviour is exactly preserved.
+  const leftAfterIssue = movedOutOn && issueDate && String(movedOutOn) > String(issueDate);
+
+  if ((change === 'tenant-to-owner' || change === 'tenant-to-empty') && leftAfterIssue) {
+    return {
+      action: 'reassign',
+      basis: 'tenant',
+      rate: Number(bill?.rate_applied ?? rateFor('tenant', quarter)),
+      total: Number(bill?.total ?? rateFor('tenant', quarter)),
+      billedTo: owner?.id ?? null,
+      reassignedFrom: bill?.owner_id ?? null,
+      needsApproval: true,
+      reason: 'left-after-issue-date',
+      emailsTo: owner ? [owner.id] : [],
+    };
+  }
+
+  // A flat left EMPTY bills exactly as one the owner moved into: nobody is
+  // renting it, so the owner rate applies and the owner carries the bill. The
+  // two are kept apart anyway, in `reason`, because the record of why a bill
+  // re-rated should say what actually happened rather than the nearest thing
+  // the billing code could recognise.
+  if (change === 'tenant-to-owner' || change === 'tenant-to-empty') {
     const newRate = rateFor('owner', quarter);
     return {
       action: 're-rate',
@@ -553,7 +591,7 @@ export function planOccupancyChange({ bill, change, quarter, owner, incomingTena
       // quarter was issued at ₹9,000" needs an answer with a name in it.
       reassignedFrom: bill?.owner_id ?? null,
       needsApproval: true,
-      reason: 'tenant-left-owner-moved-in',
+      reason: change === 'tenant-to-empty' ? 'tenant-left-flat-empty' : 'tenant-left-owner-moved-in',
       emailsTo: owner ? [owner.id] : [],
     };
   }

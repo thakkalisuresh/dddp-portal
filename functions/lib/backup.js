@@ -65,6 +65,12 @@ export const TABLES = [
   // somebody had explicitly excused.
   'maint_fee_exemptions', 'voting_exemptions',
   'maint_approval_requests', 'maint_approvals',
+  // Departures waiting on a second admin, and the signatures already on them.
+  // Backed up rather than skipped as working material: an approval is somebody
+  // agreeing to end a tenancy and move a bill, and a restore that dropped a
+  // half-signed one would silently ask the committee to agree twice -- or lose
+  // the record that they ever agreed at all.
+  'tenancy_change_requests', 'tenancy_change_approvals',
   // The maintenance outbox, after the bills it points at, and for the reason
   // bill_announcements is backed up: it is the record of who has ALREADY been
   // told. A restore that brought back the bills without it would find every row
