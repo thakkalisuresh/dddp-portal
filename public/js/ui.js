@@ -88,9 +88,12 @@ const CHIP = {
 };
 
 /** Status always renders as dot + word, never colour alone. */
-export function statusChip(status) {
+export function statusChip(status, label) {
   const conf = CHIP[status] ?? CHIP.unpaid;
-  return el('span', { class: `chip ${conf.cls}` }, conf.label);
+  // A label override keeps the status's colour but says something more specific
+  // — "Paid in advance" wears the paid chip but is not the same news as a
+  // payment made this quarter.
+  return el('span', { class: `chip ${conf.cls}` }, label ?? conf.label);
 }
 
 /**

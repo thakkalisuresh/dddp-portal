@@ -301,7 +301,7 @@ function recentSection(cards, me) {
         kindIcon(card.kind),
         card.kind === 'maintenance' ? card.periodLabel : periodLabel(card.period)),
       el('span', {}, money(card.total)),
-      statusChip(card.displayStatus))),
+      statusChip(card.displayStatus, card.settledByAdvance ? 'Paid in advance' : null))),
 
     // Into the history that already exists, rather than a second one here.
     // It lives on the gas bill detail, so the link only exists when there is a

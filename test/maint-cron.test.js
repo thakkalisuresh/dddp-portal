@@ -50,6 +50,20 @@ function putQuarter(db, over = {}) {
   return q;
 }
 
+/**
+ * Record an advance on a flat. `approved_by` null leaves it unapproved — one
+ * admin's assertion, which must NOT settle a bill. The CHECK forbids the
+ * recorder approving their own, so the two ids differ.
+ */
+function putAdvance(db, { flat, paidThrough, amount = 30000, approvedBy = 2, reference = null } = {}) {
+  db.prepare(
+    `INSERT INTO maint_advances
+       (flat, paid_through, amount, reference, recorded_by, recorded_at, approved_by, approved_at)
+     VALUES (?, ?, ?, ?, 1, '2026-09-20T00:00:00Z', ?, ?)`
+  ).run(flat, paidThrough, amount, reference,
+        approvedBy, approvedBy == null ? null : '2026-09-21T00:00:00Z');
+}
+
 /* ── drafting ────────────────────────────────────────────────────────────── */
 
 describe('a quarter drafts itself a week ahead', () => {
@@ -323,6 +337,102 @@ describe('issuing the quarter', () => {
     const r = await issueQuarter(env, '2026-Q4', { today: '2026-09-30' });
     expect(r.issued).toBe(false);
     expect(r.reason).toBe('not-yet');
+  });
+
+  describe('a flat that paid ahead settles at issue, and gets no demand', () => {
+    it('settles the bill from an APPROVED advance and queues NO issued letter', async () => {
+      const { db, env } = await scheduled();
+      // 4A paid up to Q4, approved. 4B has no advance.
+      putAdvance(db, { flat: '4A', paidThrough: '2026-Q4', reference: 'CHQ-4471' });
+      const r = await issueQuarter(env, '2026-Q4', { today: '2026-10-01' });
+
+      expect(r.issued).toBe(true);
+      expect(r.count).toBe(2);              // both bills are RAISED
+      expect(r.settledFromAdvance).toBe(1); // one of them already settled
+
+      const settled = rows(db, "SELECT * FROM maint_bills WHERE flat = '4A'")[0];
+      expect(settled.status).toBe('paid');
+      expect(settled.total).toBe(7500);     // the full amount, never a silent zero
+      expect(settled.paid_method).toBe('advance');
+      expect(settled.paid_reference).toBe('CHQ-4471');
+      expect(settled.paid_at).not.toBeNull();
+
+      // The pre-payer gets NO letter; the ordinary flat gets exactly one.
+      const mail = rows(db, `SELECT b.flat, m.kind FROM maint_mail m
+                               JOIN maint_bills b ON b.id = m.bill_id ORDER BY b.flat`);
+      expect(mail).toEqual([{ flat: '4B', kind: 'issued' }]);
+    });
+
+    it('falls back to advance#<id> when the advance has no reference', async () => {
+      const { db, env } = await scheduled();
+      putAdvance(db, { flat: '4A', paidThrough: '2026-Q4', reference: null });
+      await issueQuarter(env, '2026-Q4', { today: '2026-10-01' });
+      const bill = rows(db, "SELECT * FROM maint_bills WHERE flat = '4A'")[0];
+      const [adv] = rows(db, "SELECT id FROM maint_advances WHERE flat = '4A'");
+      expect(bill.paid_reference).toBe(`advance#${adv.id}`);
+    });
+
+    it('an UNAPPROVED advance settles nothing — the bill is unpaid and letters go out', async () => {
+      const { db, env } = await scheduled();
+      // approvedBy null: one admin's assertion. Letting it settle would make
+      // "record an advance" a way for one person to clear dues and, via the
+      // voting rule, restore a vote.
+      putAdvance(db, { flat: '4A', paidThrough: '2026-Q4', approvedBy: null });
+      const r = await issueQuarter(env, '2026-Q4', { today: '2026-10-01' });
+
+      expect(r.settledFromAdvance).toBe(0);
+      expect(rows(db, "SELECT status FROM maint_bills WHERE flat = '4A'")[0].status).toBe('unpaid');
+      const mail = rows(db, `SELECT b.flat FROM maint_mail m
+                               JOIN maint_bills b ON b.id = m.bill_id ORDER BY b.flat`);
+      expect(mail.map((m) => m.flat)).toEqual(['4A', '4B']); // both billed as normal
+    });
+
+    it('an advance that does not reach this quarter leaves the bill untouched', async () => {
+      const { db, env } = await scheduled();
+      // Paid up to Q3 only; Q4 is not covered (advanceCovers is inclusive of the
+      // named quarter and no further).
+      putAdvance(db, { flat: '4A', paidThrough: '2026-Q3' });
+      const r = await issueQuarter(env, '2026-Q4', { today: '2026-10-01' });
+
+      expect(r.settledFromAdvance).toBe(0);
+      expect(rows(db, "SELECT status FROM maint_bills WHERE flat = '4A'")[0].status).toBe('unpaid');
+      expect(rows(db, 'SELECT * FROM maint_mail')).toHaveLength(2);
+    });
+
+    it('a settled-by-advance bill attracts no run-up or overdue mail and no late fee', async () => {
+      const { db, env } = await scheduled();
+      putAdvance(db, { flat: '4A', paidThrough: '2026-Q4' });
+      await issueQuarter(env, '2026-Q4', { today: '2026-10-01' });
+
+      // Walk the whole letter calendar past this bill: three-days-before, the
+      // due date, and the day the fee would land.
+      await queueDueLetters(env, { today: '2026-10-08' });   // due_soon
+      await queueDueLetters(env, { today: '2026-10-11' });   // due
+      await applyMaintLateFees(env, { today: '2026-10-12' }); // overdue + fee
+
+      const settled = rows(db, "SELECT * FROM maint_bills WHERE flat = '4A'")[0];
+      expect(settled.late_fee).toBe(0);
+      expect(settled.late_fee_at).toBeNull();
+
+      // Not one letter of any kind was queued against the pre-payer.
+      const mine = rows(db, `SELECT m.kind FROM maint_mail m
+                               JOIN maint_bills b ON b.id = m.bill_id WHERE b.flat = '4A'`);
+      expect(mine).toHaveLength(0);
+    });
+
+    it('re-running the issue job never un-settles or re-letters a settled bill', async () => {
+      const { db, env } = await scheduled();
+      putAdvance(db, { flat: '4A', paidThrough: '2026-Q4', reference: 'CHQ-4471' });
+      await issueQuarter(env, '2026-Q4', { today: '2026-10-01' });
+      const again = await issueQuarter(env, '2026-Q4', { today: '2026-10-02' });
+
+      expect(again.issued).toBe(false); // status moved on; ON CONFLICT protects the rest
+      const bill = rows(db, "SELECT * FROM maint_bills WHERE flat = '4A'")[0];
+      expect(bill.status).toBe('paid');
+      expect(bill.paid_reference).toBe('CHQ-4471');
+      expect(rows(db, `SELECT 1 FROM maint_mail m JOIN maint_bills b ON b.id = m.bill_id
+                        WHERE b.flat = '4A'`)).toHaveLength(0);
+    });
   });
 
   it('will not issue a quarter nobody confirmed', async () => {

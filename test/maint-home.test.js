@@ -61,6 +61,31 @@ describe('shapeMaintBill', () => {
     expect(card.lateFeeWarning).toBeNull();
     expect(card.pendingApproval).toBe(true);
   });
+
+  it('flags a bill settled from an advance, keeping the full amount', () => {
+    // A flat that paid ahead is settled as 'paid' with paid_method 'advance'.
+    // The card must carry its FULL total and a flag the screen turns into "Paid
+    // in advance" — never a silent zero, never a bare "Paid" on a number the
+    // resident may not remember owing.
+    const card = shapeMaintBill(
+      mbill({ status: 'paid', total: 7500, paid_method: 'advance', paid_at: '2026-10-01' }),
+      Q4, '2026-10-05',
+    );
+    expect(card.settled).toBe(true);
+    expect(card.settledByAdvance).toBe(true);
+    expect(card.total).toBe(7500);          // the amount is shown, not zeroed
+    expect(card.displayStatus).toBe('paid');
+    expect(card.showPayButton).toBe(false);
+  });
+
+  it('does not flag an ordinary payment as an advance', () => {
+    // paid_method is the only signal, so a bill paid the ordinary way — or by a
+    // bank-statement match — must not read as "Paid in advance".
+    expect(shapeMaintBill(mbill({ status: 'paid' }), Q4, '2026-10-05').settledByAdvance).toBe(false);
+    expect(shapeMaintBill(
+      mbill({ status: 'paid', paid_method: 'bank-statement' }), Q4, '2026-10-05',
+    ).settledByAdvance).toBe(false);
+  });
 });
 
 describe('toPay', () => {

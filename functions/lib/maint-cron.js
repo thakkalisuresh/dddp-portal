@@ -19,7 +19,8 @@
 import {
   assessFlat, previewQuarter, rateFor, dueDateFor, quarterOf, nextQuarter,
   quarterRange, describeQuarter, maintLateFeeDecision, applyMaintLateFee,
-  tenancyReadiness, DEFAULT_OWNER_RATE, DEFAULT_TENANT_RATE, DEFAULT_LATE_FEE, DUE_DAYS,
+  tenancyReadiness, advanceCovers, furthestAdvance,
+  DEFAULT_OWNER_RATE, DEFAULT_TENANT_RATE, DEFAULT_LATE_FEE, DUE_DAYS,
 } from './maint.js';
 import { mailToken, sendEmail, mailConfigured } from './mailer.js';
 import { letterFor, MAIL_KINDS } from './maint-mail.js';
@@ -346,21 +347,63 @@ export async function issueQuarter(env, quarterLabel, { today = istToday() } = {
   const statements = [];
   const bills = [];
 
+  // A flat that paid ahead settles its bill from that advance at issue, rather
+  // than being handed a demand for money it has already paid. APPROVED advances
+  // only: an unapproved one is one admin's assertion until a second agrees, and
+  // treating it as payment would make "record an advance" a way for one person
+  // to clear a flat's dues and, via the voting rule, restore its vote.
+  // advanceCovers() enforces the same predicate, but the query does too so an
+  // unapproved advance never even reaches the decision.
+  const advanceRows = await env.DB.prepare(
+    `SELECT id, flat, paid_through, amount, reference, approved_by
+       FROM maint_advances WHERE approved_by IS NOT NULL`
+  ).all();
+  const advancesByFlat = new Map();
+  for (const adv of advanceRows.results ?? []) {
+    if (!advancesByFlat.has(adv.flat)) advancesByFlat.set(adv.flat, []);
+    advancesByFlat.get(adv.flat).push(adv);
+  }
+
   for (const row of rows) {
     const a = assessFlat({ flat: row.flat, people: row.people, issueDate: quarter.issue_date });
     if (!a.bill) continue;
     const rate = rateFor(a.basis, quarter);
-    bills.push({ flat: row.flat, basis: a.basis, rate, ownerId: a.billedTo.id });
 
-    statements.push(env.DB.prepare(
-      // ON CONFLICT DO NOTHING against UNIQUE (flat, quarter): re-running the
-      // issue job cannot raise a second bill, which is what makes it safe for
-      // the nightly sweep to attempt a quarter it may already have done.
-      `INSERT INTO maint_bills
-         (flat, quarter, owner_id, rate_applied, basis, total, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'unpaid', ?)
-       ON CONFLICT (flat, quarter) DO NOTHING`
-    ).bind(row.flat, quarterLabel, a.billedTo.id, rate, a.basis, rate, now));
+    // The furthest-reaching approved advance on the flat, and whether it reaches
+    // THIS quarter. All-or-nothing: an advance covers a quarter or it does not —
+    // there is no partial draw-down here (the full credit ledger is later work),
+    // so a covered bill is raised already settled and an uncovered one is raised
+    // 'unpaid' exactly as before.
+    const advance = furthestAdvance(advancesByFlat.get(row.flat));
+    const settledByAdvance = advanceCovers(advance, quarterLabel);
+    bills.push({ flat: row.flat, basis: a.basis, rate, ownerId: a.billedTo.id, settledByAdvance });
+
+    if (settledByAdvance) {
+      // Settled as 'paid', the same shape the bank-statement reconcile path uses
+      // (index.js): status='paid', paid_method names how, paid_reference is the
+      // trail — a bill paid from an advance has no bank credit of its own, so the
+      // advance is the only thing tying it to money that came in. The bill still
+      // carries its FULL total; the resident sees the amount and a line saying
+      // the advance covered it, never a silent zero. No new column, no migration.
+      statements.push(env.DB.prepare(
+        `INSERT INTO maint_bills
+           (flat, quarter, owner_id, rate_applied, basis, total, status,
+            paid_at, paid_method, paid_reference, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'paid', ?, 'advance', ?, ?)
+         ON CONFLICT (flat, quarter) DO NOTHING`
+      ).bind(row.flat, quarterLabel, a.billedTo.id, rate, a.basis, rate,
+        now, advance.reference ?? `advance#${advance.id}`, now));
+    } else {
+      statements.push(env.DB.prepare(
+        // ON CONFLICT DO NOTHING against UNIQUE (flat, quarter): re-running the
+        // issue job cannot raise a second bill, which is what makes it safe for
+        // the nightly sweep to attempt a quarter it may already have done.
+        `INSERT INTO maint_bills
+           (flat, quarter, owner_id, rate_applied, basis, total, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'unpaid', ?)
+         ON CONFLICT (flat, quarter) DO NOTHING`
+      ).bind(row.flat, quarterLabel, a.billedTo.id, rate, a.basis, rate, now));
+    }
   }
 
   // INSERT…SELECT, because the bills are being written in this same batch and
@@ -379,6 +422,11 @@ export async function issueQuarter(env, quarterLabel, { today = istToday() } = {
        FROM maint_bills b
        LEFT JOIN owners o ON o.id = b.owner_id
       WHERE b.quarter = ?
+        -- A bill settled from an advance is not a demand and must not read as
+        -- one: no issued letter for it. The run-up and overdue letters already
+        -- filter settled bills (queueDueLetters, maintLateFeeDecision); this is
+        -- the only INSERT that queued for every bill in the quarter regardless.
+        AND b.status NOT IN ('paid','waived','cancelled')
      ON CONFLICT (bill_id, kind) DO NOTHING`
   ).bind(now, quarterLabel));
 
@@ -394,6 +442,10 @@ export async function issueQuarter(env, quarterLabel, { today = istToday() } = {
     quarter: quarterLabel,
     count: bills.length,
     total,
+    // Raised already settled from an approved advance — money that was billed
+    // but not demanded. Reported so the summary can say so rather than leave an
+    // admin wondering why N bills went out but fewer letters did.
+    settledFromAdvance: bills.filter((b) => b.settledByAdvance).length,
     // What the admin confirmed, against what actually went out. A tenancy that
     // changed between scheduling and issuing shows up here as a line in the
     // summary rather than as a surprise in the next dues report.

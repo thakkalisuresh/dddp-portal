@@ -54,6 +54,11 @@ export function shapeMaintBill(bill, quarter, today = istToday()) {
   if (!bill) return null;
 
   const settled = isSettled(bill);
+  // Settled from an approved advance, not by a payment the resident made now.
+  // The bill still carries its full total; this is what lets the screen say
+  // "Paid in advance" and name the advance, rather than a bare "Paid" on a
+  // number the resident may not remember owing.
+  const settledByAdvance = settled && bill.paid_method === 'advance';
   const claimed = bill.status === 'initiated' || bill.status === 'awaiting';
   const dueDate = quarter?.due_date ?? bill.due_date ?? null;
 
@@ -92,6 +97,7 @@ export function shapeMaintBill(bill, quarter, today = istToday()) {
     showPayButton: !settled && bill.status !== 'awaiting',
     showUploadLink: !settled,
     settled,
+    settledByAdvance,
 
     // An approval in flight freezes the late-fee clock (maintLateFeeDecision),
     // so it must also silence the warning — otherwise the card threatens a fee

@@ -102,7 +102,7 @@ function heroSection(detail) {
   return el('section', { class: 'bill-hero' },
     el('div', { class: 'bill-hero__top' },
       el('p', { class: 'label' }, label),
-      statusChip(b.displayStatus)),
+      statusChip(b.displayStatus, b.settledByAdvance ? 'Paid in advance' : null)),
 
     el('p', { class: 'amount', style: settled ? 'color:var(--ink-muted)' : '' }, money(b.total)),
 
@@ -112,6 +112,14 @@ function heroSection(detail) {
         // "Due 20 Aug" read as "the 20th is fine", and it is not. The deadline
         // is stated as the instant it expires rather than the day it falls on.
         : b.dueDate ? `Pay before ${dayLabel(b.dueDate)}` : null),
+
+    // The full amount is shown above, greyed like any settled bill, but a bill
+    // the resident never paid a rupee towards THIS quarter needs to say why it
+    // is settled — never a silent zero, never an unexplained "Paid".
+    b.settledByAdvance
+      ? el('p', { class: 'small muted' },
+          'Covered by your advance payment — nothing further due for this quarter.')
+      : null,
 
     // Warn about the fee before it lands — nobody should be surprised by it.
     b.lateFeeWarning
