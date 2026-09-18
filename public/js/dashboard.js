@@ -60,23 +60,23 @@ function render(me) {
 
   const home = me.home ?? {};
 
-  main.replaceChildren(
+  // FILTERED, because replaceChildren is not el(). el() skips a null child;
+  // replaceChildren STRINGIFIES it, and the word "null" appears on the page —
+  // which it duly did here, above "To pay", until the smoke render caught it.
+  // This codebase has now hit the same trap four times; admin-billing.js and
+  // admin-maint.js both carry the same warning.
+  main.replaceChildren(...[
     landlordNote(me),
     // Always rendered, empty or not. See the note at the top of this file.
     toPaySection(home.toPay ?? []),
     // A state, not a task — so its own card under the bills rather than a row
     // among the things being waited on.
     votingSection(home.voting),
-    ...hideWhenEmpty(comingUpSection(home.comingUp ?? [])),
-    ...hideWhenEmpty(waitingSection(home.waitingForYou ?? [])),
-    ...hideWhenEmpty(recentSection(home.recentlyPaid ?? [], me)),
+    comingUpSection(home.comingUp ?? []),
+    waitingSection(home.waitingForYou ?? []),
+    recentSection(home.recentlyPaid ?? [], me),
     helpSection(),
-  );
-}
-
-/** Three of the four sections simply do not exist when they have nothing. */
-function hideWhenEmpty(section) {
-  return section ? [section] : [];
+  ].filter(Boolean));
 }
 
 /**

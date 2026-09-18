@@ -22,7 +22,12 @@ function building(extra = {}) {
     people: [
       { id: 1, flat: '4A', relationship: 'owner', email: 'owner4a@x.com' },
       { id: 2, flat: '4B', relationship: 'owner', email: 'owner4b@x.com' },
-      { id: 3, flat: '4B', relationship: 'tenant', email: 'tenant4b@x.com' },
+      // A lease END DATE, because the building's records being in order is the
+      // normal case these tests are about. Scheduling refuses an undated lease
+      // unless the caller acknowledges it — see scheduleQuarter — and a fixture
+      // without one would make every test here a test of that refusal.
+      { id: 3, flat: '4B', relationship: 'tenant', email: 'tenant4b@x.com',
+        lease_ends_at: '2027-06-30' },
     ],
   });
   return { db, env };
@@ -181,19 +186,55 @@ describe('scheduling a quarter', () => {
     expect(rows(db, "SELECT * FROM maint_quarters WHERE status = 'scheduled'")).toHaveLength(0);
   });
 
-  it('proceeds on an undated lease, which is the ordinary case', async () => {
-    // Most rows have no end date until the roster is filled in. Refusing to
-    // bill until every one is entered would miss the quarter.
+  it('refuses an undated lease until the caller acknowledges it', async () => {
+    // CHANGED 17 September 2026. This used to proceed, on the grounds that most
+    // rows have no end date until the roster is filled in and refusing to bill
+    // until every one is entered would miss the quarter — which is still true,
+    // and is why this is an acknowledgement rather than a hard refusal.
+    //
+    // What changed is that it may no longer happen SILENTLY. A warning nobody
+    // reads is not a decision, and the admin screen only sets the flag once
+    // somebody has worked through the flagged rows.
+    const { db, env } = building();
+    db.prepare('UPDATE owners SET lease_ends_at = NULL WHERE id = 3').run();
+    putQuarter(db);
+
+    const refused = await scheduleQuarter(env, '2026-Q4', { actorId: 1 });
+    expect(refused.scheduled).toBe(false);
+    expect(refused.reason).toBe('undated-leases');
+    expect(refused.undated[0].flat).toBe('4B');
+    expect(rows(db, "SELECT * FROM maint_quarters WHERE status = 'scheduled'")).toHaveLength(0);
+  });
+
+  it('proceeds on an undated lease once it is acknowledged', async () => {
+    // The escape hatch the old behaviour existed for, still open — just no
+    // longer open by default.
+    const { db, env } = building();
+    db.prepare('UPDATE owners SET lease_ends_at = NULL WHERE id = 3').run();
+    putQuarter(db);
+
+    const r = await scheduleQuarter(env, '2026-Q4', { actorId: 1, acknowledgeUndated: true });
+    expect(r.scheduled).toBe(true);
+    expect(r.readiness.undated).toHaveLength(1);
+    // Recorded, so the audit entry can say the quarter went out with undated
+    // leases knowingly left in it.
+    expect(r.acknowledgedUndated).toBe(true);
+  });
+
+  it('schedules without ceremony when every lease is dated', async () => {
     const { db, env } = building();
     putQuarter(db);
     const r = await scheduleQuarter(env, '2026-Q4', { actorId: 1 });
     expect(r.scheduled).toBe(true);
-    expect(r.readiness.undated).toHaveLength(1);
+    expect(r.acknowledgedUndated).toBe(false);
   });
 
   it('refuses while a flat has somebody living in it and no owner', async () => {
     const { db, env } = building();
-    seed(db, { people: [{ id: 9, flat: '12F', relationship: 'tenant', email: 't@x.com' }] });
+    // Dated, so this reaches the unresolved-flats check rather than stopping at
+    // the undated-lease one — the refusal being tested is the later of the two.
+    seed(db, { people: [{ id: 9, flat: '12F', relationship: 'tenant', email: 't@x.com',
+                         lease_ends_at: '2027-06-30' }] });
     putQuarter(db);
     const r = await scheduleQuarter(env, '2026-Q4', { actorId: 1 });
     expect(r.scheduled).toBe(false);

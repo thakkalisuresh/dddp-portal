@@ -17,6 +17,7 @@ import { mobileField } from './mobile-field.js';
 import { ADMINISTRATOR } from './contact.js';
 import { money, kg, periodLabel, dayLabel } from './i18n.js';
 import { billingPanel, nextMonth } from './admin-billing.js';
+import { maintPanel } from './admin-maint.js';
 
 const main = $('#main');
 let me = null;
@@ -67,6 +68,11 @@ const TABS = [
   // tab now, in the order the month actually happens: the price of gas, the
   // meter walk, then review and publish. Nine tabs became eight.
   { id: 'billing',   label: 'Billing',   render: billingPanel },
+  // Its own tab beside Billing rather than inside it. They are both "raise the
+  // bills", but one is a monthly meter walk and the other a quarterly flat rate
+  // on a different account, and folding them together would mean a screen that
+  // changes shape depending on the time of year.
+  { id: 'maint',     label: 'Maintenance', render: maintPanel },
   { id: 'bills',     label: 'Bills',     render: billsPanel },
   { id: 'proofs',    label: 'Proofs',    href: '/admin/proofs.html' },
   { id: 'statement', label: 'Reconcile', href: '/admin/statement.html' },
@@ -548,6 +554,44 @@ function flatCard(group, status, open = false, reload = async () => {}) {
     ...group.people.map((p) => personCard(p, status, group, reload)));
 }
 
+/**
+ * What a resident row gains from maintenance.
+ *
+ * Each cell is ABSENT when it has nothing to say, rather than showing a dash.
+ * Most residents most of the time have no advance and no voting block, and
+ * three permanently empty cells on every card would bury the two that matter on
+ * the cards where they appear.
+ */
+function maintenanceCells(p, staticCell) {
+  const cells = [];
+
+  if (p.maint_status) {
+    // The QUARTER beside the status, because "unpaid" without one is a fact
+    // with no date attached and the next question is always "since when".
+    cells.push(staticCell('Maintenance',
+      `${p.maint_quarter ?? ''} · ${p.maint_status}`.trim()));
+  }
+
+  if (p.advance_through) {
+    cells.push(staticCell('Paid in advance to', p.advance_through));
+  }
+
+  // Only when it is BLOCKED. A card telling somebody their vote works is a
+  // card that says nothing, and it would appear on every row in the building.
+  if (p.voting_blocked) {
+    cells.push(staticCell('Vote', 'Locked — maintenance outstanding'));
+  }
+
+  // A tenancy the maintenance check has flagged, said here too. An admin who
+  // opens a resident to fix something should not have to learn from another
+  // screen that this is the record holding the quarter up.
+  if (p.relationship === 'tenant' && !p.lease_ends_at) {
+    cells.push(staticCell('Lease ends', 'not recorded'));
+  }
+
+  return cells;
+}
+
 /** "Two owners and a tenant. One more owner login would fit." */
 function householdLine(current) {
   const owners = current.filter((p) => p.relationship === 'owner').length;
@@ -613,7 +657,12 @@ function personCard(p, status, group = null, reload = async () => {}) {
         : editable(p, 'mobile', 'Mobile', status),
       inactive || lockedToMe
         ? staticCell('Email', p.email || '—')
-        : editable(p, 'email', 'Email', status, { type: 'email', placeholder: 'none' })),
+        : editable(p, 'email', 'Email', status, { type: 'email', placeholder: 'none' }),
+
+      // COLUMNS, not a second screen. Three facts about this person that an
+      // admin looking at their card would otherwise have to go to the
+      // Maintenance tab to learn.
+      ...maintenanceCells(p, staticCell)),
 
     // Resetting is the superadmin's alone as of 2026-08-12. An admin who could
     // reset 7B could log in AS 7B, so the button is not merely hidden — the
@@ -1105,9 +1154,57 @@ async function homePanel() {
       foldedSection('Keeping a copy', null, exportPanel));
   }
   return el('div', { class: 'stack' },
+    // FIRST while the quarter is unscheduled, and back among the others once it
+    // is. A card nobody has acted on belongs at the top; a receipt does not.
+    ...(summary.maintenance?.state === 'unscheduled' ? [maintenanceCard(summary.maintenance)] : []),
     standingPanel(summary),
+    ...(summary.maintenance?.state === 'scheduled' ? [maintenanceCard(summary.maintenance)] : []),
     waitingPanel(summary),
     foldedSection('Keeping a copy', null, exportPanel));
+}
+
+/**
+ * The maintenance quarter, while it needs attention.
+ *
+ * Present for the seven days before a quarter goes out and gone once it has.
+ * Unscheduled it says how long is left and what is blocking; scheduled it is a
+ * receipt line and nothing more.
+ *
+ * THE URGENCY ESCALATES, in two steps rather than one. A card that looks urgent
+ * for seven days straight is wallpaper by day three, so it is quiet until two
+ * days out and only shouts once the quarter has actually started with nothing
+ * scheduled — which is the one state where bills are genuinely late.
+ */
+function maintenanceCard(card) {
+  const tone = { calm: 'note--good', soon: 'note', urgent: 'note--warn', overdue: 'note--bad' };
+
+  if (card.state === 'scheduled') {
+    return el('div', { class: `panel ${tone.calm}` },
+      el('p', {}, `${card.quarterLabel} bills issue on ${dayLabel(card.issueDate)} — `
+        + `${card.flats} flats, ${money(card.total)}.`),
+      el('button', { class: 'btn btn--sm btn--ghost', type: 'button',
+                     onclick: () => show('maint') }, 'Open Maintenance'));
+  }
+
+  const when = card.daysOverdue > 0
+    // Named as late, because it is: the quarter has started and no bills exist.
+    ? `${card.daysOverdue} day${card.daysOverdue === 1 ? '' : 's'} overdue`
+    : card.daysRemaining === 0
+      ? 'due today'
+      : `${card.daysRemaining} day${card.daysRemaining === 1 ? '' : 's'} left`;
+
+  return el('div', { class: `panel ${tone[card.urgency] ?? 'note'}` },
+    el('p', {}, el('strong', {}, `${card.quarterLabel} maintenance is not scheduled`),
+      ` — ${when}.`),
+    el('p', { class: 'small' },
+      `Bills are meant to go out ${dayLabel(card.issueDate)}.`
+      // The blocker, on the card. "Schedule the quarter" is not actionable
+      // until you know what is stopping it.
+      + (card.tenanciesToConfirm
+          ? ` ${card.tenanciesToConfirm} tenanc${card.tenanciesToConfirm === 1 ? 'y needs' : 'ies need'} confirming first.`
+          : '')),
+    el('button', { class: 'btn btn--sm', type: 'button', onclick: () => show('maint') },
+      card.tenanciesToConfirm ? 'Check the tenancies' : 'Schedule the quarter'));
 }
 
 /** Home with its figures missing: still a way in to every section. */
@@ -1388,6 +1485,15 @@ function bulkLine(s, status) {
 
 async function billsList() {
   const search = el('input', { class: 'input', placeholder: '10C', id: 'b-flat' });
+  // A FILTER, NOT A SECOND SCREEN. Gas and maintenance interleave in one list
+  // sorted by due date — a quarter is a period whose label happens to be a
+  // quarter, and two half-screens is what treating them as different species
+  // produces. The user rejected a Gas/Maintenance switch on the Billing page;
+  // this is a filter on one list, which is a different thing.
+  const kind = el('select', { class: 'input', id: 'b-kind' },
+    el('option', { value: '' }, 'Gas and maintenance'),
+    el('option', { value: 'gas' }, 'Gas only'),
+    el('option', { value: 'maintenance' }, 'Maintenance only'));
   const list = el('div', { class: 'stack' });
   const status = el('div');
 
@@ -1395,7 +1501,10 @@ async function billsList() {
     const flat = search.value.trim().toUpperCase();
     list.replaceChildren(el('p', { class: 'muted' }, 'Loading…'));
     try {
-      const { bills } = await api.admin.bills(flat ? `?flat=${encodeURIComponent(flat)}` : '');
+      const query = new URLSearchParams();
+      if (flat) query.set('flat', flat);
+      if (kind.value) query.set('kind', kind.value);
+      const { bills } = await api.admin.bills(query.toString() ? `?${query}` : '');
       // Newest first and capped: the console is for finding the bill somebody
       // just rang about, not for reading a year of them.
       const shown = bills.slice(0, flat ? 24 : 40);
@@ -1423,15 +1532,27 @@ async function billsList() {
    * real history, they no longer follow a rate change, and the doctor counts
    * them (BILL-OVERRIDE) so the number can go to zero.
    */
-  const billRow = (b) => el('div', { class: 'rowitem' },
+  const billRow = (b) => el('div', { class: 'rowitem', 'data-kind': b.kind },
     el('div', { class: 'rowitem__main' },
-      el('b', {}, `${b.flat} · ${periodLabel(b.period)}`),
+      el('b', {},
+        `${b.flat} · `,
+        // The period column reads "September 2026" or "Q4 2026" as appropriate.
+        // One column, two shapes of label, because that is what the row is.
+        b.kind === 'maintenance' ? b.periodLabel : periodLabel(b.period)),
       el('div', {},
-        `${kg(b.consumption)} at ₹${b.rate_per_kg} · ${money(b.total)} · ${b.status}`,
+        b.kind === 'maintenance'
+          // No meter arithmetic to quote. What explains a maintenance amount is
+          // WHICH RATE it was billed at, which is the question the treasurer
+          // actually gets asked about it.
+          ? `${b.basis === 'tenant' ? 'Rented' : 'Owner'} rate `
+            + `₹${b.rate_applied} · ${money(b.total)} · ${b.status}`
+          : `${kg(b.consumption)} at ₹${b.rate_per_kg} · ${money(b.total)} · ${b.status}`,
+        b.late_fee ? ` · incl. ${money(b.late_fee)} late fee` : '',
         b.manual_total ? ' · amount typed in, before corrections were reworked' : '',
         b.mismatch ? ' · does not match its own components' : '')));
 
   search.addEventListener('change', load);
+  kind.addEventListener('change', load);
   await load();
 
   return el('div', { class: 'panel stack' },
@@ -1443,6 +1564,7 @@ async function billsList() {
       el('button', { class: 'linkish', type: 'button', onclick: () => show('billing') }, 'Billing'),
       '. Either way it goes to two other admins, and applies when they agree.'),
     el('div', { class: 'field' }, el('label', { for: 'b-flat' }, 'Flat'), search),
+    el('div', { class: 'field' }, el('label', { for: 'b-kind' }, 'Show'), kind),
     status,
     list);
 }

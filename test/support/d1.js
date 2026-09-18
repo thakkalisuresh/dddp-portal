@@ -117,14 +117,19 @@ export function seed(db, { flats = [], people = [] } = {}) {
   for (const p of people) {
     db.prepare(
       `INSERT INTO owners (id, flat, name, mobile, email, pw_hash, pw_salt, created_at,
-                           active, relationship, role, moved_in_at, moved_out_at, lease_ends_at)
-       VALUES (?, ?, ?, ?, ?, 'h', 's', '2026-01-01T00:00:00Z', ?, ?, ?, ?, ?, ?)`
+                           active, relationship, role, moved_in_at, moved_out_at, lease_ends_at,
+                           tenancy_confirmed_at)
+       VALUES (?, ?, ?, ?, ?, 'h', 's', '2026-01-01T00:00:00Z', ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       p.id, p.flat, p.name ?? `P${p.id}`,
       p.mobile ?? `90000000${String(p.id).padStart(2, '0')}`,
       p.email ?? null,
       p.active ?? 1, p.relationship ?? 'owner', p.role ?? 'owner',
       p.moved_in_at ?? null, p.moved_out_at ?? null, p.lease_ends_at ?? null,
+      // Null by default, which is the honest starting state: a tenancy nobody
+      // has confirmed. The admin tenancy check flags exactly that, so a fixture
+      // that silently stamped one would hide the flag it is testing for.
+      p.tenancy_confirmed_at ?? null,
     );
   }
 }

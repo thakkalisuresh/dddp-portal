@@ -176,6 +176,36 @@ export const api = {
                                request('POST',
                                  `/api/admin/contact-requests/${id}/${approve ? 'approve' : 'reject'}`),
 
+    /* ── maintenance ─────────────────────────────────────────────────────
+       A quarter, not a month. Every one of these returns the whole page's
+       payload rather than just what it changed, because the four steps are
+       interdependent — saving a rate moves the preview, the total and what
+       step 3 says will happen — and a partial update leaves the screen
+       disagreeing with itself. */
+    maint:         (quarter) => request('GET',
+                               `/api/admin/maint${quarter ? `?quarter=${encodeURIComponent(quarter)}` : ''}`),
+    maintRates:    (quarter, ownerRate, tenantRate, lateFee) =>
+                               request('PUT', '/api/admin/maint/rates',
+                                       { quarter, ownerRate, tenantRate, lateFee }),
+    /**
+     * `acknowledgeUndated` is sent ONLY when the admin has ticked the box, and
+     * the box only exists once they have worked through the flagged rows. The
+     * server refuses an undated lease without it — deliberately, so that
+     * scheduling past one is a decision somebody made rather than a warning
+     * that scrolled past.
+     */
+    maintSchedule: (quarter, issueDate, acknowledgeUndated = false) =>
+                               request('POST', '/api/admin/maint/schedule',
+                                       { quarter, issueDate, acknowledgeUndated }),
+    maintUnschedule: (quarter) =>
+                               request('POST', '/api/admin/maint/unschedule', { quarter }),
+    /** "Still here" — and the lease end too, when that is what was missing. */
+    confirmTenancy: (id, leaseEndsAt = null) =>
+                               request('POST', '/api/admin/maint/tenancy/confirm',
+                                       { id, leaseEndsAt }),
+    /** Two blocks, never totalled together. See duesReport in the Worker. */
+    dues:          ()        => request('GET', '/api/admin/dues'),
+
     // `period` here is always the USAGE month, never the month being walked.
     readings:      (period) => request('GET',  `/api/admin/readings?period=${period}`),
     saveReadings:  (period, readings) =>

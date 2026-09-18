@@ -944,6 +944,14 @@ Billing — one flow from the price of gas to the published bill.
 | fn | `nextMonth` |  |
 | fn | `billingPanel` | The whole tab. |
 
+### `public/js/admin-maint.js`
+
+The Maintenance tab — step 6.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `maintPanel` |  |
+
 ### `public/js/api.js`
 
 Thin fetch wrapper.
@@ -1168,4 +1176,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-657 exports. 289 have no doc comment.
+658 exports. 290 have no doc comment.

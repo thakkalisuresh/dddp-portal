@@ -10,7 +10,11 @@ import { signedInPeople, loginsToday, tokensToRevoke, PRESENCE_KINDS, LEAVE_GRAC
 import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex, derive,
          DEFAULT_ITERATIONS } from './lib/crypto.js';
 import { billDetailPayload, paySheetPayload, resolveBill } from './lib/bill-view.js';
-import { SETTLED_STATUSES } from './lib/maint.js';
+import {
+  SETTLED_STATUSES, isQuarterLabel, dueDateFor, describeQuarter, flatVotingStatus,
+} from './lib/maint.js';
+import { maintAdminPayload, duesReport, adminHomeCard } from './lib/maint-admin.js';
+import { scheduleQuarter } from './lib/maint-cron.js';
 import { dashboardPayload } from './lib/dashboard.js';
 import { billPdf, istSlashDate } from './lib/bill-pdf.js';
 // The Worker's own date label — the browser's lives in js/i18n.js.
@@ -301,6 +305,18 @@ export default {
         }
         // The landing screen. One request rather than the five the board would
         // otherwise make on every visit to /admin.
+        // ── maintenance ────────────────────────────────────────────────
+        if (route === 'GET /api/admin/maint') {
+          return json(await maintAdminPayload(env, url.searchParams.get('quarter')));
+        }
+        if (route === 'PUT /api/admin/maint/rates') return putMaintRates(request, env, session);
+        if (route === 'POST /api/admin/maint/schedule') return postMaintSchedule(request, env, session);
+        if (route === 'POST /api/admin/maint/unschedule') return postMaintUnschedule(request, env, session);
+        if (route === 'POST /api/admin/maint/tenancy/confirm') {
+          return postTenancyConfirm(request, env, session);
+        }
+        if (route === 'GET /api/admin/dues') return json(await duesReport(env));
+
         if (route === 'GET /api/admin/summary') return adminSummary(env, session);
         if (route === 'GET /api/admin/residents') return listResidents(env, session, url);
         if (route.startsWith('POST /api/admin/residents/') && path.endsWith('/reset/email')) {
@@ -1031,7 +1047,23 @@ async function listResidents(env, session, url) {
 
   const { results } = await env.DB.prepare(
     `SELECT o.id, o.flat, f.floor, o.name, o.mobile, o.email, o.role,
-            o.relationship, o.active, o.moved_in_at, o.moved_out_at, o.must_change_pw
+            o.relationship, o.active, o.moved_in_at, o.moved_out_at, o.must_change_pw,
+            o.lease_ends_at, o.tenancy_confirmed_at,
+            -- A COLUMN, not a second screen. What a resident row gains is their
+            -- current-quarter maintenance status, any advance, and their voting
+            -- state when it is blocked. Each is one fact about this person, so
+            -- each is one column rather than a page of its own.
+            (SELECT b.status FROM maint_bills b
+              WHERE b.owner_id = o.id AND b.status NOT IN ('cancelled')
+              ORDER BY b.quarter DESC LIMIT 1) AS maint_status,
+            (SELECT b.quarter FROM maint_bills b
+              WHERE b.owner_id = o.id AND b.status NOT IN ('cancelled')
+              ORDER BY b.quarter DESC LIMIT 1) AS maint_quarter,
+            -- Approved advances only. An unapproved one is one admin's
+            -- assertion until a second agrees, and advanceCovers() refuses to
+            -- count it — so showing it here would contradict the rule.
+            (SELECT MAX(a.paid_through) FROM maint_advances a
+              WHERE a.flat = o.flat AND a.approved_by IS NOT NULL) AS advance_through
        FROM owners o JOIN flats f ON f.flat = o.flat
       ${wantsPast ? '' : 'WHERE o.active = 1'}
       ORDER BY f.floor, o.flat, o.active DESC, o.relationship`
@@ -1042,8 +1074,67 @@ async function listResidents(env, session, url) {
   // the mailbox is what gets reported.
   // The superadmin is listed to admins as an admin -- see roleAsSeenBy for why
   // this is masked here, in the data, and not only in the page.
-  const residents = results.map((r) => ({ ...r, role: roleAsSeenBy(session.actor, r.role) }));
+  // THE REAL RULE, not a SQL approximation of it. Whether a flat's vote is
+  // blocked depends on which quarters have ENDED, on approvals in flight and on
+  // exemptions — flatVotingStatus knows all three, and a WHERE clause that got
+  // any of them slightly wrong would put a "vote locked" line on a card while
+  // the poll screen let that flat vote. Two answers to one question is worse
+  // than one answer in one place.
+  const blockedFlats = await votingBlockedFlats(env);
+
+  const residents = results.map((r) => ({
+    ...r,
+    role: roleAsSeenBy(session.actor, r.role),
+    // The vote is the flat's and the flat's vote is the owner's, so a tenant's
+    // card never carries this even when their own arrears are what caused it.
+    voting_blocked: r.relationship !== 'tenant' && blockedFlats.has(r.flat),
+  }));
   return json({ residents, mailConfigured: mailConfigured(env) });
+}
+
+/**
+ * Which flats cannot vote today, decided by the same function the ballot uses.
+ *
+ * One query for every unsettled maintenance bill and one for the exemptions,
+ * then the rule applied per flat in JavaScript. That is deliberately not clever:
+ * the alternative is expressing "the quarter has ended, unless an approval is in
+ * flight, unless the committee granted an exemption" in SQL, and the moment that
+ * drifts from flatVotingStatus the directory and the poll disagree about who may
+ * vote.
+ */
+async function votingBlockedFlats(env, today = istToday()) {
+  const [bills, exemptions] = await Promise.all([
+    env.DB.prepare(
+      `SELECT b.flat, b.quarter, b.total, b.status,
+              EXISTS (SELECT 1 FROM maint_approval_requests r
+                       WHERE r.bill_id = b.id AND r.status = 'pending') AS pending_approval
+         FROM maint_bills b
+        WHERE b.status NOT IN ('paid','waived','cancelled')`
+    ).all(),
+    env.DB.prepare('SELECT flat, ends_at, approved_by FROM voting_exemptions').all(),
+  ]);
+
+  const byFlat = new Map();
+  for (const bill of bills.results ?? []) {
+    if (!byFlat.has(bill.flat)) byFlat.set(bill.flat, []);
+    byFlat.get(bill.flat).push(bill);
+  }
+  const exemptFor = new Map((exemptions.results ?? []).map((e) => [e.flat, e]));
+
+  const blocked = new Set();
+  for (const [flat, flatBills] of byFlat) {
+    const status = flatVotingStatus({
+      bills: flatBills,
+      // Asked as of today: "could this flat vote if a poll opened now". A real
+      // poll re-asks it against its own creation date, because a quarter that
+      // had not ended when the poll opened must not start blocking mid-poll.
+      pollCreatedAt: today,
+      exemption: exemptFor.get(flat) ?? null,
+      today,
+    });
+    if (!status.canVote) blocked.add(flat);
+  }
+  return blocked;
 }
 
 async function resetPassword(request, env, session, path) {
@@ -1325,6 +1416,207 @@ async function logMaintIntent(env, session, path) {
 
   await audit(env, session, 'maint.payment.intent', { billId: bill.id, total: bill.total });
   return json({ recorded: true, status: bill.status === 'unpaid' ? 'initiated' : bill.status });
+}
+
+/* ── maintenance admin ───────────────────────────────────────────────────── */
+
+/**
+ * Step 1 — the rates for the quarter.
+ *
+ * Creates the quarter row if it does not exist yet: an admin opening a quarter
+ * nobody has drafted and typing the rates IS how a quarter starts, and making
+ * them press "create" first would be a step that exists only because of how the
+ * table is shaped.
+ *
+ * NO APPROVAL WHILE IT IS A DRAFT. Nothing has been promised to anybody, and an
+ * approval queue on a number no resident has seen is ceremony. Once the quarter
+ * is scheduled the rates are frozen and this refuses; after issuing, a rate
+ * moves per bill through the rate-switch approval.
+ */
+async function putMaintRates(request, env, session) {
+  const body = await readJson(request);
+  const quarter = String(body?.quarter ?? '');
+  if (!isQuarterLabel(quarter)) {
+    return problem(400, 'DDP-MAINT-001', 'That is not a quarter.');
+  }
+
+  const rates = ['ownerRate', 'tenantRate', 'lateFee'].map((k) => Number(body?.[k]));
+  if (rates.some((n) => !Number.isFinite(n) || n < 0 || Math.round(n * 100) % 100 !== 0)) {
+    // Whole rupees, for the reason the schema CHECKs it: a fractional figure
+    // passes the application and then dies at the database as a 500 rather than
+    // as a message anybody can act on.
+    return problem(400, 'DDP-MAINT-005', 'Rates and the late fee must be whole rupees.');
+  }
+  const [ownerRate, tenantRate, lateFee] = rates;
+  if (ownerRate <= 0 || tenantRate <= 0) {
+    return problem(400, 'DDP-MAINT-004', 'Both rates must be more than zero.');
+  }
+
+  const existing = await env.DB.prepare('SELECT status FROM maint_quarters WHERE quarter = ?')
+    .bind(quarter).first();
+  if (existing && existing.status !== 'draft') {
+    return problem(409, 'DDP-MAINT-008',
+      'This quarter is no longer a draft. Its rates are fixed.');
+  }
+
+  const issueDate = firstDayOf(quarter);
+  await env.DB.prepare(
+    `INSERT INTO maint_quarters
+       (quarter, owner_rate, tenant_rate, late_fee, issue_date, due_date, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'draft', ?)
+     ON CONFLICT (quarter) DO UPDATE
+       SET owner_rate = excluded.owner_rate,
+           tenant_rate = excluded.tenant_rate,
+           late_fee = excluded.late_fee`
+  ).bind(quarter, ownerRate, tenantRate, lateFee, issueDate, dueDateFor(issueDate),
+         new Date().toISOString()).run();
+
+  await audit(env, session, 'maint.rates', { quarter, ownerRate, tenantRate, lateFee });
+  return json(await maintAdminPayload(env, quarter));
+}
+
+/** Why a quarter would not schedule, in words an admin can act on. */
+function refusalSentence(result) {
+  if (result?.reason === 'stale-tenancy') {
+    return result.readiness?.message
+      ?? 'Some tenancies on record have leases that ended before the issue date.';
+  }
+  if (result?.reason === 'undated-leases') {
+    const flats = [...new Set((result.undated ?? []).map((u) => u.flat))].join(', ');
+    return `${result.undated.length} tenanc${result.undated.length === 1 ? 'y has' : 'ies have'} `
+      + `no lease end date (${flats}). Add the dates, or confirm you want to schedule `
+      + 'without them.';
+  }
+  if (result?.reason === 'unresolved-flats') {
+    const flats = (result.unresolved ?? []).map((u) => u.flat).join(', ');
+    return `Somebody is living in ${flats} with no owner on record. `
+      + 'Resolve that before scheduling — otherwise nobody is billed for it.';
+  }
+  return 'That quarter could not be scheduled.';
+}
+
+/** The first day of a quarter — '2026-Q4' → '2026-10-01'. */
+function firstDayOf(quarter) {
+  const [year, q] = String(quarter).split('-Q').map(Number);
+  return `${year}-${String((q - 1) * 3 + 1).padStart(2, '0')}-01`;
+}
+
+/**
+ * Step 3 — schedule.
+ *
+ * No typed confirmation and no second-admin approval: scheduling is reversible,
+ * nothing has reached a resident, and an approval on a reversible act teaches
+ * people to click through approvals.
+ *
+ * The tenancy refusals live in scheduleQuarter rather than here, so there is
+ * one rule in one place: an ENDED lease refuses outright, and an UNDATED one
+ * refuses unless the caller acknowledges it. The screen sets that flag only
+ * after an admin has worked through the flagged rows, so an undated lease can
+ * be scheduled past deliberately but never silently — and somebody calling this
+ * endpoint directly gets a refusal naming what to acknowledge rather than a
+ * warning they would never see.
+ */
+async function postMaintSchedule(request, env, session) {
+  const body = await readJson(request);
+  const quarter = String(body?.quarter ?? '');
+  if (!isQuarterLabel(quarter)) {
+    return problem(400, 'DDP-MAINT-001', 'That is not a quarter.');
+  }
+
+  try {
+    const result = await scheduleQuarter(env, quarter, {
+      actorId: session.actor.id,
+      issueDate: body?.issueDate ?? null,
+      acknowledgeUndated: body?.acknowledgeUndated === true,
+    });
+
+    // A refusal is a sentence the admin must read, not a silent no-op. Without
+    // this the screen would reload unchanged and they would press the button
+    // again, which is how "it does nothing" gets reported.
+    if (!result?.scheduled) {
+      return problem(409, 'DDP-MAINT-008', refusalSentence(result));
+    }
+
+    await audit(env, session, 'maint.schedule', {
+      quarter, issueDate: result.issueDate,
+      // Worth recording: whether this quarter went out with undated leases
+      // knowingly left in it.
+      acknowledgedUndated: result.acknowledgedUndated === true,
+    });
+    return json(await maintAdminPayload(env, quarter));
+  } catch (err) {
+    // A refusal here is a sentence the admin must read — a stale tenancy, a
+    // quarter in the wrong state — not a 500.
+    return problem(409, err?.code ?? 'DDP-MAINT-008',
+      err?.message ?? 'That quarter could not be scheduled.');
+  }
+}
+
+/**
+ * Unschedule — back to draft, any time before the issue date.
+ *
+ * Possible BECAUSE nothing has reached a resident yet. Once the bills are
+ * issued this refuses: withdrawing ninety-nine bills people have already been
+ * emailed is a different act with a different name, and it is per bill.
+ */
+async function postMaintUnschedule(request, env, session) {
+  const body = await readJson(request);
+  const quarter = String(body?.quarter ?? '');
+
+  const row = await env.DB.prepare('SELECT status, issue_date FROM maint_quarters WHERE quarter = ?')
+    .bind(quarter).first();
+  if (!row) return problem(404, 'DDP-MAINT-007', 'No such quarter.');
+  if (row.status !== 'scheduled') {
+    return problem(409, 'DDP-MAINT-008', 'Only a scheduled quarter can be unscheduled.');
+  }
+
+  await env.DB.prepare(
+    `UPDATE maint_quarters SET status = 'draft', scheduled_by = NULL, scheduled_at = NULL
+      WHERE quarter = ? AND status = 'scheduled'`
+  ).bind(quarter).run();
+
+  // WHO DID IT, recorded. An unschedule moves ninety-nine bills out of the post
+  // and the next person to look should be able to see whose decision that was.
+  await audit(env, session, 'maint.unschedule', { quarter, issueDate: row.issue_date });
+  return json(await maintAdminPayload(env, quarter));
+}
+
+/**
+ * "Still here" — an admin stamps a tenancy as checked.
+ *
+ * The cheapest of the three ways to clear a flag in step 2, and the only one
+ * that changes nothing about the tenancy itself: it records that a human looked
+ * at it on a date. That is exactly what the `unchecked` flag is asking for.
+ */
+async function postTenancyConfirm(request, env, session) {
+  const body = await readJson(request);
+  const id = Number(body?.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return problem(400, 'DDP-ADMIN-004', 'Which tenancy?');
+  }
+
+  const person = await env.DB.prepare(
+    "SELECT id, flat, relationship FROM owners WHERE id = ? AND relationship = 'tenant'"
+  ).bind(id).first();
+  if (!person) return problem(404, 'DDP-ADMIN-004', 'No such tenancy.');
+
+  const at = new Date().toISOString();
+  // The lease end can be supplied at the same time, which is what clears a
+  // `missing-date` row — otherwise confirming it would stamp a record that is
+  // still missing the thing that made it a problem.
+  const leaseEnd = body?.leaseEndsAt ? String(body.leaseEndsAt).slice(0, 10) : null;
+  if (leaseEnd && !/^\d{4}-\d{2}-\d{2}$/.test(leaseEnd)) {
+    return problem(400, 'DDP-MAINT-002', 'That is not a date.');
+  }
+
+  await env.DB.prepare(
+    `UPDATE owners SET tenancy_confirmed_at = ?,
+                       lease_ends_at = COALESCE(?, lease_ends_at)
+      WHERE id = ?`
+  ).bind(at, leaseEnd, id).run();
+
+  await audit(env, session, 'maint.tenancy.confirm', { id, flat: person.flat, leaseEnd });
+  return json({ confirmed: true, at, leaseEndsAt: leaseEnd });
 }
 
 async function postComment(request, env, session, path) {
@@ -2964,11 +3256,20 @@ async function uploadProof(request, env, session, ctx, path) {
     return problem(403, 'DDP-AUTH-007', 'Cannot upload while viewing as another resident.');
   }
 
-  // Resolved through the session's flat — not from the URL.
-  const bill = await billForHousehold(env, billId, session.subject,
-    'id, flat, period, total, status');
-  if (!bill) return problem(404, 'DDP-PAY-001', 'That bill could not be found.');
-  if (bill.status === 'paid' || bill.status === 'waived') {
+  // Resolved through the SHARED rule, which finds the bill of either kind and
+  // derives which it is from the record. The URL carries an id and nothing
+  // else — a `kind` in it would be a thing somebody has to remember to check,
+  // and that is where the old privacy bug lived.
+  const found = await resolveBill(env, session.subject, billId);
+  if (!found) return problem(404, 'DDP-PAY-001', 'That bill could not be found.');
+
+  const bill = found.row;
+  const isMaint = found.kind === 'maintenance';
+  // `period` is what names the stored object and what the queue displays. A
+  // quarter label serves both, so it stands in for the month here.
+  bill.period = isMaint ? bill.quarter : bill.period;
+
+  if (SETTLED_STATUSES.includes(bill.status)) {
     return problem(409, 'DDP-PAY-003', 'This bill is already settled.');
   }
 
@@ -2987,12 +3288,17 @@ async function uploadProof(request, env, session, ctx, path) {
   // Same image twice — usually an honest double-tap, sometimes last month's
   // screenshot sent again. Either way it is not new evidence.
   const dupe = await env.DB.prepare(
-    'SELECT id, bill_id FROM payment_proofs WHERE image_sha256 = ?'
+    'SELECT id, bill_id, maint_bill_id FROM payment_proofs WHERE image_sha256 = ?'
   ).bind(hash).first();
   if (dupe) {
-    await reportError(env, 'DDP-PROOF-001', { hash, billId, existing: dupe.id });
+    await reportError(env, 'DDP-PROOF-001', { hash, billId, kind: found.kind, existing: dupe.id });
+    // ACROSS BOTH KINDS. The same screenshot sent for a gas bill and then a
+    // maintenance one is one payment claimed twice, and the ids are separate
+    // sequences — so "is this the same bill" has to compare the id AND the
+    // column it came from.
+    const sameBill = isMaint ? dupe.maint_bill_id === bill.id : dupe.bill_id === bill.id;
     return problem(409, 'DDP-PROOF-001',
-      dupe.bill_id === bill.id
+      sameBill
         ? 'You have already uploaded this screenshot.'
         : 'This screenshot has already been used for another bill.');
   }
@@ -3019,10 +3325,14 @@ async function uploadProof(request, env, session, ctx, path) {
   const key = r2Key(bill.flat, bill.period, hash);
   const now = new Date().toISOString();
 
+  // EXACTLY ONE of the two columns, which 0042 CHECKs. Passing the id to both
+  // would be a payment counted twice and the database refuses it outright.
   const inserted = await env.DB.prepare(
-    `INSERT INTO payment_proofs (bill_id, owner_id, r2_key, image_sha256, utr, parsed_amount, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?) RETURNING id`
-  ).bind(bill.id, session.subject.id, key, hash, parsed.utr, parsed.amount, now).first();
+    `INSERT INTO payment_proofs
+       (bill_id, maint_bill_id, owner_id, r2_key, image_sha256, utr, parsed_amount, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?) RETURNING id`
+  ).bind(isMaint ? null : bill.id, isMaint ? bill.id : null,
+         session.subject.id, key, hash, parsed.utr, parsed.amount, now).first();
 
   try {
     await env.PROOFS.put(key, bytes, { httpMetadata: { contentType: file.type } });
@@ -3032,11 +3342,18 @@ async function uploadProof(request, env, session, ctx, path) {
     return problem(500, 'DDP-PROOF-004', 'We saved your submission but the image failed to store. The treasurer has been alerted.');
   }
 
+  // `awaiting` is what takes the Pay button off the screen — for BOTH parties
+  // on a let flat, because the status lives on the bill rather than on whoever
+  // is looking at it. That is what stops an owner and their tenant each paying
+  // the same bill after one of them has already sent a screenshot.
   await env.DB.prepare(
-    "UPDATE bills SET status = 'awaiting' WHERE id = ? AND status IN ('unpaid','initiated')"
+    isMaint
+      ? "UPDATE maint_bills SET status = 'awaiting' WHERE id = ? AND status IN ('unpaid','initiated')"
+      : "UPDATE bills SET status = 'awaiting' WHERE id = ? AND status IN ('unpaid','initiated')"
   ).bind(bill.id).run();
 
-  await audit(env, session, 'proof.upload', { billId: bill.id, proofId: inserted.id, verdict: assessment.verdict });
+  await audit(env, session, 'proof.upload',
+    { billId: bill.id, kind: found.kind, proofId: inserted.id, verdict: assessment.verdict });
 
   return json({
     proofId: inserted.id,
@@ -3053,9 +3370,16 @@ async function uploadProof(request, env, session, ctx, path) {
  */
 async function proofImage(env, session, path) {
   const proofId = Number(path.split('/')[3]);
+  // LEFT JOINs to both, because a proof carries exactly one of the two ids and
+  // an inner join to `bills` alone makes every maintenance screenshot a 404 —
+  // including for the resident who uploaded it.
   const row = await env.DB.prepare(
-    `SELECT p.r2_key, p.deleted_at, p.owner_id, b.flat, b.owner_id AS bill_owner_id
-       FROM payment_proofs p JOIN bills b ON b.id = p.bill_id
+    `SELECT p.r2_key, p.deleted_at, p.owner_id,
+            COALESCE(b.flat, mb.flat) AS flat,
+            COALESCE(b.owner_id, mb.owner_id) AS bill_owner_id
+       FROM payment_proofs p
+       LEFT JOIN bills b ON b.id = p.bill_id
+       LEFT JOIN maint_bills mb ON mb.id = p.maint_bill_id
       WHERE p.id = ?`
   ).bind(proofId).first();
 
@@ -3230,7 +3554,34 @@ async function adminSummary(env, session) {
       // than showing them a queue that is never theirs.
       contacts: contacts ? contacts.n : null,
     },
+    // Null most of the time, and that is the point: the card exists for the
+    // seven days before a quarter goes out and disappears once it has.
+    maintenance: await maintenanceCard(env, today),
   });
+}
+
+/**
+ * The maintenance card for Admin Home, or nothing.
+ *
+ * Built from the same payload the Maintenance page uses, so the count of
+ * tenancies needing confirmation on the card is the count the page will show
+ * when they follow it. Two queries answering that question separately is how
+ * the card ends up saying 3 and the page saying 4.
+ *
+ * Never allowed to break Admin Home. The card is the least important thing on
+ * that screen and the board is the treasurer's way into everything else — so a
+ * failure here costs the card, not the page.
+ */
+async function maintenanceCard(env, today) {
+  try {
+    const payload = await maintAdminPayload(env, null, { today });
+    if (!payload?.row) return null;
+    return adminHomeCard({
+      quarter: payload.row, blocked: payload.blocked, preview: payload.preview, today,
+    });
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -3450,26 +3801,64 @@ async function remindAll(request, env, session) {
   });
 }
 
+/**
+ * The proof queue — ONE QUEUE, BOTH KINDS.
+ *
+ * Not forked, and that is the point rather than a convenience: two queues means
+ * two half-lists and no way to tell which is authoritative, and the treasurer
+ * reviewing screenshots is doing one job whatever bill each one answers. Each
+ * row NAMES the bill it belongs to, which is what the filter in the browser
+ * works on.
+ *
+ * A proof carries exactly one of `bill_id` and `maint_bill_id` — 0042 CHECKs
+ * it — so the LEFT JOINs below can never both match, and COALESCE picks out the
+ * one that did.
+ */
 async function proofQueue(env) {
-  const [proofs, claimed, decided] = await Promise.all([
+  // The columns every row has, whichever kind of bill it answers. `kind` is
+  // derived from which id is present rather than stored, so it cannot disagree
+  // with the row it describes.
+  const billColumns = `
+    COALESCE(b.flat, mb.flat) AS flat,
+    COALESCE(b.period, mb.quarter) AS period,
+    CASE WHEN mb.id IS NULL THEN 'gas' ELSE 'maintenance' END AS kind,
+    COALESCE(b.total, mb.total) AS total`;
+
+  const [proofs, claimed, maintClaimed, decided] = await Promise.all([
     env.DB.prepare(
-      `SELECT p.*, b.flat, b.period, b.total, o.name
+      `SELECT p.*, ${billColumns}, o.name
          FROM payment_proofs p
-         JOIN bills b ON b.id = p.bill_id
+         LEFT JOIN bills b ON b.id = p.bill_id
+         LEFT JOIN maint_bills mb ON mb.id = p.maint_bill_id
          ${ownerJoin('p.owner_id')}
         WHERE p.status = 'pending' AND p.deleted_at IS NULL
         ORDER BY p.created_at`
     ).all(),
+
     env.DB.prepare(
       // GROUP BY already collapsed the duplicate to one row here, so the count
       // was right — but which of the two names it showed was arbitrary.
-      `SELECT b.id, b.flat, b.period, b.total, o.name, MAX(i.created_at) AS last_intent
+      `SELECT b.id, b.flat, b.period, b.total, 'gas' AS kind, o.name,
+              MAX(i.created_at) AS last_intent
          FROM bills b
          JOIN payment_intents i ON i.bill_id = b.id
          ${ownerJoin('b.owner_id')}
         WHERE b.status = 'initiated'
         GROUP BY b.id ORDER BY last_intent`
     ).all(),
+
+    // Maintenance has no intents table — 0042 made `claimed_at` on the bill the
+    // whole record of a claim, because its late fee does not hold on one. So
+    // the same "they tapped Pay and nothing arrived" list comes off the stamp.
+    env.DB.prepare(
+      `SELECT b.id, b.flat, b.quarter AS period, b.total, 'maintenance' AS kind, o.name,
+              b.claimed_at AS last_intent
+         FROM maint_bills b
+         ${ownerJoin('b.owner_id')}
+        WHERE b.status = 'initiated' AND b.claimed_at IS NOT NULL
+        ORDER BY b.claimed_at`
+    ).all(),
+
     // Approving used to be the last anyone saw of a proof: the queue filters on
     // 'pending', so a decision removed the row from every screen in the system.
     // For a financial record that is not a display detail — a mistaken reject
@@ -3477,9 +3866,10 @@ async function proofQueue(env) {
     // Capped rather than paged: the queue is a working screen, and the full
     // history belongs in god mode's timeline.
     env.DB.prepare(
-      `SELECT p.*, b.flat, b.period, b.total, o.name, r.name AS reviewer
+      `SELECT p.*, ${billColumns}, o.name, r.name AS reviewer
          FROM payment_proofs p
-         JOIN bills b ON b.id = p.bill_id
+         LEFT JOIN bills b ON b.id = p.bill_id
+         LEFT JOIN maint_bills mb ON mb.id = p.maint_bill_id
          ${ownerJoin('p.owner_id')}
          LEFT JOIN owners r ON r.id = p.reviewed_by
         WHERE p.status IN ('approved', 'rejected') AND p.deleted_at IS NULL
@@ -3488,9 +3878,14 @@ async function proofQueue(env) {
     ).all(),
   ]);
 
+  // Interleaved by when the claim was made, so the oldest unanswered tap is at
+  // the top whichever kind of bill it was against.
+  const claimedRows = [...(claimed.results ?? []), ...(maintClaimed.results ?? [])]
+    .sort((a, b) => String(a.last_intent ?? '').localeCompare(String(b.last_intent ?? '')));
+
   return json(shapeQueue({
     proofs: proofs.results ?? [],
-    claimed: claimed.results ?? [],
+    claimed: claimedRows,
     decided: decided.results ?? [],
   }));
 }
@@ -3680,12 +4075,20 @@ async function discardStatement(env, session, path) {
 async function reviewProof(env, session, path, approve) {
   const proofId = Number(path.split('/')[4]);
   const proof = await env.DB.prepare(
-    'SELECT id, bill_id, status FROM payment_proofs WHERE id = ?'
+    'SELECT id, bill_id, maint_bill_id, status FROM payment_proofs WHERE id = ?'
   ).bind(proofId).first();
   if (!proof) return problem(404, 'DDP-PROOF-005', 'That submission could not be found.');
   if (proof.status !== 'pending') {
     return problem(409, 'DDP-PROOF-005', 'That submission has already been reviewed.');
   }
+
+  // Exactly one of the two is set — 0042 CHECKs it — so the table to settle is
+  // decided by which one the row carries rather than by anything the caller
+  // says. The decision itself is identical for both kinds; only the UPDATE
+  // target differs.
+  const isMaint = proof.maint_bill_id != null;
+  const billId = isMaint ? proof.maint_bill_id : proof.bill_id;
+  const table = isMaint ? 'maint_bills' : 'bills';
 
   const now = new Date().toISOString();
   await env.DB.batch([
@@ -3693,7 +4096,8 @@ async function reviewProof(env, session, path, approve) {
       'UPDATE payment_proofs SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?'
     ).bind(approve ? 'approved' : 'rejected', session.actor.id, now, proofId),
     approve
-      ? env.DB.prepare("UPDATE bills SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, proof.bill_id)
+      ? env.DB.prepare(`UPDATE ${table} SET status = 'paid', paid_at = ? WHERE id = ?`)
+          .bind(now, billId)
       // Rejection returns the bill to 'unpaid' (B13). It used to return it to
       // 'initiated', which the cron held rather than charged — so a resident
       // whose screenshot was rejected once became permanently immune to the
@@ -3707,10 +4111,11 @@ async function reviewProof(env, session, path, approve) {
       //
       // claimed_at is deliberately left alone. Their week of hold already ran;
       // clearing it would hand out a fresh one for each rejected attempt.
-      : env.DB.prepare("UPDATE bills SET status = 'unpaid' WHERE id = ?").bind(proof.bill_id),
+      : env.DB.prepare(`UPDATE ${table} SET status = 'unpaid' WHERE id = ?`).bind(billId),
   ]);
 
-  await audit(env, session, approve ? 'proof.approve' : 'proof.reject', { proofId, billId: proof.bill_id });
+  await audit(env, session, approve ? 'proof.approve' : 'proof.reject',
+    { proofId, billId, kind: isMaint ? 'maintenance' : 'gas' });
   return json({ proofId, status: approve ? 'approved' : 'rejected' });
 }
 
@@ -4619,24 +5024,82 @@ async function godPeople(env) {
 }
 
 /** Every bill, newest first, with what the arithmetic would say for each. */
+/**
+ * Every bill for a flat, BOTH KINDS, interleaved and sorted by due date.
+ *
+ * A quarter is a period whose label happens to be a quarter. Treating the two
+ * as different species is what produces two half-screens, so they arrive as one
+ * list with a `kind` on each row and the screen filters it — never a second
+ * table and never a second page.
+ *
+ * The sort is by DUE DATE rather than by label, because '2026-Q4' and '2026-10'
+ * do not sort against each other in any way a reader would recognise: as
+ * strings the quarter sorts before every month of its own year.
+ */
 async function godBills(env, url) {
   const flat = url.searchParams.get('flat');
-  const r = await env.DB.prepare(
-    `SELECT b.id, b.flat, b.period, b.consumption, b.rate_per_kg, b.gas_amount,
-            b.other_charges, b.additional_charges, b.late_fee, b.total, b.status,
-            b.manual_total, b.adjusted_at, b.adjust_reason, o.name AS owner_name
-       FROM bills b LEFT JOIN owners o ON o.id = b.owner_id
-      ${flat ? 'WHERE b.flat = ?' : ''}
-      ORDER BY b.period DESC, b.flat`
-  ).bind(...(flat ? [flat] : [])).all();
+  // Filtered server-side when asked, so a building with years of history does
+  // not send both kinds in full to filter them away in the browser.
+  const kind = url.searchParams.get('kind');
 
-  const bills = (r.results ?? []).map((b) => ({
+  const [gas, maint] = await Promise.all([
+    kind === 'maintenance' ? { results: [] } : env.DB.prepare(
+      `SELECT b.id, b.flat, b.period, b.consumption, b.rate_per_kg, b.gas_amount,
+              b.other_charges, b.additional_charges, b.late_fee, b.total, b.status,
+              b.manual_total, b.adjusted_at, b.adjust_reason, o.name AS owner_name,
+              p.due_date
+         FROM bills b
+         LEFT JOIN owners o ON o.id = b.owner_id
+         LEFT JOIN periods p ON p.period = b.period
+        ${flat ? 'WHERE b.flat = ?' : ''}
+        ORDER BY b.period DESC, b.flat`
+    ).bind(...(flat ? [flat] : [])).all(),
+
+    kind === 'gas' ? { results: [] } : env.DB.prepare(
+      `SELECT b.id, b.flat, b.quarter, b.rate_applied, b.basis, b.late_fee, b.total,
+              b.status, b.manual_total, b.adjusted_at, b.adjust_reason,
+              o.name AS owner_name, q.due_date
+         FROM maint_bills b
+         LEFT JOIN owners o ON o.id = b.owner_id
+         LEFT JOIN maint_quarters q ON q.quarter = b.quarter
+        ${flat ? 'WHERE b.flat = ?' : ''}
+        ORDER BY b.quarter DESC, b.flat`
+    ).bind(...(flat ? [flat] : [])).all(),
+  ]);
+
+  const gasBills = (gas.results ?? []).map((b) => ({
     ...b,
+    kind: 'gas',
+    // The label the column shows. Built here so one row carries one period
+    // name, whichever kind it is, and the screen does not branch to read it.
+    periodLabel: b.period,
+    dueDate: b.due_date ?? null,
     computed: computedTotal(b),
     // Surfaced rather than merely flagged: an override that does not say what
     // the arithmetic wanted is just an unexplained number.
     mismatch: isUnexplainedMismatch(b),
   }));
+
+  const maintBills = (maint.results ?? []).map((b) => ({
+    ...b,
+    kind: 'maintenance',
+    period: b.quarter,
+    periodLabel: describeQuarter(b.quarter),
+    dueDate: b.due_date ?? null,
+    // A maintenance bill is a rate plus a fee. There is no meter arithmetic to
+    // disagree with, so `computed` is that sum and a mismatch means somebody
+    // overrode the total by hand.
+    computed: Number(b.rate_applied ?? 0) + Number(b.late_fee ?? 0),
+    mismatch: Boolean(b.manual_total) && !b.adjust_reason,
+  }));
+
+  const bills = [...gasBills, ...maintBills].sort((a, b) => {
+    const ad = a.dueDate ?? '';
+    const bd = b.dueDate ?? '';
+    if (ad !== bd) return ad < bd ? 1 : -1;   // newest first
+    return String(a.flat).localeCompare(String(b.flat));
+  });
+
   return json({ bills });
 }
 

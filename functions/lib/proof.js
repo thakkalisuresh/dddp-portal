@@ -182,7 +182,11 @@ export function validateUpload({ type, size }) {
 export function shapeQueue({ proofs = [], claimed = [], decided = [] }) {
   const withProof = proofs.map((p) => ({
     proofId: p.id,
-    billId: p.bill_id,
+    billId: p.bill_id ?? p.maint_bill_id,
+    // Which kind of bill this screenshot answers. ONE QUEUE holds both, so
+    // every row has to say — a ₹7,500 quarter and a ₹240 month look identical
+    // until it does, and the filter on the screen works off this.
+    kind: p.kind ?? 'gas',
     flat: p.flat,
     name: p.name,
     period: p.period,
@@ -203,6 +207,7 @@ export function shapeQueue({ proofs = [], claimed = [], decided = [] }) {
     // payer's name against the bank statement — no UTR to go on.
     claimedNoProof: claimed.map((b) => ({
       billId: b.id, flat: b.flat, name: b.name, period: b.period,
+      kind: b.kind ?? 'gas',
       billed: b.total, since: b.last_intent,
     })),
     // What was already decided, so a decision can be checked afterwards rather
@@ -210,7 +215,8 @@ export function shapeQueue({ proofs = [], claimed = [], decided = [] }) {
     // rejection with no name attached is not an audit trail.
     decided: decided.map((p) => ({
       proofId: p.id,
-      billId: p.bill_id,
+      billId: p.bill_id ?? p.maint_bill_id,
+      kind: p.kind ?? 'gas',
       flat: p.flat,
       name: p.name,
       period: p.period,

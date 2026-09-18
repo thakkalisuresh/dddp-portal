@@ -313,3 +313,41 @@ describe('managing a thing happens where the thing is', () => {
     expect(console_).not.toContain('proofArchive');
   });
 });
+
+/**
+ * The dues screen offers TWO exports and never a third.
+ *
+ * The payload-level guard in test/maint-admin.test.js stops a combined FIELD
+ * being added. This is the other seam — the place somebody who wants a total
+ * would actually put it, as a third download button that sums the two tables
+ * the screen has already separated.
+ *
+ * Deliberately ONE assertion rather than a suite coupled to markup: it fails
+ * loudly if the screen is restructured to merge the accounts, and stays quiet
+ * about everything else.
+ */
+describe('gas and maintenance dues are never merged', () => {
+  const source = readFileSync('public/js/admin-dues.js', 'utf8');
+
+  it('exports exactly the two accounts, separately', () => {
+    const exported = [...source.matchAll(/'data-export': (\w+)/g)].map((m) => m[1]);
+    // One call site, parameterised by the block — so the two exports cannot
+    // drift apart, and a third would have to be written deliberately.
+    expect(exported).toEqual(['kind']);
+
+    const blocks = [...source.matchAll(/block\('([^']+)', dues\.(\w+), '(\w+)'\)/g)];
+    expect(blocks.map((m) => m[3]),
+      'Gas is monthly and maintenance is quarterly, they are paid into different '
+      + 'bank accounts, and a figure spanning both reconciles against neither '
+      + 'statement. The dues screen must offer one export per account and no '
+      + 'combined one.')
+      .toEqual(['gas', 'maintenance']);
+  });
+
+  it('never names a combined download', () => {
+    for (const banned of ['dues-all', 'dues-combined', 'grandTotal', 'combinedTotal']) {
+      expect(source, `${banned} would be a total across two bank accounts`)
+        .not.toContain(banned);
+    }
+  });
+});

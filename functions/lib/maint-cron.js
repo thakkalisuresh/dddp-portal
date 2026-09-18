@@ -198,7 +198,7 @@ export async function flatsWithPeople(env) {
   const rows = await env.DB.prepare(
     `SELECT f.flat,
             o.id, o.name, o.email, o.relationship, o.active,
-            o.moved_in_at, o.moved_out_at, o.lease_ends_at
+            o.moved_in_at, o.moved_out_at, o.lease_ends_at, o.tenancy_confirmed_at
        FROM flats f
        LEFT JOIN owners o ON o.flat = f.flat
       WHERE f.active = 1
@@ -235,7 +235,9 @@ async function previewFor(env, quarter) {
  * Nothing reaches residents here. The schedule can still be moved or cancelled
  * right up until the issue date.
  */
-export async function scheduleQuarter(env, quarterLabel, { actorId, issueDate = null } = {}) {
+export async function scheduleQuarter(env, quarterLabel, {
+  actorId, issueDate = null, acknowledgeUndated = false,
+} = {}) {
   const quarter = await env.DB.prepare('SELECT * FROM maint_quarters WHERE quarter = ?')
     .bind(quarterLabel).first();
   if (!quarter) fail('DDP-MAINT-007', { quarter: quarterLabel });
@@ -249,6 +251,30 @@ export async function scheduleQuarter(env, quarterLabel, { actorId, issueDate = 
   const readiness = tenancyReadiness({ rows, issueDate: issue });
   if (!readiness.ok) {
     return { scheduled: false, reason: 'stale-tenancy', readiness };
+  }
+
+  // AN UNDATED LEASE IS SCHEDULED PAST DELIBERATELY OR NOT AT ALL.
+  //
+  // The rule above refuses an ENDED lease outright, because that is a positive
+  // statement that somebody has gone. An undated one is different and used to
+  // only warn, for a reason worth keeping: most rows have no end date until the
+  // roster is filled in, and refusing to bill the building until every one is
+  // entered would miss the quarter entirely.
+  //
+  // But a warning nobody reads is not a decision. So the refusal is now
+  // conditional on an acknowledgement the caller has to send: the admin screen
+  // sets it once they have worked through the flagged rows, and anybody calling
+  // this endpoint directly gets a refusal naming what to acknowledge rather
+  // than a warning that scrolls past. One rule, in one place, for the screen
+  // and the cron alike — and the escape hatch that comment was protecting is
+  // still there, just no longer silent.
+  if (readiness.undated.length && !acknowledgeUndated) {
+    return {
+      scheduled: false,
+      reason: 'undated-leases',
+      undated: readiness.undated,
+      readiness,
+    };
   }
 
   const preview = previewQuarter({ rows, quarter: { ...quarter, issue_date: issue }, issueDate: issue });
@@ -270,7 +296,12 @@ export async function scheduleQuarter(env, quarterLabel, { actorId, issueDate = 
     preview.willBill, preview.total, quarterLabel,
   ).run();
 
-  return { scheduled: true, quarter: quarterLabel, issueDate: issue, preview, readiness };
+  return {
+    scheduled: true, quarter: quarterLabel, issueDate: issue, preview, readiness,
+    // Recorded in the result so the audit entry can say whether this quarter
+    // was scheduled with undated leases knowingly left in it.
+    acknowledgedUndated: readiness.undated.length > 0,
+  };
 }
 
 /* ── issuing ──────────────────────────────────────────────────────────────  */

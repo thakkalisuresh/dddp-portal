@@ -283,3 +283,65 @@ describe('paySheetPayload', () => {
     expect((await paySheetPayload(env, viewer(3, '4B', 'tenant'), 1)).payable).toBe(false);
   });
 });
+
+/**
+ * The proof round trip for a maintenance bill.
+ *
+ * Exercised against the real schema because the guarantees are in it: 0042's
+ * `CHECK ((bill_id IS NOT NULL) <> (maint_bill_id IS NOT NULL))` is what stops
+ * one screenshot being claimed against two bills, and only a database can
+ * answer whether it holds.
+ */
+describe('a maintenance screenshot behaves like a gas one', () => {
+  it('refuses a proof row pointing at both kinds of bill', () => {
+    const { db } = building();
+    putMaintBill(db, { id: 1 });
+    putGasBill(db);
+    expect(() => db.prepare(
+      `INSERT INTO payment_proofs (bill_id, maint_bill_id, owner_id, image_sha256, status, created_at)
+       VALUES (50, 1, 3, 'abc', 'pending', '2026-10-05')`
+    ).run()).toThrow();
+  });
+
+  it('refuses a proof row pointing at neither', () => {
+    // An orphan nobody can review, and the queue would never show it.
+    const { db } = building();
+    expect(() => db.prepare(
+      `INSERT INTO payment_proofs (bill_id, maint_bill_id, owner_id, image_sha256, status, created_at)
+       VALUES (NULL, NULL, 3, 'abc', 'pending', '2026-10-05')`
+    ).run()).toThrow();
+  });
+
+  it('takes the Pay button away from both parties once the bill is awaiting', async () => {
+    // The mechanism the landlord rule change leans on: `awaiting` lives on the
+    // BILL, so an upload by either party removes the button for both.
+    const { db, env } = building();
+    putMaintBill(db, { id: 1 });
+    db.prepare(
+      `INSERT INTO payment_proofs (maint_bill_id, owner_id, image_sha256, status, created_at)
+       VALUES (1, 3, 'sha-of-the-screenshot', 'pending', '2026-10-05')`
+    ).run();
+    db.prepare("UPDATE maint_bills SET status = 'awaiting' WHERE id = 1").run();
+
+    for (const who of [viewer(3, '4B', 'tenant'), viewer(2, '4B')]) {
+      expect((await paySheetPayload(env, who, 1)).payable).toBe(false);
+    }
+  });
+
+  it('keeps one screenshot from being reused across the two kinds', () => {
+    // image_sha256 is UNIQUE across the whole table, not per kind — the same
+    // screenshot sent for a gas bill and then a maintenance one is one payment
+    // claimed twice.
+    const { db } = building();
+    putMaintBill(db, { id: 1 });
+    putGasBill(db);
+    db.prepare(
+      `INSERT INTO payment_proofs (bill_id, owner_id, image_sha256, status, created_at)
+       VALUES (50, 3, 'same-image', 'pending', '2026-10-05')`
+    ).run();
+    expect(() => db.prepare(
+      `INSERT INTO payment_proofs (maint_bill_id, owner_id, image_sha256, status, created_at)
+       VALUES (1, 3, 'same-image', 'pending', '2026-10-06')`
+    ).run()).toThrow();
+  });
+});

@@ -293,6 +293,19 @@ export async function maintAdminPayload(env, quarterLabel, { today = istToday() 
   if (quarter?.owner_rate && quarter?.tenant_rate) {
     try {
       preview = previewQuarter({ rows, quarter, issueDate });
+      // NAMES, not ids. previewQuarter answers in ids because that is what the
+      // bills carry, but "Billed to #1" is not something an admin can check
+      // against anything — and the whole purpose of step 2 is checking. The
+      // names come from the rows we already have rather than a second query.
+      const nameOf = new Map();
+      for (const row of rows) {
+        for (const person of row.people ?? []) nameOf.set(person.id, person.name);
+      }
+      preview.bills = preview.bills.map((bill) => ({
+        ...bill,
+        billedToName: nameOf.get(bill.billedTo) ?? null,
+        ownerName: nameOf.get(bill.ownerId) ?? null,
+      }));
     } catch {
       // A flat with a rate this quarter cannot price is a step 1 problem. The
       // page should still draw, with the preview absent and step 1 open.

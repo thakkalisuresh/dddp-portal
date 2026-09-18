@@ -54,19 +54,23 @@ function render(me, detail) {
 
   const isGas = detail.kind === 'gas';
 
-  main.replaceChildren(
+  // FILTERED, because replaceChildren is not el(). el() skips a null child;
+  // replaceChildren stringifies it and the word "null" appears on the page.
+  // landlordNote, paySection and whySection all return null in the common case,
+  // so without this an ordinary bill renders three of them.
+  main.replaceChildren(...[
     el('p', {}, el('a', { class: 'linkish', href: '/dashboard' }, '‹ Home')),
     landlordNote(detail),
     heroSection(detail),
     paySection(detail),
     breakdownSection(detail),
-    ...(isGas ? [downloadSection()] : []),
-    ...(isGas && me.readings?.length ? [consumptionSection(me.readings, me.bills)] : []),
+    isGas ? downloadSection() : null,
+    isGas && me.readings?.length ? consumptionSection(me.readings, me.bills) : null,
     // The bill history stayed OFF Home deliberately and lives here, where a
     // resident is already looking at one bill and asking how it compares.
-    ...(isGas && me.bills?.length ? [billHistorySection(me.bills)] : []),
+    isGas && me.bills?.length ? billHistorySection(me.bills) : null,
     whySection(detail),
-  );
+  ].filter(Boolean));
 }
 
 /**

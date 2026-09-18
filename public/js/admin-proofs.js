@@ -12,6 +12,19 @@ import { trackPage } from './track.js';
 import { $, el, esc, renderViewBanner, showError, setChildren, statusChip, proofVerdict, foldedSection, askFirst } from './ui.js';
 import { money, periodLabel } from './i18n.js';
 
+/**
+ * Which bill this screenshot answers.
+ *
+ * ONE QUEUE, so every row has to say what it is about — a screenshot for a
+ * ₹7,500 quarter and one for a ₹240 month look identical until the row names
+ * them. A quarter label is already in its final form ('2026-Q4'); a gas period
+ * is a month that needs writing out.
+ */
+function billLabel(row) {
+  const period = row.kind === 'maintenance' ? row.period : periodLabel(row.period);
+  return `${row.flat} · ${row.kind === 'maintenance' ? 'Maintenance' : 'Gas'} ${period}`;
+}
+
 const main = $('#main');
 
 /**
@@ -81,29 +94,59 @@ async function load() {
   render(q);
 }
 
+/**
+ * Which kind of bill the queue is showing. A FILTER over one queue, never two
+ * queues — the treasurer reviewing screenshots is doing one job whatever bill
+ * each one answers, and two lists would leave them wondering which is complete.
+ */
+let kindFilter = '';
+
+const ofKind = (rows) => (kindFilter ? rows.filter((r) => r.kind === kindFilter) : rows);
+
 function render(q) {
+  const awaiting = ofKind(q.awaiting);
+  const claimedNoProof = ofKind(q.claimedNoProof);
+  const decidedRows = ofKind(q.decided ?? []);
+  // Bulk approval follows the filter. Approving 40 matching proofs when the
+  // screen shows 6 is the kind of surprise that makes somebody stop trusting
+  // the button.
+  const exactMatches = awaiting.filter((p) => q.exactMatches.includes(p.proofId))
+    .map((p) => p.proofId);
+
+  const filter = el('select', {
+    class: 'input input--sm',
+    onchange: (e) => { kindFilter = e.target.value; render(q); },
+  },
+    el('option', { value: '', selected: kindFilter === '' ? 'selected' : null },
+      'Gas and maintenance'),
+    el('option', { value: 'gas', selected: kindFilter === 'gas' ? 'selected' : null },
+      'Gas only'),
+    el('option', { value: 'maintenance', selected: kindFilter === 'maintenance' ? 'selected' : null },
+      'Maintenance only'));
+
   setChildren(main,
     el('div', { class: 'sect' },
       el('div', { class: 'stack', style: 'gap:var(--s-1)' },
         el('h2', {}, 'Payment proofs'),
         el('p', { class: 'small muted' },
-          `${q.awaiting.length} waiting · ${q.exactMatches.length} match exactly`)),
+          `${awaiting.length} waiting · ${exactMatches.length} match exactly`)),
       el('span', { class: 'spacer' }),
-      q.exactMatches.length
+      filter,
+      exactMatches.length
         // Exact matches are the bulk of a month; only exceptions need thought.
         ? el('button', {
             class: 'btn btn--sm', type: 'button',
             onclick: async (e) => {
               e.target.disabled = true;
               e.target.textContent = 'Approving…';
-              for (const id of q.exactMatches) await api.admin.approveProof(id).catch(() => {});
+              for (const id of exactMatches) await api.admin.approveProof(id).catch(() => {});
               await load();
             },
-          }, `Approve ${q.exactMatches.length} matching`)
+          }, `Approve ${exactMatches.length} matching`)
         : null),
 
-    ...(q.awaiting.length
-      ? q.awaiting.map(proofRow)
+    ...(awaiting.length
+      ? awaiting.map(proofRow)
       : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nothing waiting for review.')]),
 
     el('div', { class: 'sect' },
@@ -112,8 +155,8 @@ function render(q) {
         el('p', { class: 'small muted' },
           'Match the amount and the payer name against the bank statement.'))),
 
-    ...(q.claimedNoProof.length
-      ? q.claimedNoProof.map(claimedRow)
+    ...(claimedNoProof.length
+      ? claimedNoProof.map(claimedRow)
       : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nobody outstanding.')]),
 
     el('div', { class: 'sect' },
@@ -122,8 +165,8 @@ function render(q) {
         el('p', { class: 'small muted' },
           'The last 50 approvals and rejections, so a decision can be checked afterwards.'))),
 
-    ...((q.decided ?? []).length
-      ? q.decided.map(decidedRow)
+    ...(decidedRows.length
+      ? decidedRows.map(decidedRow)
       : [el('p', { class: 'muted', style: 'padding:var(--s-4)' }, 'Nothing decided yet.')]),
 
     // Moved off the admin console's Archive tab, which was one bin holding two
@@ -159,7 +202,7 @@ async function proofArchive() {
             ? el('div', { class: 'gone' }, 'Image deleted')
             : el('img', { src: `/api/proof/${p.id}/image`, alt: `Proof from ${p.flat}`, loading: 'lazy' }),
           el('div', { class: 'b' },
-            `${p.flat} · ${periodLabel(p.period)}`,
+            billLabel(p),
             el('div', { class: 'muted' },
               `${p.parsed_amount != null ? money(p.parsed_amount) : 'unread'} · ${p.status}`),
             p.deleted_at
@@ -184,7 +227,7 @@ async function proofArchive() {
 
 function decidedRow(p) {
   const src = `/api/proof/${p.proofId}/image`;
-  const caption = `Flat ${p.flat} · ${periodLabel(p.period)}`;
+  const caption = `Flat ${billLabel(p)}`;
   const when = p.reviewedAt ? new Date(p.reviewedAt).toLocaleDateString() : '';
   return el('div', { class: 'qrow' },
     el('img', {
@@ -208,7 +251,7 @@ function proofRow(p) {
   const verdict = proofVerdict(p);
   const mismatch = verdict.tone === 'bad';
   const src = `/api/proof/${p.proofId}/image`;
-  const caption = `Flat ${p.flat} · ${periodLabel(p.period)}`;
+  const caption = `Flat ${billLabel(p)}`;
   return el('div', { class: `qrow ${mismatch ? 'qrow--bad' : ''}` },
     el('img', {
       class: 'qthumb', src, alt: `Screenshot from flat ${p.flat}`,
@@ -241,7 +284,7 @@ function claimedRow(b) {
   return el('div', { class: 'qrow' },
     el('div', { class: 'qmeta' },
       el('b', {}, `Flat ${b.flat} · ${b.name ?? ''}`),
-      el('div', {}, `${periodLabel(b.period)} · ${money(b.billed)}`)),
+      el('div', {}, `${billLabel(b)} · ${money(b.billed)}`)),
     el('div', { class: 'qact' },
       el('button', {
         class: 'btn btn--sm', type: 'button',
