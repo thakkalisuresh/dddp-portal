@@ -16,7 +16,6 @@ import {
   maintHomePayload, asGasCard, toPay, comingUp, recentlyPaid, waitingForYou,
 } from './maint-home.js';
 import { listPolls } from './polls.js';
-import { canPayBill } from './bill-view.js';
 
 const READING_HISTORY = 6;
 const BILL_HISTORY = 12;
@@ -249,13 +248,10 @@ export async function dashboardPayload(env, subject, userAgent = '', origin = ''
 
   const unreadNotices = await unreadNoticeCount(env, subject);
 
-  // PER CARD, not per page. A landlord may pay their tenant's MAINTENANCE and
-  // still not their gas — see canPayBill for why that asymmetry is deliberate
-  // and why it must not be collapsed into one flag on the payload.
-  const payable = (card) => ({
-    ...card,
-    canPay: card.showPayButton && canPayBill(access, card.kind),
-  });
+  // Per card, because `showPayButton` is per bill — a settled one has no button
+  // whoever is looking. WHO may pay is one answer for this viewer and both
+  // kinds, including the landlord of a let flat.
+  const payable = (card) => ({ ...card, canPay: card.showPayButton && access.canPay });
 
   const home = {
     // NO COMBINED TOTAL, HERE OR ANYWHERE. A monthly gas bill and a quarterly

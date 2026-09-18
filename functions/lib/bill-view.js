@@ -36,28 +36,6 @@ import { describeQuarter } from './maint.js';
  */
 export const ACCOUNT_MODE_APPS = ['gpay', 'bhim'];
 
-/**
- * May this viewer pay this bill?
- *
- * `billAccess().canPay` is FALSE for a landlord, and that is the shipped gas
- * rule rather than an oversight: "the bill is the tenant's to settle, and two
- * people paying one bill is a reconciliation problem nobody wants."
- *
- * MAINTENANCE IS DIFFERENT, and narrowly so. The owner is liable for their
- * flat's maintenance in a way they are not for their tenant's gas, the charge
- * is against the flat, and an unpaid quarter costs the OWNER their vote — so an
- * owner who wants to clear it must be able to. That does not generalise to gas,
- * and this function exists precisely so it cannot: the gas answer is untouched,
- * and nothing already in production changes.
- *
- * Provisional pending the design session's ruling; if it comes back as "both
- * kinds", this collapses into billAccess() and the comment above goes with it.
- */
-export function canPayBill(access, kind) {
-  if (access.canPay) return true;
-  return kind === 'maintenance' && access.reason === 'landlord';
-}
-
 /** Every app, for the day the association has a UPI ID of its own. */
 export const UPI_MODE_APPS = ['gpay', 'phonepe', 'paytm', 'bhim'];
 
@@ -190,7 +168,9 @@ export async function billDetailPayload(env, subject, id, { today = istToday() }
     // Liable, but it is the tenant's bill to settle: two people paying one bill
     // is a reconciliation problem nobody wants. The button is theirs only when
     // the rules say so.
-    canPay: canPayBill(access, kind) && card.showPayButton,
+    // One flag, one behaviour, both kinds. billAccess() decides it, including
+    // for the landlord of a let flat — see the rule change recorded there.
+    canPay: access.canPay && card.showPayButton,
     seesProofs: access.proofs,
   };
 
@@ -246,7 +226,7 @@ export async function paySheetPayload(env, subject, id, {
   // A settled bill has no sheet. Sending someone to a payment screen for a bill
   // they have already paid is how duplicate transfers happen, and a duplicate
   // credit is far more work for the treasurer than a missing one.
-  if (!card.showPayButton || !canPayBill(access, kind)) {
+  if (!card.showPayButton || !access.canPay) {
     return { payable: false, kind, bill: card, flat: subject.flat, back };
   }
 

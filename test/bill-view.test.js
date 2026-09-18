@@ -50,6 +50,22 @@ function putMaintBill(db, { id = 1, flat = '4B', ownerId = 3, total = 9000, stat
 
 // `active` matters: billAccess() refuses a departed viewer everything, so a
 // fixture without it tests the departed path rather than the one intended.
+function putGasBill(db, { id = 50, ownerId = 3, status = 'unpaid' } = {}) {
+  db.prepare(
+    `INSERT OR IGNORE INTO periods
+       (period, rate_per_kg, conversion_factor, due_date, late_fee, status, created_at)
+     VALUES ('2026-09', 60, 2.6, '2026-10-10', 50, 'open', '2026-09-01T00:00:00Z')`
+  ).run();
+  db.prepare(
+    `INSERT INTO bills (id, flat, period, owner_id, consumption, meter_delta, rate_per_kg,
+                        conversion_factor, gas_amount, other_charges, additional_charges,
+                        late_fee, total, status, created_at)
+     VALUES (?, '4B', '2026-09', ?, 4.0, 1.538, 60, 2.6, 240, 0, 0, 0, 240, ?,
+             '2026-10-01T00:00:00Z')`
+  ).run(id, ownerId, status);
+  return id;
+}
+
 const viewer = (id, flat, relationship = 'owner') =>
   ({ id, flat, relationship, name: `P${id}`, role: 'owner', active: 1 });
 
@@ -227,35 +243,43 @@ describe('paySheetPayload', () => {
     expect(sheet.payable).toBe(true);
   });
 
-  it('still refuses a landlord their tenant’s GAS bill', async () => {
-    // THE NARROW RULE, and this test is what keeps it narrow. The maintenance
-    // exception exists because the owner is liable for the flat's maintenance
-    // and an unpaid quarter costs them their vote. None of that is true of
-    // their tenant's gas, and the shipped rule there — two people paying one
-    // bill is a reconciliation problem nobody wants — is untouched.
+  it('lets a landlord pay their tenant’s GAS bill too', async () => {
+    // ONE RULE, BOTH KINDS, decided 17 September 2026. The original rule gave
+    // the landlord no Pay button on either; the user overturned it after being
+    // shown that the approved mockup contradicted it.
     const { db, env } = building();
-    db.prepare(
-      `INSERT INTO periods (period, rate_per_kg, conversion_factor, due_date, late_fee, status, created_at)
-       VALUES ('2026-09', 60, 2.6, '2026-10-10', 50, 'open', '2026-09-01T00:00:00Z')`
-    ).run();
-    db.prepare(
-      `INSERT INTO bills (id, flat, period, owner_id, consumption, meter_delta, rate_per_kg,
-                          conversion_factor, gas_amount, other_charges, additional_charges,
-                          late_fee, total, status, created_at)
-       VALUES (50, '4B', '2026-09', 3, 4.0, 1.538, 60, 2.6, 240, 0, 0, 0, 240,
-               'unpaid', '2026-10-01T00:00:00Z')`
-    ).run();
+    putGasBill(db);
 
-    // The tenant, whose bill it is, can pay it.
     const tenantSheet = await paySheetPayload(env, viewer(3, '4B', 'tenant'), 50);
     expect(tenantSheet.payable).toBe(true);
 
-    // The landlord sees the amount and gets no sheet.
     const landlordSheet = await paySheetPayload(env, viewer(2, '4B'), 50);
-    expect(landlordSheet.payable).toBe(false);
+    expect(landlordSheet.payable).toBe(true);
 
     const detail = await billDetailPayload(env, viewer(2, '4B'), 50);
     expect(detail.viewing).toBe('landlord');
-    expect(detail.canPay).toBe(false);
+    expect(detail.canPay).toBe(true);
+    // The line the rule change did NOT move.
+    expect(detail.seesProofs).toBe(false);
+  });
+
+  it('removes the button from BOTH parties once either uploads a proof', async () => {
+    // THIS IS THE ASSERTION CARRYING THE RISK the old rule was protecting
+    // against. Two people can pay one bill, so what stops the duplicate is that
+    // an upload by either of them takes the button away from both — and it
+    // works because the status lives on the BILL, not on the viewer.
+    const { db, env } = building();
+    putGasBill(db);
+    putMaintBill(db, { id: 1 });
+
+    // The tenant uploads a screenshot: the gas bill goes to `awaiting`.
+    db.prepare("UPDATE bills SET status = 'awaiting' WHERE id = 50").run();
+    expect((await paySheetPayload(env, viewer(3, '4B', 'tenant'), 50)).payable).toBe(false);
+    expect((await paySheetPayload(env, viewer(2, '4B'), 50)).payable).toBe(false);
+
+    // The landlord uploads for the maintenance bill: the same, both ways.
+    db.prepare("UPDATE maint_bills SET status = 'awaiting' WHERE id = 1").run();
+    expect((await paySheetPayload(env, viewer(2, '4B'), 1)).payable).toBe(false);
+    expect((await paySheetPayload(env, viewer(3, '4B', 'tenant'), 1)).payable).toBe(false);
   });
 });

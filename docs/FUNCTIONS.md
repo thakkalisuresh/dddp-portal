@@ -171,7 +171,6 @@ One bill, and the screen that pays it — step 5.
 | | Export | What it does |
 |---|---|---|
 | const | `ACCOUNT_MODE_APPS` | Apps that can pay a BANK ACCOUNT rather than a UPI ID. |
-| fn | `canPayBill` | May this viewer pay this bill? `billAccess().canPay` is FALSE for a landlord, and that is the shipped gas rule rather than an oversight: "the bill is the tenant's to settle, and two people paying one bill is a reconciliation problem nobody wants." MAINTENANCE IS DIFFERENT, and narrowly so. |
 | const | `UPI_MODE_APPS` |  |
 | fn | `resolveReturn` | Where a resident may be sent back to after paying. |
 | fn | `resolveBill` | Resolve a bill for this viewer, whichever kind it is. |
@@ -455,6 +454,21 @@ Sending email, via the Gmail API.
 | fn | `buildRawMessage` | RFC 2822, base64url. |
 | fn | `mailToken` | A token to spend across a batch of sends. |
 | fn | `sendEmail` | Send one message. |
+
+### `functions/lib/maint-admin.js`
+
+The admin side of maintenance — step 6.
+
+| | Export | What it does |
+|---|---|---|
+| const | `UNCHECKED_DAYS` | How long a tenancy may go unchecked before it is flagged. |
+| fn | `tenancyRows` | Every tenancy on record, with the one thing wrong with it. |
+| fn | `schedulingBlocked` | The flags that stop a quarter being scheduled. |
+| fn | `scheduleConsequences` | The consequences of an issue date, computed before anybody commits to one. |
+| fn | `collectFigures` | Where the quarter's money has got to. |
+| fn | `duesReport` | Who owes what — GAS AND MAINTENANCE, SEPARATELY AND NEVER ADDED. |
+| fn | `maintAdminPayload` | Everything the Maintenance page needs, for one quarter. |
+| fn | `adminHomeCard` | The card on Admin Home while a quarter needs attention. |
 
 ### `functions/lib/maint-cron.js`
 
@@ -1154,4 +1168,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-650 exports. 289 have no doc comment.
+657 exports. 289 have no doc comment.

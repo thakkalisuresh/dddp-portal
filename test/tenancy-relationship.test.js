@@ -55,11 +55,13 @@ describe('what each person can see', () => {
       .toMatchObject({ amounts: true, proofs: true, canPay: true });
   });
 
-  it('gives the absent owner AMOUNTS but never the screenshots', () => {
-    // The amount is the owner's business because they are liable for it.
-    // The screenshot is a bank record belonging to whoever uploaded it.
+  it('gives the absent owner AMOUNTS and the ability to pay, but never the screenshots', () => {
+    // The amount is the owner's business because they are liable for it, and
+    // from 17 September 2026 so is paying it — the original rule refused them
+    // the Pay button and the user overturned it. The screenshot is a bank
+    // record belonging to whoever uploaded it, and that has not changed.
     expect(billAccess({ viewer: owner(), people }))
-      .toMatchObject({ amounts: true, proofs: false, canPay: false, reason: 'landlord' });
+      .toMatchObject({ amounts: true, proofs: false, canPay: true, reason: 'landlord' });
   });
 
   it('gives an owner-occupier everything, since they are the occupant', () => {
