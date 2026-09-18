@@ -6421,6 +6421,17 @@ async function godDiagnostics(env, url) {
       driveConfigured: driveConfigured(env),
       committeeShared: committeeFolderSeparate(env), remote: true,
     },
+    // PRESENCE, NOT VALUES. checkMaintPayee reports only the NAMES of missing
+    // settings — this report is written to be pasted into a chat window, and an
+    // account number is exactly what must not survive that — so the values
+    // never leave the environment, not even into this object.
+    payee: {
+      MAINT_PAYEE_MODE: env.MAINT_PAYEE_MODE ?? '',
+      MAINT_PAYEE_NAME: env.MAINT_PAYEE_NAME ? 'set' : '',
+      MAINT_ACCOUNT_NUMBER: env.MAINT_ACCOUNT_NUMBER ? 'set' : '',
+      MAINT_IFSC: env.MAINT_IFSC ? 'set' : '',
+      MAINT_UPI_VPA: env.MAINT_UPI_VPA ? 'set' : '',
+    },
   };
 
   const findings = runChecks(data);

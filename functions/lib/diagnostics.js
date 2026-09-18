@@ -664,6 +664,13 @@ function runAvailable(data, have) {
     ...(have('owners') ? checkTenancy(data.owners ?? []) : []),
     ...(have('owners') ? checkExemptions(data.owners ?? []) : []),
     ...(have('owners') ? checkDemoData(data.owners ?? [], data.demoMarker) : []),
+    // THE CHECK THAT WAS NEVER RUN. checkMaintPayee has existed, with five
+    // tests, since the payee became configuration — and nothing called it, so
+    // the one failure it exists to catch went unreported: on staging, with the
+    // preview environment's payee secrets unset, a resident tapping Pay got
+    // "Something went wrong" and the doctor said the building was healthy.
+    // `data.payee` carries PRESENCE, never values; see the call sites.
+    ...(data.payee ? checkMaintPayee(data.payee) : []),
     ...checkDigest({ ...(data.config ?? {}), lastDigestAt: data.lastDigestAt ?? null }),
     ...checkBackup({ ...(data.config ?? {}), lastBackupAt: data.lastBackupAt ?? null }),
   ].sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));

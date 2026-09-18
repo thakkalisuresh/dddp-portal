@@ -7,7 +7,7 @@ import { buildRawMessage } from '../functions/lib/mailer.js';
 import {
   maintPayee, maintPayeeMode, maintNote, buildMaintUpiLinks, manualMaintPayment,
 } from '../functions/lib/upi.js';
-import { checkMaintPayee } from '../functions/lib/diagnostics.js';
+import { checkMaintPayee, runChecks } from '../functions/lib/diagnostics.js';
 
 const bill = (over = {}) => ({
   flat: '2B', quarter: '2026-Q4', total: 9000, dueDate: '2026-10-11', lateFee: 750, ...over,
@@ -358,6 +358,28 @@ describe('the payee diagnostics check', () => {
     // Setting a secret and testing immediately reproduces the exact symptom
     // just fixed — this has cost a round of debugging before.
     expect(checkMaintPayee({})[0].detail).toMatch(/redeploy/i);
+  });
+
+  it('is actually RUN by the diagnostics, which it was not', () => {
+    // It existed, it was tested, and nothing called it — so the first time the
+    // payee was unconfigured, the Pay button 500'd and the doctor reported the
+    // building healthy. The check is only worth having if runChecks runs it.
+    const findings = runChecks({
+      unavailable: ['owners', 'flats', 'bills', 'periods', 'readings', 'payment_proofs'],
+      config: {},
+      payee: { MAINT_PAYEE_MODE: 'account' },
+    });
+    expect(findings.some((f) => f.id === 'MAINT-PAYEE')).toBe(true);
+
+    const configured = runChecks({
+      unavailable: ['owners', 'flats', 'bills', 'periods', 'readings', 'payment_proofs'],
+      config: {},
+      payee: {
+        MAINT_PAYEE_MODE: 'account', MAINT_PAYEE_NAME: 'set',
+        MAINT_ACCOUNT_NUMBER: 'set', MAINT_IFSC: 'set',
+      },
+    });
+    expect(configured.some((f) => f.id === 'MAINT-PAYEE')).toBe(false);
   });
 });
 
