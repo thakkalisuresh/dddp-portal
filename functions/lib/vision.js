@@ -16,10 +16,15 @@ import { reportError, fail } from './errors.js';
 // than we actually receive and left the reference null on anything else.
 const PROMPT = `This is a screenshot of an Indian payment confirmation — UPI, IMPS or NEFT.
 Return ONLY a JSON object with these keys, using null where you cannot read a value:
-{"amount": number, "utr": "12-digit UTR or RRN if shown", "reference": "the app's own transaction id", "date": "YYYY-MM-DD", "payee": string}
+{"amount": number, "utr": "12-digit UTR or RRN if shown", "reference": "the app's own transaction id", "date": "YYYY-MM-DD", "payee": string, "note": string, "payer_name": string}
 The amount is the rupees transferred.
 If the screenshot shows both a 12-digit UTR/RRN and a longer app transaction id,
 put the 12-digit one in "utr" and the other in "reference".
+"note" is the free-text remarks the sender typed — the "message", "note to payee",
+"description" or "remarks" line, e.g. "2B_MAINT_Q4_26". It is NOT the UTR or the
+transaction id; leave it null if there is no such message.
+"payer_name" is the name of the person who SENT the money (the "from"/"paid by"
+account holder), not the payee who received it.
 Do not guess; use null if unsure.`;
 
 const TIMEOUT_MS = 12_000;
@@ -75,7 +80,7 @@ export async function readReceipt(env, bytes, contentType) {
 }
 
 function emptyResult() {
-  return { amount: null, utr: null, date: null, payee: null };
+  return { amount: null, utr: null, date: null, payee: null, note: null, payer_name: null };
 }
 
 async function callGroq(env, base64, contentType, signal) {

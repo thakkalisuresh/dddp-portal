@@ -83,7 +83,9 @@ export function isBankComparable(reference) {
  * the value it produces.
  */
 export function normaliseVisionResult(raw) {
-  if (!raw || typeof raw !== 'object') return { amount: null, utr: null, date: null, payee: null };
+  if (!raw || typeof raw !== 'object') {
+    return { amount: null, utr: null, date: null, payee: null, note: null, payer_name: null };
+  }
 
   const pick = (...keys) => {
     for (const k of keys) {
@@ -111,11 +113,25 @@ export function normaliseVisionResult(raw) {
   );
   const utr = utrRaw ? extractUtr(utrRaw) : null;
 
+  // Free text off the screenshot: trimmed, and empty becomes null so a blank
+  // remarks line does not read as a note the payer left.
+  const text = (...keys) => {
+    const v = pick(...keys);
+    if (v == null) return null;
+    const s = String(v).trim();
+    return s === '' ? null : s;
+  };
+
   return {
     amount,
     utr,
     date: pick('date', 'paidOn', 'transactionDate'),
     payee: pick('payee', 'to', 'paidTo', 'merchant'),
+    // The remarks the sender typed — where the (2B_MAINT_Q4_26) reconciliation
+    // string lives. Kept apart from utr and reference on purpose.
+    note: text('note', 'remarks', 'remark', 'message', 'description', 'narration', 'noteToPayee'),
+    // Who SENT the money, not who received it (that is payee).
+    payer_name: text('payer_name', 'payerName', 'payer', 'sender', 'senderName', 'from', 'paidBy', 'fromName'),
   };
 }
 
@@ -193,6 +209,10 @@ export function shapeQueue({ proofs = [], claimed = [], decided = [] }) {
     billed: p.total,
     claimedAmount: p.parsed_amount,
     utr: p.utr,
+    // Read off the screenshot and shown, never matched on: the remarks the payer
+    // typed (where the flat reference lives) and who sent the money.
+    note: p.note ?? null,
+    payerName: p.payer_name ?? null,
     createdAt: p.created_at,
     matches: p.parsed_amount != null && Math.round(p.parsed_amount * 100) === Math.round(p.total * 100),
     unreadable: p.parsed_amount == null,
@@ -223,6 +243,8 @@ export function shapeQueue({ proofs = [], claimed = [], decided = [] }) {
       billed: p.total,
       claimedAmount: p.parsed_amount,
       utr: p.utr,
+      note: p.note ?? null,
+      payerName: p.payer_name ?? null,
       status: p.status,
       reviewer: p.reviewer,
       reviewedAt: p.reviewed_at,

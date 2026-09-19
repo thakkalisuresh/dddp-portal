@@ -238,6 +238,9 @@ function decidedRow(p) {
     el('div', { class: 'qmeta' },
       el('b', {}, `Flat ${p.flat} · ${p.name ?? ''}`),
       el('div', {}, proofVerdict(p).text),
+      p.utr ? el('div', { class: 'small muted' }, `UTR ${p.utr}`) : null,
+      p.payerName ? el('div', { class: 'small muted' }, `Payer ${p.payerName}`) : null,
+      p.note ? el('div', { class: 'small muted' }, `Note “${p.note}”`) : null,
       // Who decided it, not just what was decided: a rejection with no name
       // attached is not a trail anyone can follow back.
       el('div', { class: 'small muted' },
@@ -264,7 +267,12 @@ function proofRow(p) {
     el('div', { class: 'qmeta' },
       el('b', {}, `Flat ${p.flat} · ${p.name ?? ''}`),
       el('div', { class: mismatch ? 'bad' : '' }, verdict.text),
-      p.utr ? el('div', {}, `UTR ${p.utr}`) : null),
+      p.utr ? el('div', {}, `UTR ${p.utr}`) : null,
+      // Read off the screenshot and shown only — never matched on. The note is
+      // where a maintenance flat reference like (2B_MAINT_Q4_26) lives; the payer
+      // name is who sent the money. Absent lines are dropped, not shown blank.
+      p.payerName ? el('div', { class: 'small muted' }, `Payer ${p.payerName}`) : null,
+      p.note ? el('div', { class: 'small muted' }, `Note “${p.note}”`) : null),
     el('div', { class: 'qact' },
       el('button', {
         class: 'btn btn--sm btn--quiet', type: 'button',

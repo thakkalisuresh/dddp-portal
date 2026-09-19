@@ -3680,10 +3680,11 @@ async function uploadProof(request, env, session, ctx, path) {
   // would be a payment counted twice and the database refuses it outright.
   const inserted = await env.DB.prepare(
     `INSERT INTO payment_proofs
-       (bill_id, maint_bill_id, owner_id, r2_key, image_sha256, utr, parsed_amount, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?) RETURNING id`
+       (bill_id, maint_bill_id, owner_id, r2_key, image_sha256, utr, parsed_amount, note, payer_name, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?) RETURNING id`
   ).bind(isMaint ? null : bill.id, isMaint ? bill.id : null,
-         session.subject.id, key, hash, parsed.utr, parsed.amount, now).first();
+         session.subject.id, key, hash, parsed.utr, parsed.amount,
+         parsed.note, parsed.payer_name, now).first();
 
   try {
     // Maintenance proofs go to their own bucket. isMaint here is what the proof
