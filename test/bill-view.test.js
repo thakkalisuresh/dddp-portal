@@ -214,6 +214,24 @@ describe('paySheetPayload', () => {
     expect(sheet.payable).toBe(false);
   });
 
+  it('hands the upload screen a maintenance bill it can render by id', async () => {
+    // proof.js reaches this endpoint as /proof?bill=<id> and reads exactly these
+    // fields off sheet.bill — id, kind, total, settled and the quarter LABEL
+    // (periodLabel() would mis-format the raw '2026-Q4'). Pin the contract so the
+    // maintenance upload path cannot silently lose the shape it depends on. The
+    // bug this guards against: proof.js used me.bill, which is gas-only, so a
+    // maintenance upload was unreachable.
+    const { db, env } = building();
+    putMaintBill(db, { id: 1 });
+    const sheet = await paySheetPayload(env, viewer(3, '4B', 'tenant'), 1);
+    expect(sheet.kind).toBe('maintenance');
+    expect(sheet.bill.id).toBe(1);
+    expect(sheet.bill.kind).toBe('maintenance');
+    expect(sheet.bill.total).toBe(9000);
+    expect(sheet.bill.settled).toBe(false);
+    expect(sheet.bill.periodLabel).toContain('Oct');
+  });
+
   it('refuses a bill whose screenshot is already with the treasurer', async () => {
     const { db, env } = building();
     putMaintBill(db, { id: 1, status: 'awaiting' });
