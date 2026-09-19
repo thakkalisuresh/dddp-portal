@@ -32,7 +32,8 @@ const pages  = read('pages/wrangler.toml');  // the site residents use
 describe('the two deployments agree where they must', () => {
   // Everything here is read by code that writes to the shared D1, so a
   // difference is a behaviour difference and not a formatting one.
-  for (const key of ['PBKDF2_ITERATIONS', 'UPI_VPA', 'UPI_PAYEE']) {
+  for (const key of ['PBKDF2_ITERATIONS', 'UPI_VPA', 'UPI_PAYEE',
+                     'MAINT_PAYEE_MODE', 'MAINT_PAYEE_NAME']) {
     it(`${key} matches in both wrangler.toml files`, () => {
       const a = varOf(worker, key);
       const b = varOf(pages, key);
@@ -127,7 +128,8 @@ describe('staging points at staging, and nowhere near production', () => {
   it('keeps the shared vars in step with the other two copies', () => {
     const vars = section(worker, 'env.staging.vars');
     expect(vars, '[env.staging.vars] missing from wrangler.toml').toBeTruthy();
-    for (const key of ['PBKDF2_ITERATIONS', 'UPI_VPA', 'UPI_PAYEE']) {
+    for (const key of ['PBKDF2_ITERATIONS', 'UPI_VPA', 'UPI_PAYEE',
+                       'MAINT_PAYEE_MODE', 'MAINT_PAYEE_NAME']) {
       const staged = vars.match(new RegExp(`^${key}\\s*=\\s*"([^"]*)"`, 'm'))?.[1];
       expect(staged, `${key} missing from [env.staging.vars]`).toBeDefined();
       expect(staged, `${key} drifted in [env.staging.vars]`).toBe(varOf(worker, key));
@@ -211,11 +213,50 @@ describe('the archive bucket is bound once, and only to production', () => {
   });
 
   it('has no preview target, because previews must not archive at all', () => {
-    // Unlike PROOFS, which needs a disposable bucket because previews really
-    // do upload. The only preview_bucket_name in the file should still be the
-    // proofs one; a second would mean somebody gave previews an archive.
-    const previewBuckets = pages.match(/^preview_bucket_name\s*=/gm) ?? [];
-    expect(previewBuckets).toHaveLength(1);
+    // Unlike the two proof buckets, which need disposable preview targets
+    // because previews really do upload. Every preview_bucket_name must point at
+    // a disposable staging bucket; none may be the archive.
+    const previewBuckets = pages.match(/^preview_bucket_name\s*=.*$/gm) ?? [];
+    expect(previewBuckets).toHaveLength(2);   // PROOFS + MAINT_PROOFS, both disposable
+    expect(previewBuckets.every((line) => /-staging"\s*$/.test(line))).toBe(true);
     expect(pages).not.toMatch(/^preview_bucket_name\s*=\s*"dddp-archive"/m);
+  });
+});
+
+/* ── the public repository ───────────────────────────────────────────────── */
+
+describe('the maintenance account details never enter the repository', () => {
+  // THIS REPOSITORY IS PUBLIC. The gas VPA sits in [vars] because a VPA is a
+  // published address, but the maintenance account is a bank account number and
+  // an IFSC, and those belong in the secret store and nowhere else. In account
+  // mode lib/upi.js assembles the address at runtime from two secrets, so there
+  // is never a finished string to leak either.
+  //
+  // Asserted against the config files rather than trusted to review: a paste
+  // into a [vars] block is one careless commit, and the commit is permanent
+  // whatever is done afterwards.
+  for (const [label, toml] of [['wrangler.toml', worker], ['pages/wrangler.toml', pages]]) {
+    it(`${label} declares no account number, IFSC or maintenance VPA`, () => {
+      for (const key of ['MAINT_ACCOUNT_NUMBER', 'MAINT_IFSC', 'MAINT_UPI_VPA']) {
+        // An ASSIGNMENT, not a mention. Both files name these keys in a comment
+        // saying they are secrets, and that comment is how the next person
+        // knows not to add them — a test that banned the words outright would
+        // force the deletion of its own documentation.
+        expect(toml, `${key} must be a secret, not a var in ${label}`)
+          .not.toMatch(new RegExp(`^\\s*${key}\\s*=`, 'm'));
+      }
+      // The IFSC's own shape, in case somebody inlines it without the var name.
+      // South Indian Bank codes are SIBL followed by seven characters.
+      expect(toml, `an IFSC appears in ${label}`).not.toMatch(/SIBL[0-9A-Z]{7}/);
+    });
+  }
+
+  it('the payee mode is one the code understands', () => {
+    // `maintPayeeMode` treats anything that is not "upi" as "account", so a
+    // typo would silently fall back rather than fail — which is the safe
+    // direction at runtime and the wrong one to leave unasserted here.
+    for (const toml of [worker, pages]) {
+      expect(['upi', 'account']).toContain(varOf(toml, 'MAINT_PAYEE_MODE'));
+    }
   });
 });

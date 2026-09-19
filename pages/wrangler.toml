@@ -35,6 +35,17 @@ bucket_name = "dddp-payment-proofs"
 # alongside them. Staging uploads go somewhere disposable instead.
 preview_bucket_name = "dddp-proofs-staging"
 
+# Maintenance payment screenshots, in their own bucket — the twin of the
+# MAINT_PROOFS binding in ../wrangler.toml, and it must match: backup.js reads
+# this binding on the cron Worker while the upload runs here, and a binding
+# present in one deployment and absent in the other is this project's worst
+# class of bug. Not optional like ARCHIVE — a missing binding throws on a
+# maintenance upload or view. Create the prod bucket in APAC, like PROOFS.
+[[r2_buckets]]
+binding = "MAINT_PROOFS"
+bucket_name = "dddp-maint-proofs"
+preview_bucket_name = "dddp-maint-proofs-staging"
+
 # The association's own archive. Bound here as well as in ../wrangler.toml
 # because these two configs must agree on every binding the shared code reads —
 # the same premise as the D1 above. The nightly write happens on the cron
@@ -54,6 +65,19 @@ bucket_name = "dddp-archive"
 [vars]
 UPI_VPA = "qr.ddwelfare@sib"
 UPI_PAYEE = "DD Diamond Park RWA"
+MAINT_PAYEE_MODE = "account"
+MAINT_PAYEE_NAME = "DD Diamond Park RWA"
+# MAINTENANCE PAYEE. Mode is "account" until the bank issues a UPI ID for the
+# maintenance account, then "upi". The address itself is NOT here and must never
+# be: MAINT_ACCOUNT_NUMBER, MAINT_IFSC and MAINT_UPI_VPA are SECRETS, set with
+# `wrangler pages secret put`, because this repository is public. In account
+# mode lib/upi.js assembles <account>@<IFSC>.ifsc.npci at runtime, so neither
+# half is ever written down anywhere but the secret store. A test asserts these
+# files do not contain them.
+#
+# MAINT_PAYEE_NAME is a PLACEHOLDER. The committee is still deciding between
+# this and the bank's full registered name, and whichever they pick has to match
+# what a resident's UPI app shows them or the payment looks wrong.
 # MUST match ../wrangler.toml — see the note there. This is the copy that
 # matters for residents: the site runs here, the cron Worker runs there, and
 # both hash against the same D1.
@@ -108,6 +132,10 @@ database_id = "adf039cd-4cec-4e66-9395-fd4a548cd01c"
 [[env.preview.r2_buckets]]
 binding = "PROOFS"
 bucket_name = "dddp-proofs-staging"
+
+[[env.preview.r2_buckets]]
+binding = "MAINT_PROOFS"
+bucket_name = "dddp-maint-proofs-staging"
 
 [env.preview.vars]
 UPI_VPA = "qr.ddwelfare@sib"

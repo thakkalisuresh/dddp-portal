@@ -164,6 +164,19 @@ The bill as a PDF, built by hand — what a resident downloads, and what the ann
 | fn | `rupees` | `Rs.274`, `Rs.273.60` — the same rounding rule as money() in js/i18n.js. |
 | fn | `billPdf` | One bill, one A4 page. |
 
+### `functions/lib/bill-view.js`
+
+One bill, and the screen that pays it — step 5.
+
+| | Export | What it does |
+|---|---|---|
+| const | `ACCOUNT_MODE_APPS` | Apps that can pay a BANK ACCOUNT rather than a UPI ID. |
+| const | `UPI_MODE_APPS` |  |
+| fn | `resolveReturn` | Where a resident may be sent back to after paying. |
+| fn | `resolveBill` | Resolve a bill for this viewer, whichever kind it is. |
+| fn | `billDetailPayload` | The detail screen's payload. |
+| fn | `paySheetPayload` | The payment sheet's payload. |
+
 ### `functions/lib/billing.js`
 
 Pure billing arithmetic.
@@ -318,6 +331,7 @@ Self-checks — the building's invariants, written down as assertions.
 | fn | `runChecks` | An empty table and an unreadable one are NOT the same thing. |
 | fn | `summarise` |  |
 | fn | `toMarkdown` | Markdown, because the destination is a chat window. |
+| fn | `checkMaintPayee` | Is the maintenance payee actually configured? WHY THIS IS A `fail` AND NOT A `warn`. |
 
 ### `functions/lib/digest.js`
 
@@ -440,6 +454,118 @@ Sending email, via the Gmail API.
 | fn | `buildRawMessage` | RFC 2822, base64url. |
 | fn | `mailToken` | A token to spend across a batch of sends. |
 | fn | `sendEmail` | Send one message. |
+
+### `functions/lib/maint-admin.js`
+
+The admin side of maintenance — step 6.
+
+| | Export | What it does |
+|---|---|---|
+| const | `UNCHECKED_DAYS` | How long a tenancy may go unchecked before it is flagged. |
+| fn | `tenancyRows` | Every tenancy on record, with the one thing wrong with it. |
+| fn | `schedulingBlocked` | The flags that stop a quarter being scheduled. |
+| fn | `scheduleConsequences` | The consequences of an issue date, computed before anybody commits to one. |
+| fn | `collectFigures` | Where the quarter's money has got to. |
+| fn | `duesReport` | Who owes what — GAS AND MAINTENANCE, SEPARATELY AND NEVER ADDED. |
+| fn | `maintAdminPayload` | Everything the Maintenance page needs, for one quarter. |
+| fn | `adminHomeCard` | The card on Admin Home while a quarter needs attention. |
+
+### `functions/lib/maint-cron.js`
+
+The maintenance quarter's life, as scheduled work: draft, confirm, issue, charge the fee.
+
+| | Export | What it does |
+|---|---|---|
+| const | `DRAFT_LEAD_DAYS` | How far ahead a draft appears. |
+| fn | `draftDateFor` |  |
+| fn | `ensureDraft` | Create the draft for the next quarter, if it is time and it does not exist. |
+| fn | `confirmRecipients` | Who gets asked to confirm the quarter: every admin EXCEPT whoever scheduled the previous one. |
+| fn | `confirmEmail` | The nightly nudge to an admin while a quarter is still a draft. |
+| fn | `remindToConfirm` | Ask the admins to confirm, at most once a night, and only while it is still a draft. |
+| fn | `flatsWithPeople` |  |
+| fn | `scheduleQuarter` | Confirm a quarter: record the issue date, fix the rates, and record what the admin was looking at when they did. |
+| fn | `issueQuarter` | Raise the quarter's bills and queue the telling of it, as one act. |
+| fn | `applyMaintLateFees` | Charge the quarter's late fees. |
+| fn | `applyLateFeeToMaintBill` | Charge ONE bill, now, if it is due one. |
+| fn | `queueDueLetters` | Queue the two reminders that fall between issuing and the due date. |
+| fn | `runMaintenance` | The maintenance half of the 08:30 run: draft, remind, issue, queue. |
+| fn | `previewLetter` | The letters a quarter WOULD send, rendered for one flat, sending nothing. |
+
+### `functions/lib/maint-home.js`
+
+The resident home payload — step 5.
+
+| | Export | What it does |
+|---|---|---|
+| const | `RECENT_LIMIT` |  |
+| const | `RECENT_DAYS` | How far back "Recently paid" looks. |
+| fn | `shapeMaintBill` | Derived presentation state for a maintenance bill. |
+| fn | `asGasCard` | The same shape, for a gas bill already shaped by lib/dashboard.js. |
+| fn | `toPay` | What a resident owes, soonest due first. |
+| fn | `comingUp` | What is coming but has not been raised yet. |
+| fn | `recentlyPaid` | What has been settled lately. |
+| fn | `waitingForYou` | Things the building is waiting on this resident for. |
+| fn | `votingCard` | The "Your vote" card. |
+| fn | `maintHomePayload` | The maintenance half of the resident home payload. |
+
+### `functions/lib/maint-mail.js`
+
+The maintenance outbox: four letters per bill, and the drain that sends them.
+
+| | Export | What it does |
+|---|---|---|
+| const | `PLACEHOLDER_COPY` | A flag, not a comment, so nothing shipped by accident. |
+| const | `DRAIN_SIZE` |  |
+| const | `MAX_ATTEMPTS` |  |
+| const | `MAIL_KINDS` |  |
+| fn | `permanentFailure` | Is this failure worth trying again? Identical rule to `announce.js`, and deliberately a copy rather than an import: it is four lines, and the alternative is one module reaching into another's retry policy so that changing gas's quietly changes maintenance's. |
+| fn | `issuedEmail` | Letter 1 — the bill exists. |
+| fn | `dueSoonEmail` |  |
+| fn | `dueEmail` | Letter 3 — the due date itself, which is still a payable day. |
+| fn | `overdueEmail` | Letter 4 — the fee has landed, and possibly the vote with it. |
+| fn | `letterFor` |  |
+| fn | `ccFor` | The Cc list for one bill: the rest of the household. |
+| fn | `mailCounts` |  |
+| fn | `drainMaintMail` | Send up to `limit` queued letters. |
+| fn | `sweepMaintMail` | The nightly sweep. |
+
+### `functions/lib/maint.js`
+
+Quarterly maintenance charges.
+
+| | Export | What it does |
+|---|---|---|
+| const | `QUARTER_MONTHS` |  |
+| fn | `parseQuarter` |  |
+| fn | `isQuarterLabel` |  |
+| fn | `quarterOf` |  |
+| fn | `quarterRange` | The first and last calendar day of a quarter, inclusive. |
+| fn | `previousQuarter` |  |
+| fn | `nextQuarter` |  |
+| fn | `describeQuarter` | "Q4 2026 (Oct–Dec)" — the only form a resident ever sees. |
+| fn | `quarterHasEnded` | Has this quarter finished? Load-bearing for the voting rule: only an ENDED quarter's unpaid bill blocks a vote, so this is the line between "you are behind" and "you have not been given your ten days yet". |
+| const | `DEFAULT_OWNER_RATE` |  |
+| const | `DEFAULT_TENANT_RATE` |  |
+| const | `DEFAULT_LATE_FEE` |  |
+| const | `DUE_DAYS` |  |
+| fn | `isResidentOn` | Is this person in residence on `date`? LEASE_ENDS_AT IS DELIBERATELY NOT CONSULTED HERE, and a later reader will want to "fix" that. |
+| fn | `tenantOn` |  |
+| fn | `ownerOn` | The owner on record on a date, lowest id first. |
+| fn | `assessFlat` | Which rate a flat takes, and who carries the bill, ON THE ISSUE DATE. |
+| fn | `rateFor` | The amount for a basis, read from the quarter rather than from the constants above. |
+| fn | `previewQuarter` | What a quarter will actually bill, computed BEFORE anything is written — the maintenance twin of previewGeneration in lib/billing.js, and it earns its place for the same reason: the treasurer confirms one number they can check, rather than discovering the mistake in ninety-nine emails. |
+| fn | `dueDateFor` |  |
+| fn | `lateFeeDateFor` | The day the late fee lands: the day AFTER the due date. |
+| const | `SETTLED_STATUSES` | The statuses that mean the association has its money, or has agreed it never will. |
+| fn | `isSettled` |  |
+| fn | `maintLateFeeDecision` | Should this bill be charged a late fee today? The same shape as lateFeeDecision in lib/billing.js, and the same idempotency guard, because the cron that calls it runs nightly and Cloudflare may invoke it twice. |
+| fn | `applyMaintLateFee` |  |
+| fn | `advanceCovers` | Does this advance cover that quarter? Inclusive of the named quarter: "paid up to 2027-Q2" means Q2 is covered, which is how a resident writing the cheque understands it. |
+| fn | `furthestAdvance` |  |
+| fn | `flatVotingStatus` | May this flat vote in a poll created on this date? ONE VOTE PER FLAT, AND IT IS THE OWNER'S. |
+| fn | `isVotingExemptOn` | A committee-granted exemption from the voting block, with an end date for the same reason the late-fee exemption has one: a boolean set during a dispute is invisible policy two years later, and an end date makes forgetting a no-op. |
+| fn | `planOccupancyChange` | What happens to an outstanding maintenance bill when the occupancy changes. |
+| fn | `tenancyReadiness` | Can this quarter be scheduled, or is the tenancy data too stale to trust? The rate a flat takes depends entirely on whether a tenant row is active, and until now nothing in the portal could tell an active tenant from one who left eight months ago without anybody flipping the flag. |
 
 ### `functions/lib/notice-doc.js`
 
@@ -566,6 +692,7 @@ Payment proofs.
 | fn | `validateUpload` |  |
 | fn | `shapeQueue` | The treasurer's queue has TWO sections, because most residents pay and never upload anything — that is the normal case, not an edge case (plan §4b). |
 | fn | `r2Key` |  |
+| fn | `proofBucket` | Which R2 bucket a payment proof's image lives in. |
 
 ### `functions/lib/public.js`
 
@@ -703,6 +830,8 @@ Bank statement reconciliation.
 | fn | `parseStatement` |  |
 | fn | `reconcile` | Match credits to proofs, then report what is left over on both sides. |
 | fn | `bucketReconciliation` | Split a reconciliation into what a treasurer actually has to DO about it. |
+| const | `MAX_CANDIDATES` |  |
+| fn | `rankCandidates` | The flats a credit could belong to, best first. |
 
 ### `functions/lib/summary.js`
 
@@ -714,6 +843,16 @@ What the admin console's Home screen says about the month.
 | fn | `boardStage` | Where the month stands, as one of five words. |
 | fn | `daysOverdue` | How many days late a bill is, counted in whole days. |
 | fn | `tallyByStatus` | Turn the rows of `SELECT status, COUNT(*) GROUP BY status` into an object with every status present. |
+
+### `functions/lib/tenancy-change.js`
+
+A tenant moving out — what it would do, and doing it.
+
+| | Export | What it does |
+|---|---|---|
+| const | `REQUEST_TTL_DAYS` |  |
+| fn | `describeDeparture` | What would happen if this tenant left on this date, with the flat becoming this. |
+| fn | `departureInputs` | Everything describeDeparture needs about one flat, in one round trip. |
 
 ### `functions/lib/tenancy.js`
 
@@ -783,6 +922,13 @@ UPI deep links.
 | fn | `queryString` | Query string with spaces as %20, not '+'. |
 | fn | `stampFor` | The date stamp residents see on their bank statement: 09_08_26. |
 | fn | `buildUpiLinks` |  |
+| fn | `maintPayeeMode` |  |
+| fn | `maintPayee` | The address residents actually pay, and what to show beside it. |
+| fn | `maintNote` | The note that lands on the bank statement: `(2B_MAINT_Q4_26)`. |
+| fn | `parseMaintNote` | Read a maintenance note back out of a bank statement narration. |
+| fn | `maintAccountHint` | What to show beside "Maintenance" on the reconciliation account picker. |
+| fn | `buildMaintUpiLinks` | The pay links for a maintenance bill. |
+| fn | `manualMaintPayment` |  |
 | fn | `manualPayment` |  |
 | fn | `payTargetFor` |  |
 
@@ -797,9 +943,27 @@ Reading a payment screenshot with a vision model.
 | fn | `safeJson` |  |
 | fn | `bytesToBase64` |  |
 
+### `functions/lib/voting.js`
+
+Who may vote, read from the database.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `votingStatuses` | The voting status of every flat that has anything to say about it. |
+| fn | `votingStatusFor` |  |
+| fn | `votingBlockedFlats` |  |
+
 ## Server — router
 
 One router. Route table at the top, handlers below it.
+
+### `functions/index.js`
+
+DD Diamond Park portal — Worker entry.
+
+| | Export | What it does |
+|---|---|---|
+| const | `STATEMENT_ACCOUNTS` | The two accounts a statement can come from. |
 
 ## Browser
 
@@ -813,6 +977,14 @@ Billing — one flow from the price of gas to the published bill.
 |---|---|---|
 | fn | `nextMonth` |  |
 | fn | `billingPanel` | The whole tab. |
+
+### `public/js/admin-maint.js`
+
+The Maintenance tab — step 6.
+
+| | Export | What it does |
+|---|---|---|
+| fn | `maintPanel` | The Maintenance tab. |
 
 ### `public/js/api.js`
 
@@ -1001,6 +1173,7 @@ Small render helpers shared by every screen.
 | fn | `proofVerdict` | How a proof reads in the admin queue: the verdict, not two numbers. |
 | fn | `renderViewBanner` | The viewing-as banner. |
 | fn | `billBreakdown` |  |
+| fn | `maintBreakdown` | The maintenance twin of billBreakdown. |
 | fn | `askFirst` | Ask before something destructive, in the page rather than in a dialog. |
 | fn | `showError` | Errors say what went wrong and what to do about it — and are on screen when they say it. |
 | fn | `withReveal` | A show/hide control for a password field. |
@@ -1037,4 +1210,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-568 exports. 260 have no doc comment.
+671 exports. 291 have no doc comment.

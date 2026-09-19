@@ -75,8 +75,27 @@ export const api = {
   changePassword: (currentPassword, newPassword) =>
     request('POST', '/api/password', { currentPassword, newPassword }),
 
-  /** Records that the resident opened their UPI app. NOT proof of payment. */
-  payIntent: (billId) => request('POST', `/api/bills/${billId}/intent`),
+  /**
+   * Records that the resident opened their UPI app. NOT proof of payment.
+   *
+   * The two kinds go to two routes because they are two tables. The kind comes
+   * from the payload that produced the button, never from the URL the resident
+   * is on — see functions/lib/bill-view.js for why nothing here asserts a kind
+   * the server has not already derived from the record.
+   */
+  payIntent: (billId, kind = 'gas') => request('POST',
+    kind === 'maintenance' ? `/api/maint-bills/${billId}/intent` : `/api/bills/${billId}/intent`),
+
+  /** One bill in full, whichever kind it turns out to be. */
+  billDetail: (id) => request('GET', `/api/bill?id=${encodeURIComponent(id ?? '')}`),
+
+  /**
+   * The payment sheet for one bill. `from` is where to return afterwards; the
+   * server resolves it against an allowlist, so a value that is not an internal
+   * route comes back as Home rather than being followed.
+   */
+  paySheet: (id, from = '') => request('GET',
+    `/api/pay?bill=${encodeURIComponent(id ?? '')}&from=${encodeURIComponent(from)}`),
 
   onboard:       (body)      => request('POST', '/api/onboard', body),
   updateProfile: (name, email) => request('PATCH', '/api/me', { name, email }),
@@ -156,6 +175,59 @@ export const api = {
     decideContactRequest: (id, approve) =>
                                request('POST',
                                  `/api/admin/contact-requests/${id}/${approve ? 'approve' : 'reject'}`),
+
+    /* ── maintenance ─────────────────────────────────────────────────────
+       A quarter, not a month. Every one of these returns the whole page's
+       payload rather than just what it changed, because the four steps are
+       interdependent — saving a rate moves the preview, the total and what
+       step 3 says will happen — and a partial update leaves the screen
+       disagreeing with itself. */
+    maint:         (quarter) => request('GET',
+                               `/api/admin/maint${quarter ? `?quarter=${encodeURIComponent(quarter)}` : ''}`),
+    maintRates:    (quarter, ownerRate, tenantRate, lateFee) =>
+                               request('PUT', '/api/admin/maint/rates',
+                                       { quarter, ownerRate, tenantRate, lateFee }),
+    /**
+     * `acknowledgeUndated` is sent ONLY when the admin has ticked the box, and
+     * the box only exists once they have worked through the flagged rows. The
+     * server refuses an undated lease without it — deliberately, so that
+     * scheduling past one is a decision somebody made rather than a warning
+     * that scrolled past.
+     */
+    maintSchedule: (quarter, issueDate, acknowledgeUndated = false) =>
+                               request('POST', '/api/admin/maint/schedule',
+                                       { quarter, issueDate, acknowledgeUndated }),
+    maintUnschedule: (quarter) =>
+                               request('POST', '/api/admin/maint/unschedule', { quarter }),
+    // Read-only, and deliberately so: it renders a letter and queues nothing.
+    maintPreviewLetter: (quarter, flat, kind = 'issued') =>
+                               request('GET', '/api/admin/maint/preview'
+                                 + `?quarter=${encodeURIComponent(quarter)}`
+                                 + `&flat=${encodeURIComponent(flat)}`
+                                 + `&kind=${encodeURIComponent(kind)}`),
+    /** "Still here" — and the lease end too, when that is what was missing. */
+    /**
+     * A tenant moving out. The PREVIEW is the consequences, recomputed on the
+     * server every time the dialog's date or occupier changes — never worked out
+     * in the browser, so the dialog and the approval a week later agree.
+     */
+    departurePreview: (body) => request('POST', '/api/admin/tenancy/departure/preview', body),
+    requestDeparture:  (body) => request('POST', '/api/admin/tenancy/departure', body),
+    departures:        ()     => request('GET',  '/api/admin/tenancy/departures'),
+    decideDeparture: (id, ok) =>
+      request('POST', `/api/admin/tenancy/departures/${id}/${ok ? 'approve' : 'reject'}`),
+
+    /** The voting block: who it catches, and the committee's exceptions to it. */
+    voting:        ()   => request('GET',  '/api/admin/maint/voting'),
+    grantVotingExemption: (body) => request('POST', '/api/admin/maint/voting/exempt', body),
+    approveVotingExemption: (id) =>
+      request('POST', `/api/admin/maint/voting/exempt/${id}/approve`),
+
+    confirmTenancy: (id, leaseEndsAt = null) =>
+                               request('POST', '/api/admin/maint/tenancy/confirm',
+                                       { id, leaseEndsAt }),
+    /** Two blocks, never totalled together. See duesReport in the Worker. */
+    dues:          ()        => request('GET', '/api/admin/dues'),
 
     // `period` here is always the USAGE month, never the month being walked.
     readings:      (period) => request('GET',  `/api/admin/readings?period=${period}`),
@@ -281,9 +353,12 @@ export const api = {
      * The file is parsed server-side and never stored; only its credit rows are
      * held, and only until `finishStatement` or the nightly sweep.
      */
-    async uploadStatement(file) {
+    async uploadStatement(file, account = 'gas') {
       const form = new FormData();
       form.append('statement', file, file.name || 'statement.csv');
+      // Which bank account this statement came from. Gas and maintenance are
+      // different accounts (0042) and are never matched against each other.
+      form.append('account', account);
       const res = await fetch('/api/admin/statement', {
         method: 'POST', credentials: 'same-origin', body: form,
       });
@@ -294,7 +369,10 @@ export const api = {
       }
       return data;
     },
+    statementAccounts: ()  => request('GET',    '/api/admin/statement'),
     statementReport:  (id) => request('GET',    `/api/admin/statement/${id}`),
+    /** Maintenance only: an admin says which flat a credit belongs to. */
+    assignCredit: (id, body) => request('POST', `/api/admin/statement/${id}/assign`, body),
     finishStatement:  (id) => request('POST',   `/api/admin/statement/${id}/finish`),
     discardStatement: (id) => request('DELETE', `/api/admin/statement/${id}`),
     deleteProof:   (id)      => request('DELETE', `/api/admin/proofs/${id}`),

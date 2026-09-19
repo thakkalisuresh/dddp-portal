@@ -16,10 +16,20 @@
 /**
  * Indian rupee. Bill totals are whole rupees, so '₹329.00' is noise — show
  * paise only where they genuinely exist (a rate, a gas subtotal).
+ *
+ * GROUPED, en-IN: ₹9,000 and ₹3,03,000, not ₹9000 and ₹303000. Gas bills are
+ * three figures and read fine either way; maintenance is four and five, and a
+ * five-figure total with no separator is genuinely hard to read at a glance —
+ * which matters most on the payment sheet, where the number a resident is about
+ * to type is the number that has to be right. The letters already group, so
+ * without this the email and the screen would quote the same bill two ways.
  */
 export function money(amount) {
   const n = Number(amount);
-  return `₹${Number.isInteger(n) ? n : n.toFixed(2)}`;
+  return `₹${n.toLocaleString('en-IN', {
+    minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
+    maximumFractionDigits: Number.isInteger(n) ? 0 : 2,
+  })}`;
 }
 
 export function kg(value) {

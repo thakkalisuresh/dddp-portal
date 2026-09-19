@@ -105,6 +105,40 @@ export const ERROR_CODES = {
   'DDP-BILL-019': { severity: 'warn',
     message: 'Reading refused — unknown flat, a flat that is not billed, or a value below zero' },
   'DDP-BILL-020': { severity: 'warn',  message: 'Readings saved into a month that was never opened' },
+  // Deliberately one code for two situations. The bill does not exist, or it
+  // exists and belongs to another household; the resident sees the same 404
+  // either way, because a distinguishable "not yours" lets somebody walk the
+  // ids and learn which flats owe what. `warn` rather than `error`, because a
+  // mistyped URL is not an incident: warn is logged and never sent to Telegram,
+  // so this stays readable in the log without burying the real alerts.
+  'DDP-BILL-021': { severity: 'warn',  message: 'Bill requested that does not exist or is not this viewer’s' },
+
+  // ── MAINT ──────────────────────────────────────────────────────────────
+  // Quarterly maintenance charges. A prefix of their own rather than more
+  // DDP-BILL codes: those are gas-shaped — meters, readings, conversion
+  // factors — and none of that vocabulary describes a flat rate. Keeping them
+  // apart is what makes a Telegram alert and the diagnostics screen readable at
+  // a glance, since the two billing streams run on different cadences against
+  // different bank accounts.
+  'DDP-MAINT-001': { severity: 'error', message: 'Quarter label is not in the YYYY-Qn form' },
+  'DDP-MAINT-002': { severity: 'error', message: 'Maintenance date is not a valid YYYY-MM-DD' },
+  'DDP-MAINT-003': { severity: 'error', message: 'Maintenance basis is neither owner nor tenant' },
+  // fatal, matching DDP-BILL-010's reasoning: a quarter with a missing or
+  // fractional rate would raise ninety-nine wrong bills that all look normal.
+  'DDP-MAINT-004': { severity: 'fatal', message: 'Quarter has no usable rate for that basis' },
+  'DDP-MAINT-005': { severity: 'error', message: 'Maintenance late fee or total is negative, fractional or not a number' },
+  'DDP-MAINT-006': { severity: 'error', message: 'Unknown mid-quarter occupancy change' },
+  'DDP-MAINT-007': { severity: 'error', message: 'Maintenance quarter does not exist' },
+  // warn, following DDP-BILL-007's reasoning: somebody pressing Schedule on a
+  // quarter that is already scheduled is a person doing an ordinary thing
+  // twice, not a fault. At `error` it would reach Telegram on every double-tap.
+  'DDP-MAINT-008': { severity: 'warn',  message: 'Maintenance quarter is not in a state that allows this' },
+
+  // Both from the letter preview, and both `warn` for DDP-MAINT-008's reason:
+  // an admin asking for a letter kind that does not exist, or for a flat this
+  // quarter would not bill, is a misdirected click on a read-only screen.
+  'DDP-MAINT-009': { severity: 'warn',  message: 'Unknown maintenance letter kind' },
+  'DDP-MAINT-010': { severity: 'warn',  message: 'This quarter would not bill that flat, so there is no letter to preview' },
 
   // ── MAIL ───────────────────────────────────────────────────────────────
   'DDP-MAIL-001': { severity: 'error', message: 'Reset email could not be sent' },
@@ -141,6 +175,7 @@ export const ERROR_CODES = {
   'DDP-RECON-006': { severity: 'warn',  message: 'Abandoned statement session swept — rows deleted unreviewed' },
   'DDP-RECON-007': { severity: 'warn',  message: 'PDF statement has no text layer — CSV needed' },
   'DDP-RECON-008': { severity: 'fatal', message: 'Statement rows survived the finish step — deletion did not take' },
+  'DDP-RECON-009': { severity: 'error', message: 'Credit could not be assigned to a maintenance bill' },
 
   // ── ADMIN ──────────────────────────────────────────────────────────────
   'DDP-ADMIN-001': { severity: 'error', message: 'Bulk import parsed a flat that does not exist' },
@@ -213,10 +248,11 @@ export const ERROR_CODES = {
   // One notice, one poll. The unique index is what makes it true; this is the
   // sentence the committee gets instead of a constraint violation.
   'DDP-POLL-009': { severity: 'warn',  message: 'Poll attached to a notice that already has one' },
+  'DDP-POLL-010': { severity: 'warn',  message: 'Vote refused — the flat has maintenance outstanding' },
 };
 
 /** Domains in registry order, for the generated docs. */
-export const DOMAINS = ['AUTH', 'MAIL', 'BILL', 'PAY', 'PROOF', 'RECON', 'NOTICE', 'POLL', 'ATTACH', 'ADMIN', 'SYS'];
+export const DOMAINS = ['AUTH', 'MAIL', 'BILL', 'MAINT', 'PAY', 'PROOF', 'RECON', 'NOTICE', 'POLL', 'ATTACH', 'ADMIN', 'SYS'];
 
 export function domainOf(code) {
   return code.split('-')[1];

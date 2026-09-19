@@ -64,6 +64,22 @@ Ask the bot a code and it will explain it.
 | `DDP-BILL-018` | warn | live | Bill announcement could not be emailed to the resident |
 | `DDP-BILL-019` | warn | live | Reading refused — unknown flat, a flat that is not billed, or a value below zero |
 | `DDP-BILL-020` | warn | live | Readings saved into a month that was never opened |
+| `DDP-BILL-021` | warn | live | Bill requested that does not exist or is not this viewer’s |
+
+## MAINT
+
+| Code | Severity | Status | Meaning |
+|---|---|---|---|
+| `DDP-MAINT-001` | error | live | Quarter label is not in the YYYY-Qn form |
+| `DDP-MAINT-002` | error | live | Maintenance date is not a valid YYYY-MM-DD |
+| `DDP-MAINT-003` | error | live | Maintenance basis is neither owner nor tenant |
+| `DDP-MAINT-004` | **fatal** | live | Quarter has no usable rate for that basis |
+| `DDP-MAINT-005` | error | live | Maintenance late fee or total is negative, fractional or not a number |
+| `DDP-MAINT-006` | error | live | Unknown mid-quarter occupancy change |
+| `DDP-MAINT-007` | error | live | Maintenance quarter does not exist |
+| `DDP-MAINT-008` | warn | live | Maintenance quarter is not in a state that allows this |
+| `DDP-MAINT-009` | warn | live | Unknown maintenance letter kind |
+| `DDP-MAINT-010` | warn | live | This quarter would not bill that flat, so there is no letter to preview |
 
 ## PAY
 
@@ -100,6 +116,7 @@ Ask the bot a code and it will explain it.
 | `DDP-RECON-006` | warn | live | Abandoned statement session swept — rows deleted unreviewed |
 | `DDP-RECON-007` | warn | live | PDF statement has no text layer — CSV needed |
 | `DDP-RECON-008` | **fatal** | live | Statement rows survived the finish step — deletion did not take |
+| `DDP-RECON-009` | error | live | Credit could not be assigned to a maintenance bill |
 
 ## NOTICE
 
@@ -124,6 +141,7 @@ Ask the bot a code and it will explain it.
 | `DDP-POLL-007` | warn | live | Publish attempted on a poll still open |
 | `DDP-POLL-008` | warn | live | Edit attempted on a poll that has closed |
 | `DDP-POLL-009` | warn | live | Poll attached to a notice that already has one |
+| `DDP-POLL-010` | warn | live | Vote refused — the flat has maintenance outstanding |
 
 ## ATTACH
 
@@ -175,7 +193,7 @@ Ask the bot a code and it will explain it.
 
 ---
 
-110 codes across 11 domains — 12 fatal, 3 awaiting their call site, 3 retired.
+123 codes across 12 domains — 13 fatal, 3 awaiting their call site, 3 retired.
 
 `planned` codes are reserved for phases not yet built. A test asserts that a code
 gaining a call site must drop the flag, so `planned` cannot become a permanent excuse.

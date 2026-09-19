@@ -14,7 +14,12 @@ import { el, $ } from './ui.js';
 import { api } from './api.js';
 
 const RESIDENT = [
-  { href: '/dashboard', label: 'Bill', icon: 'M3 3h18v4H3zM3 10h18v11H3z' },
+  // "Home", not "Bill" — the screen stopped being one bill when maintenance
+  // arrived beside gas, and a tab labelled Bill over a page listing several
+  // promises the wrong thing. THE PATH IS UNCHANGED on purpose: /dashboard is
+  // written into every letter and notice already sent, and moving it would
+  // break those for no gain a resident can see.
+  { href: '/dashboard', label: 'Home', icon: 'M3 11l9-8 9 8M5 9v12h14V9' },
   { href: '/notices', label: 'Notices', icon: 'M4 4h16v12H7l-3 3z' },
   { href: '/profile', label: 'Me', icon: 'M12 12a4 4 0 100-8 4 4 0 000 8zM4 21a8 8 0 0116 0' },
 ];

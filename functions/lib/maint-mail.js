@@ -1,0 +1,418 @@
+/**
+ * The maintenance outbox: four letters per bill, and the drain that sends them.
+ *
+ * ISSUING IS NOT SENDING. The issue job writes up to 99 bills in one D1 batch;
+ * mailing 99 people cannot happen in the same request and must not be attempted
+ * there. So issuing queues a row per bill per moment, and sending is a separate,
+ * resumable, idempotent drain — the same bargain `announce.js` makes for gas,
+ * for the same arithmetic: one `sendEmail` is two outbound fetches against a cap
+ * of 50, so a token is minted ONCE per drain and threaded through every send,
+ * and the drain takes 20 rows at a time. Twenty sends plus one refresh is 21.
+ *
+ * WHY FOUR LETTERS AND NOT ONE. Gas sends once, because a gas bill is a few
+ * hundred rupees and the month comes round again. Maintenance is ₹7,500 or
+ * ₹9,000 with a ₹750 fee behind it, and the quarter does not come round for
+ * three months — so the committee asked for a run-up rather than a single
+ * announcement. The fourth letter is the one that matters most and is the one
+ * nobody wants to send: the fee has landed, and on a flat with arrears from an
+ * ended quarter, the vote is now blocked too.
+ *
+ * THE WORDING IN THIS FILE IS THE COMMITTEE'S, approved 18 September 2026 as
+ * rendered, and PLACEHOLDER_COPY is down. Changing any of it is a decision for
+ * them and not a tidy-up: what looks like a stray sentence here is usually one
+ * that was argued over — see the restored late-fee line in letter 2.
+ */
+
+import { mailToken, sendEmail, mailConfigured } from './mailer.js';
+import { renderEmail, para, figure, details, action, aside, SITE } from './email-template.js';
+import { dayAndMonth } from './reminders.js';
+import { describeQuarter, quarterHasEnded, lateFeeDateFor } from './maint.js';
+
+/**
+ * A flag, not a comment, so nothing shipped by accident.
+ *
+ * False since the committee's wording pass. It is kept rather than deleted, and
+ * its test now asserts FALSE: the assertion that stopped draft copy shipping is
+ * the same assertion that stops it coming back, and a feature this size will be
+ * edited again by somebody who was not here.
+ */
+export const PLACEHOLDER_COPY = false;
+
+/** How many are sent per drain. See the subrequest arithmetic above. */
+export const DRAIN_SIZE = 20;
+
+/** Retries before a row is left for a human. A 4xx never gets even one. */
+export const MAX_ATTEMPTS = 3;
+
+/** The four moments, in the order they happen. Internal strings — see 0043. */
+export const MAIL_KINDS = ['issued', 'due_soon', 'due', 'overdue'];
+
+/**
+ * Is this failure worth trying again?
+ *
+ * Identical rule to `announce.js`, and deliberately a copy rather than an
+ * import: it is four lines, and the alternative is one module reaching into
+ * another's retry policy so that changing gas's quietly changes maintenance's.
+ * A 4xx from Gmail is a refusal and will be refused identically forever; 408
+ * and 429 are "later", not "never".
+ */
+export function permanentFailure(reason) {
+  const m = /^gmail-(\d{3})$/.exec(String(reason ?? ''));
+  if (!m) return false;
+  const status = Number(m[1]);
+  if (status === 408 || status === 429) return false;
+  return status >= 400 && status < 500;
+}
+
+/* ── the letters ──────────────────────────────────────────────────────────
+   Kept here rather than in the drain so a test can read the words without a
+   database, and so the plain-text and HTML halves cannot drift: renderEmail
+   builds both from one description.
+
+   NO PAYMENT LINK IN ANY OF THEM, matching gas and for the same two reasons:
+   an unsolicited message asking for money is the shape of a fraud, and B19
+   found that `upi://` links do not survive Gmail anyway. The portal, where the
+   working and the Pay button are, is the only thing to tap.
+
+   THE WORDING IS THE COMMITTEE'S, approved as rendered. Where a line here
+   reads oddly against the comment above it, the comment is describing why the
+   information is present, not claiming authorship of the sentence.           */
+
+/** ₹9,000, not ₹9000. Whole rupees: the schema will not store anything else. */
+const money = (n) => `₹${Math.round(Number(n ?? 0)).toLocaleString('en-IN')}`;
+
+/** '11 October 2026'. The year only where the letter is read long before the date. */
+const dayMonthYear = (iso) => `${dayAndMonth(iso)} ${String(iso).slice(0, 4)}`;
+
+/** 'rented rate' or 'owner rate' — from the bill's basis, never composed. */
+const rateWord = (basis) => (basis === 'tenant' ? 'rented rate' : 'owner rate');
+
+/**
+ * Letter 1 — the bill exists.
+ *
+ * The basis is named in the caption rather than left implicit. A tenant paying
+ * ₹9,000 where their neighbour pays ₹7,500 is entitled to see, on the bill
+ * itself, that the difference is the rate for a let flat and not a mistake —
+ * and the alternative is the committee fielding that question ninety times.
+ */
+export function issuedEmail({ flat, quarter, total, dueDate, basis, lateFee, lateFeeDate, origin = '' }) {
+  const site = origin || SITE;
+  // Derived rather than required. A caller that forgot it would otherwise
+  // produce "a late fee of ₹750 is added on  if the charges are unpaid" — a
+  // sentence with a hole in it, which renders and sends perfectly happily.
+  const feeDate = lateFeeDate ?? lateFeeDateFor(dueDate);
+  return renderEmail({
+    title: `Maintenance charges for ${describeQuarter(quarter)} · Flat ${flat}`,
+    preview: `${money(total)} due ${dayMonthYear(dueDate)}`,
+    blocks: [
+      para(`Your maintenance charges for ${describeQuarter(quarter)} are due.`),
+      figure(money(total),
+        `Flat ${flat} · ${rateWord(basis)} · due ${dayMonthYear(dueDate)}`),
+      action('Pay now', `${site}/dashboard`),
+      // The fee and the screenshot in one line: the two things a resident has
+      // to do something about, said where they will still be read.
+      aside(`A late fee of ${money(lateFee)} is added on ${dayAndMonth(feeDate)} `
+        + 'if the charges are unpaid. After paying, upload your payment screenshot '
+        + 'in the portal so the treasurer can confirm it.'),
+    ],
+  });
+}
+
+/** Letter 2 — three days out. The only one that exists purely to be helpful. */
+export function dueSoonEmail({ flat, quarter, total, dueDate, lateFee, lateFeeDate, origin = '' }) {
+  const site = origin || SITE;
+  const feeDate = lateFeeDate ?? lateFeeDateFor(dueDate);
+  return renderEmail({
+    title: `Maintenance charges due in 3 days · Flat ${flat}`,
+    preview: `${money(total)} due ${dayAndMonth(dueDate)}`,
+    blocks: [
+      para(`${money(total)} for ${describeQuarter(quarter)} is due on ${dayAndMonth(dueDate)}.`),
+      // RESTORED after the wording pass dropped it. This is the last letter
+      // that reaches a resident while the fee can still be avoided, and a
+      // warning that arrives afterwards is not a warning.
+      para(`A late fee of ${money(lateFee)} is added on ${dayAndMonth(feeDate)} `
+        + 'if the charges are unpaid.'),
+      action(`Pay ${money(total)}`, `${site}/dashboard`),
+      // The reminder that is wrong for one reader in ten is the one that makes
+      // them distrust the other nine: somebody who paid yesterday is told what
+      // to do about this message rather than left to wonder.
+      aside('Already paid? Upload your screenshot so the treasurer can match it, '
+        + 'and ignore this reminder.'),
+    ],
+  });
+}
+
+/**
+ * Letter 3 — the due date itself, which is still a payable day.
+ *
+ * The figure carries the consequence rather than a separate sentence. Gas is
+ * charged ON the due date at midnight; maintenance leaves the due date payable
+ * and charges the morning after, and residents have learned the gas rule.
+ * Being vague here would cost somebody ₹750.
+ */
+export function dueEmail({ flat, quarter, total, lateFee, origin = '' }) {
+  const site = origin || SITE;
+  return renderEmail({
+    title: `Maintenance charges due today · Flat ${flat}`,
+    preview: `${money(total)} due today`,
+    blocks: [
+      para(`${money(total)} for ${describeQuarter(quarter)} is due today.`),
+      figure(money(total),
+        `Paying after today adds ${money(lateFee)}, making it ${money(total + lateFee)}`),
+      action(`Pay ${money(total)}`, `${site}/dashboard`),
+    ],
+  });
+}
+
+/**
+ * Letter 4 — the fee has landed, and possibly the vote with it.
+ *
+ * THE VOTING LINE IS CONDITIONAL, and only appears once the quarter has
+ * actually ended. A bill that is overdue inside its own quarter does not block
+ * anything, and telling someone their vote is at risk when it is not would be
+ * both untrue and the most alarming sentence the portal sends.
+ *
+ * `charged` is the fee ON THIS BILL, not the quarter's setting: a fee that was
+ * waived, or a quarter whose fee was edited after the fact, must not produce a
+ * letter whose arithmetic does not add up in front of the person paying it.
+ */
+export function overdueEmail({ flat, quarter, total, charged, dueDate, blocksVoting, origin = '' }) {
+  const site = origin || SITE;
+  const base = total - charged;
+  return renderEmail({
+    title: `Maintenance charges overdue · Flat ${flat} · ${money(total)}`,
+    preview: `${money(charged)} late fee added`,
+    blocks: [
+      para(`${describeQuarter(quarter)} maintenance charges were due on `
+        + `${dayAndMonth(dueDate)}, and a late fee of ${money(charged)} has been added.`),
+      figure(money(total), `${money(base)} maintenance charges + ${money(charged)} late fee`),
+      action(`Pay ${money(total)}`, `${site}/dashboard`),
+      ...(blocksVoting
+        ? [aside('While maintenance charges from a past quarter are unpaid, this '
+            + 'flat cannot vote in new polls.')]
+        : []),
+      aside('If you think this is wrong, reply to this email or contact the '
+        + 'committee through the portal.'),
+    ],
+  });
+}
+
+/** One letter, by kind. Throws for an unknown kind rather than sending nothing. */
+export function letterFor(kind, row, { origin = '', today } = {}) {
+  const base = {
+    flat: row.flat, quarter: row.quarter, total: row.total,
+    dueDate: row.due_date, lateFee: row.quarter_late_fee, origin,
+  };
+  if (kind === 'issued') {
+    return issuedEmail({
+      ...base, basis: row.basis, lateFeeDate: lateFeeDateFor(row.due_date),
+    });
+  }
+  if (kind === 'due_soon') return dueSoonEmail(base);
+  if (kind === 'due') return dueEmail(base);
+  if (kind === 'overdue') {
+    return overdueEmail({
+      ...base,
+      // The fee ACTUALLY on this bill, falling back to the quarter's only when
+      // the row has none — which is the preview of a quarter not yet issued.
+      // A waived fee must not reappear in the arithmetic of the letter.
+      charged: row.late_fee || row.quarter_late_fee,
+      // Asked of the quarter, not of the bill's status: the block is about a
+      // quarter having ENDED, and on the day after a due date inside the
+      // quarter it has not.
+      blocksVoting: quarterHasEnded(row.quarter, today ?? row.due_date),
+    });
+  }
+  throw Object.assign(new Error(`unknown maintenance mail kind: ${kind}`), { code: 'bad-kind' });
+}
+
+/* ── who else gets told ───────────────────────────────────────────────────  */
+
+/**
+ * The Cc list for one bill: the rest of the household.
+ *
+ * A flat's maintenance is ONE bill and a flat holds up to five logins — three
+ * owners and two tenants (0040). The bill names one person in `owner_id`, but
+ * everybody in that household is affected by it, and the ones not named were
+ * previously told nothing.
+ *
+ * CC RATHER THAN SEPARATE COPIES, and rather than Bcc. The user chose it
+ * knowingly: on a let flat the tenant and the owner then see each other's
+ * addresses. That is the trade, and it is the honest one — both parties are
+ * liable for the same bill and each is entitled to know the other was told.
+ * Separate copies would hide that; Bcc would hide it and teach this codebase to
+ * emit the one header its injection guard exists to prevent.
+ *
+ * Every active owner with an address, never just the one on the bill: they are
+ * all liable, `billAccess` already shows them all the amount, and picking one
+ * would be the portal deciding which co-owner gets told. The second tenant is
+ * included for the same reason — a household that shares a bill should share
+ * the letter about it.
+ *
+ * The billed person is excluded, because they are the To. Addresses are
+ * de-duplicated: a couple sharing one address must not be Cc'd twice.
+ */
+export function ccFor({ people, billedToId }) {
+  const seen = new Set();
+  const out = [];
+  for (const p of people ?? []) {
+    if (!p.active || p.id === billedToId) continue;
+    const email = String(p.email ?? '').trim();
+    if (!email) continue;
+    const key = email.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(email);
+  }
+  return out;
+}
+
+/* ── the drain ────────────────────────────────────────────────────────────  */
+
+/** How the quarter's telling stands. Cheap enough to poll behind a progress bar. */
+export async function mailCounts(env, quarter) {
+  const rows = await env.DB.prepare(
+    `SELECT m.status, COUNT(*) AS n
+       FROM maint_mail m JOIN maint_bills b ON b.id = m.bill_id
+      WHERE b.quarter = ? GROUP BY m.status`
+  ).bind(quarter).all();
+
+  const out = { queued: 0, sent: 0, unreachable: 0, failed: 0 };
+  for (const r of rows.results ?? []) out[r.status] = r.n;
+  out.total = out.queued + out.sent + out.unreachable + out.failed;
+  // `unreachable` is deliberately not "remaining": those rows are done, in the
+  // only sense a drain can finish them. Counting them as outstanding would
+  // leave the bar permanently short of the end in a building where most
+  // accounts have no address on file.
+  out.remaining = out.queued + out.failed;
+  return out;
+}
+
+/**
+ * Send up to `limit` queued letters.
+ *
+ * Resumable by construction: it asks for whatever is outstanding, so an admin
+ * draining from the console and the nightly cron are the same operation. A
+ * `sent` row is never selected, which is what makes a retry safe rather than
+ * merely unlikely.
+ *
+ * Each row's status is written the moment its send returns, rather than batched
+ * at the end. D1 is counted against a separate internal allowance, so this is
+ * cheap — and a drain that dies halfway has still recorded every send it made,
+ * which is the difference between resuming and mailing somebody twice.
+ */
+export async function drainMaintMail(env, { limit = DRAIN_SIZE, origin = '', today } = {}) {
+  if (!mailConfigured(env)) {
+    return { sent: 0, failed: 0, reason: 'not-configured' };
+  }
+
+  const rows = await env.DB.prepare(
+    `SELECT m.bill_id, m.kind, m.attempts,
+            b.flat, b.quarter, b.total, b.basis, b.rate_applied, b.owner_id,
+            q.due_date, q.late_fee AS quarter_late_fee,
+            o.email, o.name
+       FROM maint_mail m
+       JOIN maint_bills b ON b.id = m.bill_id
+       JOIN maint_quarters q ON q.quarter = b.quarter
+       LEFT JOIN owners o ON o.id = b.owner_id
+      WHERE m.status = 'queued' OR (m.status = 'failed' AND m.attempts < ?)
+      ORDER BY b.quarter DESC, b.flat
+      LIMIT ?`
+  ).bind(MAX_ATTEMPTS, limit).all();
+
+  const queue = rows.results ?? [];
+  if (!queue.length) return { sent: 0, failed: 0 };
+
+  // ONCE per drain. This line is the entire reason the outbox exists: minting
+  // per send is what makes a quarter cost twice its subrequest budget.
+  const auth = await mailToken(env);
+  if (!auth.ok) return { sent: 0, failed: 0, reason: auth.reason };
+
+  // The households, in one query rather than one per row. Twenty letters would
+  // otherwise be twenty extra round trips for a Cc list.
+  const flats = [...new Set(queue.map((r) => r.flat))];
+  const people = await householdsFor(env, flats);
+
+  let sent = 0;
+  let failed = 0;
+
+  for (const row of queue) {
+    // Belt and braces: a row with no address was queued `unreachable` and is
+    // never selected. If one ever is, it is a bug worth not turning into a
+    // Gmail 400.
+    if (!row.email) {
+      await mark(env, row.bill_id, row.kind, 'unreachable', row.attempts, null);
+      continue;
+    }
+
+    let mail;
+    try {
+      mail = letterFor(row.kind, row, { origin, today });
+    } catch (err) {
+      // An unknown kind is a bug in this file, not a delivery failure. Park it
+      // rather than burning three attempts discovering the same thing.
+      await mark(env, row.bill_id, row.kind, 'failed', MAX_ATTEMPTS, err?.code ?? 'bad-kind');
+      failed += 1;
+      continue;
+    }
+
+    const res = await sendEmail(env, {
+      to: row.email,
+      cc: ccFor({ people: people.get(row.flat) ?? [], billedToId: row.owner_id }),
+      subject: mail.subject, text: mail.text, html: mail.html,
+    }, auth.token);
+
+    if (res.sent) {
+      await mark(env, row.bill_id, row.kind, 'sent', row.attempts + 1, null);
+      sent += 1;
+      continue;
+    }
+
+    // A permanent refusal is parked at the ceiling rather than counted up to
+    // it: three identical 400s three nights running tell nobody anything, and
+    // each costs a subrequest the next drain could have used.
+    const attempts = permanentFailure(res.reason) ? MAX_ATTEMPTS : row.attempts + 1;
+    await mark(env, row.bill_id, row.kind, 'failed', attempts, res.reason ?? 'unknown');
+    failed += 1;
+  }
+
+  return { sent, failed };
+}
+
+/** Every active person on these flats, keyed by flat. One query. */
+async function householdsFor(env, flats) {
+  if (!flats.length) return new Map();
+  const marks = flats.map(() => '?').join(',');
+  const rows = await env.DB.prepare(
+    `SELECT flat, id, name, email, relationship, active
+       FROM owners WHERE active = 1 AND flat IN (${marks}) ORDER BY flat, id`
+  ).bind(...flats).all();
+
+  const byFlat = new Map();
+  for (const r of rows.results ?? []) {
+    if (!byFlat.has(r.flat)) byFlat.set(r.flat, []);
+    byFlat.get(r.flat).push(r);
+  }
+  return byFlat;
+}
+
+function mark(env, billId, kind, status, attempts, lastError) {
+  return env.DB.prepare(
+    `UPDATE maint_mail
+        SET status = ?, attempts = ?, last_error = ?,
+            sent_at = CASE WHEN ? = 'sent' THEN ? ELSE sent_at END
+      WHERE bill_id = ? AND kind = ?`
+  ).bind(status, attempts, lastError, status, new Date().toISOString(), billId, kind).run();
+}
+
+/**
+ * The nightly sweep. Never throws: a letter that cannot be sent must not cost
+ * the building its late-fee run, which is the rule every job in cron.js follows.
+ */
+export async function sweepMaintMail(env, { origin = '', today } = {}) {
+  try {
+    return await drainMaintMail(env, { origin, today });
+  } catch (err) {
+    return { sent: 0, failed: 0, reason: err?.code ?? 'threw' };
+  }
+}

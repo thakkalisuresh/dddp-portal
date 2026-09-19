@@ -8,6 +8,8 @@
  */
 
 import { lateFeeDecision, applyLateFee } from './billing.js';
+import { applyMaintLateFees, runMaintenance } from './maint-cron.js';
+import { sweepMaintMail } from './maint-mail.js';
 import { sweepAnnouncements } from './announce.js';
 import { sweepClosures, sweepReminders, pruneBallots } from './polls.js';
 import { drainPollMail } from './poll-mail.js';
@@ -210,15 +212,21 @@ export function isLateFeeCron(cron) {
 export async function runLateFees(env, ctx) {
   try {
     const fees = await applyLateFees(env);
+    // Maintenance fees land at the same instant and for the same reason: the
+    // pay link is built from the bill's total, so a fee applied at 08:30 would
+    // hand every early payer a stale amount. Swallowed separately so a failure
+    // in the newer stream cannot cost gas its run.
+    const maint = await applyMaintLateFees(env).catch(() => []);
+    const maintCharged = maint.reduce((n, m) => n + m.charged, 0);
     const charged = fees.reduce((n, f) => n + f.charged, 0);
     const exempt = fees.reduce((n, f) => n + (f.exempt ?? 0), 0);
     // Recorded rather than pushed. The morning digest is where a human reads
     // it; this only has to exist for the day somebody asks what happened at
     // midnight.
-    if (charged || exempt) {
-      await reportError(env, 'DDP-SYS-007', { charged, exempt, at: 'midnight-ist' }, ctx);
+    if (charged || exempt || maintCharged) {
+      await reportError(env, 'DDP-SYS-007', { charged, exempt, maintCharged, at: 'midnight-ist' }, ctx);
     }
-    return { fees, charged };
+    return { fees, charged, maint, maintCharged };
   } catch (err) {
     await reportError(env, err?.code ?? 'DDP-SYS-003', err, ctx);
     return null;
@@ -283,6 +291,20 @@ export async function runScheduled(env, ctx) {
     // this caller.
     const announced = await sweepAnnouncements(env).catch(() => []);
 
+    // ── maintenance ────────────────────────────────────────────────────
+    //
+    // Drafting, the confirm reminder, issuing a quarter whose day has come,
+    // and queueing the two run-up letters. The fee itself is NOT here — it
+    // runs at midnight beside the gas one, because the pay link is built from
+    // the total.
+    //
+    // Queue first, drain second, so a letter queued this minute goes out on
+    // this run rather than waiting until tomorrow. Both swallow their own
+    // failures, for the reason every sweep here does: maintenance must never
+    // cost the building its gas fee run.
+    const maintenance = await runMaintenance(env).catch(() => null);
+    const maintMail = await sweepMaintMail(env).catch(() => ({ sent: 0, failed: 0 }));
+
     // ── polls ──────────────────────────────────────────────────────────
     //
     // Closing is decided ON READ (see isClosed in lib/polls.js) because these
@@ -319,6 +341,7 @@ export async function runScheduled(env, ctx) {
 
     return {
       fees, stale: stale.length, announced, digest, healthcheck,
+      maintenance, maintMail,
       // Counts of polls and of sends — never of recipients by kind, which for
       // a reminder would be the turnout. See drainPollMail.
       polls: { closed: pollsClosed, reminded: pollsReminded, mail: pollMail, ballotsPruned },

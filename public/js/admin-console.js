@@ -17,6 +17,7 @@ import { mobileField } from './mobile-field.js';
 import { ADMINISTRATOR } from './contact.js';
 import { money, kg, periodLabel, dayLabel } from './i18n.js';
 import { billingPanel, nextMonth } from './admin-billing.js';
+import { maintPanel } from './admin-maint.js';
 
 const main = $('#main');
 let me = null;
@@ -67,6 +68,11 @@ const TABS = [
   // tab now, in the order the month actually happens: the price of gas, the
   // meter walk, then review and publish. Nine tabs became eight.
   { id: 'billing',   label: 'Billing',   render: billingPanel },
+  // Its own tab beside Billing rather than inside it. They are both "raise the
+  // bills", but one is a monthly meter walk and the other a quarterly flat rate
+  // on a different account, and folding them together would mean a screen that
+  // changes shape depending on the time of year.
+  { id: 'maint',     label: 'Maintenance', render: maintPanel },
   { id: 'bills',     label: 'Bills',     render: billsPanel },
   { id: 'proofs',    label: 'Proofs',    href: '/admin/proofs.html' },
   { id: 'statement', label: 'Reconcile', href: '/admin/statement.html' },
@@ -144,6 +150,34 @@ function scrollTabIntoView(nav) {
   syncTabFade(nav);
 }
 
+/**
+ * Which tab is on screen, so the hash router below can tell a real navigation
+ * from `show()` writing the hash it just landed on.
+ */
+let shown = null;
+
+/**
+ * The hash IS the console's router, and until now only on a page load.
+ *
+ * Every panel that sends the admin somewhere else does it the same way — the
+ * tenancy dialog's "Yes, they have left" goes to Residents to finish the job,
+ * Collect links to Bills for the quarter — and all of them wrote a hash onto
+ * the page they were already on. A same-document hash is not a navigation: the
+ * browser does not reload, `init` never runs again, and the panel the admin
+ * asked to leave stays exactly where it was. The links looked live and did
+ * nothing, which is worse than not offering them, because the "Yes, they have
+ * left" path deliberately does not write anything itself — it exists only to
+ * hand the admin to Residents.
+ *
+ * Found by clicking it, not by the suite: every one of these is a string
+ * assignment no test observes.
+ */
+addEventListener('hashchange', () => {
+  const id = location.hash.slice(1);
+  if (!id || id === shown) return;
+  show(id);
+});
+
 async function show(id) {
   // The same role test as renderTabs, applied to the destination rather than
   // to the tab strip. Hiding a tab only hides the button: /admin/#errors typed
@@ -152,6 +186,7 @@ async function show(id) {
   // should simply land somewhere sensible.
   const visible = (t) => t.render && (!t.superadmin || me.role === 'superadmin');
   const tab = TABS.find((t) => t.id === id && visible(t)) ?? TABS.find(visible);
+  shown = tab.id;
   location.hash = tab.id;
   // Tabs change the view without a page load, so trackPage never fires for
   // them. Without this, an admin's whole session reads as one visit to /admin.
@@ -548,6 +583,44 @@ function flatCard(group, status, open = false, reload = async () => {}) {
     ...group.people.map((p) => personCard(p, status, group, reload)));
 }
 
+/**
+ * What a resident row gains from maintenance.
+ *
+ * Each cell is ABSENT when it has nothing to say, rather than showing a dash.
+ * Most residents most of the time have no advance and no voting block, and
+ * three permanently empty cells on every card would bury the two that matter on
+ * the cards where they appear.
+ */
+function maintenanceCells(p, staticCell) {
+  const cells = [];
+
+  if (p.maint_status) {
+    // The QUARTER beside the status, because "unpaid" without one is a fact
+    // with no date attached and the next question is always "since when".
+    cells.push(staticCell('Maintenance',
+      `${p.maint_quarter ?? ''} · ${p.maint_status}`.trim()));
+  }
+
+  if (p.advance_through) {
+    cells.push(staticCell('Paid in advance to', p.advance_through));
+  }
+
+  // Only when it is BLOCKED. A card telling somebody their vote works is a
+  // card that says nothing, and it would appear on every row in the building.
+  if (p.voting_blocked) {
+    cells.push(staticCell('Vote', 'Locked — maintenance outstanding'));
+  }
+
+  // A tenancy the maintenance check has flagged, said here too. An admin who
+  // opens a resident to fix something should not have to learn from another
+  // screen that this is the record holding the quarter up.
+  if (p.relationship === 'tenant' && !p.lease_ends_at) {
+    cells.push(staticCell('Lease ends', 'not recorded'));
+  }
+
+  return cells;
+}
+
 /** "Two owners and a tenant. One more owner login would fit." */
 function householdLine(current) {
   const owners = current.filter((p) => p.relationship === 'owner').length;
@@ -613,7 +686,12 @@ function personCard(p, status, group = null, reload = async () => {}) {
         : editable(p, 'mobile', 'Mobile', status),
       inactive || lockedToMe
         ? staticCell('Email', p.email || '—')
-        : editable(p, 'email', 'Email', status, { type: 'email', placeholder: 'none' })),
+        : editable(p, 'email', 'Email', status, { type: 'email', placeholder: 'none' }),
+
+      // COLUMNS, not a second screen. Three facts about this person that an
+      // admin looking at their card would otherwise have to go to the
+      // Maintenance tab to learn.
+      ...maintenanceCells(p, staticCell)),
 
     // Resetting is the superadmin's alone as of 2026-08-12. An admin who could
     // reset 7B could log in AS 7B, so the button is not merely hidden — the
@@ -650,7 +728,122 @@ function personCard(p, status, group = null, reload = async () => {}) {
             + 'login page — a code goes to their own email, so nobody else ever holds '
             + `their password. If their email is wrong, ask ${ADMINISTRATOR.name}.`)),
 
-    departControl(p, group, reload, inactive || lockedToMe));
+    departControl(p, group, reload, inactive || lockedToMe),
+    movedOutControl(p, reload, inactive || lockedToMe));
+}
+
+/**
+ * A tenant has moved out.
+ *
+ * ON THE PERSON'S ROW, not on the flat card. The card is the flat; the
+ * departure is a fact about somebody, and a flat may hold two tenant logins
+ * (0040) — the row is the only thing that says which one left.
+ *
+ * NOTHING HERE WRITES. It raises a request that a second admin approves, for
+ * the reason 0045 gives: recording a departure re-rates the quarter, moves an
+ * unpaid bill to somebody who did not incur it, switches who the letters go to
+ * and takes away a login, and one admin should not do all of that from a card
+ * while nobody is looking.
+ */
+function movedOutControl(p, reload, locked) {
+  if (locked || p.relationship !== 'tenant' || p.active === 0) return null;
+
+  const slot = el('div');
+  const open = () => {
+    // A DATE, not the month picker the tenancy START uses, and the two
+    // conventions differ on purpose. A start is remembered as a month; a
+    // departure decides which side of the issue date it falls on, and a month
+    // cannot express 30 September against 3 October — a re-rate and a
+    // reassignment respectively. 0045 says the same thing in the schema.
+    const when = el('input', {
+      class: 'input', type: 'date', value: todayInput(),
+      'aria-label': `The day ${p.name} left ${p.flat}`,
+    });
+    const becomes = el('select', { class: 'input', 'aria-label': `What ${p.flat} becomes` },
+      el('option', { value: 'owner' }, 'Owner'),
+      el('option', { value: 'tenant' }, 'New tenant'),
+      el('option', { value: 'empty' }, 'Nobody'));
+    const reason = el('input', {
+      class: 'input', placeholder: 'Lease ended, moved to Bangalore',
+      'aria-label': `Why ${p.name} is no longer in ${p.flat}`,
+    });
+
+    const consequences = el('div', { class: 'stack', style: 'gap:var(--s-2)' });
+    const out = el('div');
+    const go = el('button', { class: 'btn btn--sm', type: 'button' }, 'Send for approval');
+
+    // RECOMPUTED WHENEVER THE INPUTS MOVE, and computed on the server so this
+    // dialog and the approval a week later describe the same thing. A dialog
+    // whose consequences go stale while its date is being fiddled with is worse
+    // than one that shows none: it looks authoritative and is not.
+    const recompute = async () => {
+      setChildren(consequences, el('p', { class: 'small muted' }, 'Working out what this would do…'));
+      try {
+        const plan = await api.admin.departurePreview({
+          personId: p.id, movedOutOn: when.value, becomes: becomes.value,
+        });
+        setChildren(consequences,
+          el('p', { class: 'label' }, 'Saving this will:'),
+          el('ul', { class: 'conseq' },
+            ...plan.lines.map((l) => el('li', { class: 'small' }, l.text))));
+      } catch (err) {
+        setChildren(consequences, el('p', { class: 'small bad' },
+          err.message ?? 'Could not work out what this would do.'));
+      }
+    };
+    when.addEventListener('change', recompute);
+    becomes.addEventListener('change', recompute);
+
+    go.addEventListener('click', async () => {
+      if (!when.value) { setChildren(out, el('p', { class: 'small bad' }, 'Pick the day they left.')); return; }
+      go.disabled = true;
+      try {
+        await api.admin.requestDeparture({
+          personId: p.id, movedOutOn: when.value, becomes: becomes.value,
+          reason: reason.value || reason.placeholder,
+        });
+        setChildren(slot, el('p', { class: 'note note--good small' },
+          `Sent. ${p.name} keeps their login and stays on the letters until another admin agrees.`));
+        await reload();
+      } catch (err) { go.disabled = false; showError(out, err); }
+    });
+
+    setChildren(slot, el('div', { class: 'note note--warn stack', style: 'gap:var(--s-3)',
+                                  role: 'alertdialog' },
+      el('p', { class: 'label' }, `Tenant moved out · Flat ${p.flat}`),
+      el('p', { class: 'small muted' },
+        `${p.name}${p.moved_in_at ? `, tenant since ${shortMonth(p.moved_in_at)}` : ''}`),
+      el('div', { class: 'field' }, el('label', {}, 'Moved out on'), when),
+      el('div', { class: 'field' }, el('label', {}, 'Who is in the flat now?'), becomes),
+      consequences,
+      el('div', { class: 'field' }, el('label', {}, 'Why (kept with the approval)'), reason),
+      // The timing, said ONCE and at the foot rather than inside the list of
+      // consequences: the list is what saving does, this is when it happens.
+      el('p', { class: 'small' },
+        `Nothing changes until a second admin approves this. ${p.name} keeps their `
+        + 'login until then.'),
+      out,
+      el('div', { class: 'row', style: 'gap:var(--s-3);flex-wrap:wrap' }, go,
+        el('button', { class: 'linkish small', type: 'button',
+                       onclick: () => slot.replaceChildren() }, 'They still live here'))));
+    recompute();
+  };
+
+  return el('div', { style: 'margin-top:var(--s-3)' },
+    el('button', { class: 'btn btn--sm btn--quiet', type: 'button', onclick: open },
+      'Tenant moved out'),
+    slot);
+}
+
+/** '2025-08-14' -> '08/25'. Month precision, which is how a tenancy start is remembered. */
+function shortMonth(iso) {
+  const [y, m] = String(iso ?? '').split('-');
+  return y && m ? `${m}/${y.slice(2)}` : String(iso ?? '');
+}
+
+/** Today, as a date input wants it. The building's own date, not the browser's UTC. */
+function todayInput() {
+  return new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
 }
 
 /**
@@ -700,6 +893,87 @@ function departControl(p, group, reload, locked) {
   return el('div', { style: 'margin-top:var(--s-3)' },
     el('button', { class: 'btn btn--sm btn--quiet', type: 'button', onclick: ask },
       'No longer lives here'),
+    slot);
+}
+
+/**
+ * When the tenancy started, when the lease ends, and when a human last checked.
+ *
+ * THE THREE DATES THAT DECIDE A RATE, on the card where an admin already is.
+ * Until now the lease end and the confirmation stamp existed only on the
+ * Maintenance tab's step 2, which meant the screen that shows who lives in a
+ * flat could not tell you whether that record was trustworthy — and step 2 is
+ * the thing that blocks a quarter going out.
+ *
+ * `lease_ends_at` DOES NOT DECIDE WHO PAYS, and the wording here is careful not
+ * to suggest it does. A lapsed lease with the tenant still in the flat is the
+ * common case in this building (isResidentOn in lib/maint.js says so at
+ * length); the date is a data-quality signal that a person resolves, not an
+ * occupancy fact. "Ends" rather than "ended", and never "no longer a tenant".
+ */
+function tenancyDates(tenant, reload) {
+  const out = el('span', { class: 'small' });
+  const slot = el('div');
+
+  const save = async (leaseEndsAt) => {
+    out.textContent = 'Saving…';
+    try {
+      await api.admin.confirmTenancy(tenant.id, leaseEndsAt);
+      slot.replaceChildren();
+      await reload();
+    } catch (err) {
+      out.textContent = err.message ?? 'Could not save that.';
+    }
+  };
+
+  const editLease = () => {
+    const input = el('input', {
+      class: 'input', type: 'date', value: (tenant.lease_ends_at ?? '').slice(0, 10),
+      'aria-label': `When ${tenant.name}'s lease ends`,
+    });
+    slot.replaceChildren(el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+      el('div', { class: 'field' }, el('label', {}, 'Lease ends'), input),
+      el('div', { class: 'row', style: 'gap:var(--s-3);flex-wrap:wrap' },
+        el('button', {
+          class: 'btn btn--sm', type: 'button',
+          onclick: () => {
+            if (!input.value) { out.textContent = 'Pick a date first.'; return; }
+            save(input.value);
+          },
+        }, 'Save'),
+        el('button', { class: 'linkish small', type: 'button',
+                       onclick: () => slot.replaceChildren() }, 'Cancel'))));
+    input.focus();
+  };
+
+  const confirmed = tenant.tenancy_confirmed_at
+    ? `Last confirmed ${dayLabel(tenant.tenancy_confirmed_at)} `
+      + `${new Date(tenant.tenancy_confirmed_at).getUTCFullYear()}.`
+    // Said plainly rather than left blank: an unchecked tenancy is what holds a
+    // quarter up, and a card that omits the fact reads as one that is fine.
+    : 'Nobody has confirmed this tenancy.';
+
+  return el('div', { class: 'stack', style: 'gap:var(--s-2)' },
+    el('p', { class: 'small muted' },
+      (tenant.moved_in_at
+        ? `Tenancy started ${monthLabel(tenant.moved_in_at) ?? tenant.moved_in_at}. `
+        : '')
+      + (tenant.lease_ends_at
+        // Written out, like every other date on this screen. A bare ISO string
+        // beside "Last confirmed 14 Sep 2026" reads as a different kind of fact.
+        ? `Lease ends ${dayLabel(tenant.lease_ends_at)} `
+          + `${new Date(tenant.lease_ends_at).getUTCFullYear()}. `
+        : 'No lease end on record. ')
+      + confirmed),
+    el('div', { class: 'row', style: 'gap:var(--s-3);flex-wrap:wrap' },
+      el('button', { class: 'btn btn--sm btn--quiet', type: 'button', onclick: editLease },
+        tenant.lease_ends_at ? 'Change the lease end' : 'Add the lease end'),
+      // The cheapest way to clear step 2's `unchecked` flag, and the only one
+      // that changes nothing about the tenancy: it records that a human looked.
+      el('button', {
+        class: 'btn btn--sm btn--quiet', type: 'button', onclick: () => save(null),
+      }, 'Still here'),
+      out),
     slot);
 }
 
@@ -1105,9 +1379,61 @@ async function homePanel() {
       foldedSection('Keeping a copy', null, exportPanel));
   }
   return el('div', { class: 'stack' },
+    // FIRST while the quarter is unscheduled, and back among the others once it
+    // is. A card nobody has acted on belongs at the top; a receipt does not.
+    ...(summary.maintenance?.state === 'unscheduled' ? [maintenanceCard(summary.maintenance)] : []),
     standingPanel(summary),
+    ...(summary.maintenance?.state === 'scheduled' ? [maintenanceCard(summary.maintenance)] : []),
     waitingPanel(summary),
     foldedSection('Keeping a copy', null, exportPanel));
+}
+
+/**
+ * The maintenance quarter, while it needs attention.
+ *
+ * Present for the seven days before a quarter goes out and gone once it has.
+ * Unscheduled it says how long is left and what is blocking; scheduled it is a
+ * receipt line and nothing more.
+ *
+ * THE URGENCY ESCALATES, in two steps rather than one. A card that looks urgent
+ * for seven days straight is wallpaper by day three, so it is quiet until two
+ * days out and only shouts once the quarter has actually started with nothing
+ * scheduled — which is the one state where bills are genuinely late.
+ */
+function maintenanceCard(card) {
+  const tone = { calm: 'note--good', soon: 'note', urgent: 'note--warn', overdue: 'note--bad' };
+
+  if (card.state === 'scheduled') {
+    return el('div', { class: `panel ${tone.calm}` },
+      el('p', {}, el('strong', {}, `${card.quarterLabel} issues on ${dayLabel(card.issueDate)}`)),
+      el('p', { class: 'small' }, `${card.flats} flats · ${money(card.total)}`),
+      el('button', { class: 'btn btn--sm btn--ghost', type: 'button',
+                     onclick: () => show('maint') }, 'Open Maintenance'));
+  }
+
+  // THE WORDS CHANGE, not only the colour. A card that merely turns amber is
+  // decoration by the third day; "the quarter started 4 days ago, nobody has
+  // been billed" is a different sentence from "starts in 7 days", and it is the
+  // sentence that gets somebody to act.
+  const line = card.daysOverdue > 0
+    ? `The quarter started ${card.daysOverdue} day${card.daysOverdue === 1 ? '' : 's'} ago. `
+      + 'Nobody has been billed.'
+    : card.daysRemaining === 0
+      ? 'The quarter starts today.'
+      : `The quarter starts in ${card.daysRemaining} day${card.daysRemaining === 1 ? '' : 's'}.`;
+
+  return el('div', { class: `panel ${tone[card.urgency] ?? 'note'}` },
+    el('p', {}, el('strong', {}, `${card.quarterLabel} is not scheduled`)),
+    el('p', { class: 'small' },
+      line
+      // The blocker, on the card. "Schedule the quarter" is not actionable
+      // until you know what is stopping it. Left off the overdue state on
+      // purpose: there, the tenancies are not the headline any more.
+      + (card.daysOverdue === 0 && card.tenanciesToConfirm
+          ? ` ${card.tenanciesToConfirm} tenanc${card.tenanciesToConfirm === 1 ? 'y' : 'ies'} to confirm.`
+          : '')),
+    el('button', { class: 'btn btn--sm', type: 'button', onclick: () => show('maint') },
+      card.tenanciesToConfirm ? 'Check the tenancies' : 'Schedule the quarter'));
 }
 
 /** Home with its figures missing: still a way in to every section. */
@@ -1388,6 +1714,15 @@ function bulkLine(s, status) {
 
 async function billsList() {
   const search = el('input', { class: 'input', placeholder: '10C', id: 'b-flat' });
+  // A FILTER, NOT A SECOND SCREEN. Gas and maintenance interleave in one list
+  // sorted by due date — a quarter is a period whose label happens to be a
+  // quarter, and two half-screens is what treating them as different species
+  // produces. The user rejected a Gas/Maintenance switch on the Billing page;
+  // this is a filter on one list, which is a different thing.
+  const kind = el('select', { class: 'input', id: 'b-kind' },
+    el('option', { value: '' }, 'Gas and maintenance'),
+    el('option', { value: 'gas' }, 'Gas only'),
+    el('option', { value: 'maintenance' }, 'Maintenance only'));
   const list = el('div', { class: 'stack' });
   const status = el('div');
 
@@ -1395,7 +1730,10 @@ async function billsList() {
     const flat = search.value.trim().toUpperCase();
     list.replaceChildren(el('p', { class: 'muted' }, 'Loading…'));
     try {
-      const { bills } = await api.admin.bills(flat ? `?flat=${encodeURIComponent(flat)}` : '');
+      const query = new URLSearchParams();
+      if (flat) query.set('flat', flat);
+      if (kind.value) query.set('kind', kind.value);
+      const { bills } = await api.admin.bills(query.toString() ? `?${query}` : '');
       // Newest first and capped: the console is for finding the bill somebody
       // just rang about, not for reading a year of them.
       const shown = bills.slice(0, flat ? 24 : 40);
@@ -1423,15 +1761,27 @@ async function billsList() {
    * real history, they no longer follow a rate change, and the doctor counts
    * them (BILL-OVERRIDE) so the number can go to zero.
    */
-  const billRow = (b) => el('div', { class: 'rowitem' },
+  const billRow = (b) => el('div', { class: 'rowitem', 'data-kind': b.kind },
     el('div', { class: 'rowitem__main' },
-      el('b', {}, `${b.flat} · ${periodLabel(b.period)}`),
+      el('b', {},
+        `${b.flat} · `,
+        // The period column reads "September 2026" or "Q4 2026" as appropriate.
+        // One column, two shapes of label, because that is what the row is.
+        b.kind === 'maintenance' ? b.periodLabel : periodLabel(b.period)),
       el('div', {},
-        `${kg(b.consumption)} at ₹${b.rate_per_kg} · ${money(b.total)} · ${b.status}`,
+        b.kind === 'maintenance'
+          // No meter arithmetic to quote. What explains a maintenance amount is
+          // WHICH RATE it was billed at, which is the question the treasurer
+          // actually gets asked about it.
+          ? `${b.basis === 'tenant' ? 'Rented' : 'Owner'} rate `
+            + `₹${b.rate_applied} · ${money(b.total)} · ${b.status}`
+          : `${kg(b.consumption)} at ₹${b.rate_per_kg} · ${money(b.total)} · ${b.status}`,
+        b.late_fee ? ` · incl. ${money(b.late_fee)} late fee` : '',
         b.manual_total ? ' · amount typed in, before corrections were reworked' : '',
         b.mismatch ? ' · does not match its own components' : '')));
 
   search.addEventListener('change', load);
+  kind.addEventListener('change', load);
   await load();
 
   return el('div', { class: 'panel stack' },
@@ -1443,6 +1793,7 @@ async function billsList() {
       el('button', { class: 'linkish', type: 'button', onclick: () => show('billing') }, 'Billing'),
       '. Either way it goes to two other admins, and applies when they agree.'),
     el('div', { class: 'field' }, el('label', { for: 'b-flat' }, 'Flat'), search),
+    el('div', { class: 'field' }, el('label', { for: 'b-kind' }, 'Show'), kind),
     status,
     list);
 }
@@ -1989,10 +2340,7 @@ function occupancyControl(group, status, reload) {
   return el('div', { class: 'stack', style: 'gap:var(--s-3);margin:var(--s-3) 0' },
     el('div', { class: 'field' },
       el('label', { for: `occ-${group.flat}` }, 'Who is in this flat'), select),
-    curTenant?.moved_in_at
-      ? el('p', { class: 'small muted' },
-          `Tenancy started ${monthLabel(curTenant.moved_in_at) ?? curTenant.moved_in_at}.`)
-      : null,
+    curTenant ? tenancyDates(curTenant, reload) : null,
     panel);
 
   function occupancyResult(r, flat) {

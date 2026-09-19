@@ -10,6 +10,7 @@
 import { reportError, fail } from './errors.js';
 import { noticeHtml, noticeSignature } from './notice-doc.js';
 import { roleAsSeenBy } from './tenancy.js';
+import { proofBucket } from './proof.js';
 
 /**
  * Every table carried off-site, in dependency order — restore reads top to
@@ -54,6 +55,29 @@ export const TABLES = [
   // Batches before the reminders that point at them, since a restore reads
   // the bundle top to bottom.
   'reminder_batches', 'bill_reminders',
+  // Maintenance, parents first: a bill points at its quarter, a proof and an
+  // approval point at the bill. Every one of these is a financial record the
+  // association may be asked to produce years later, which is the whole reason
+  // the bundle exists.
+  'maint_quarters', 'maint_bills', 'maint_advances',
+  // The exemption lists are backed up for the same reason the late-fee columns
+  // on `owners` are: they are decisions the committee made, and a restore that
+  // lost them would silently start charging fees and blocking votes that
+  // somebody had explicitly excused.
+  'maint_fee_exemptions', 'voting_exemptions',
+  'maint_approval_requests', 'maint_approvals',
+  // Departures waiting on a second admin, and the signatures already on them.
+  // Backed up rather than skipped as working material: an approval is somebody
+  // agreeing to end a tenancy and move a bill, and a restore that dropped a
+  // half-signed one would silently ask the committee to agree twice -- or lose
+  // the record that they ever agreed at all.
+  'tenancy_change_requests', 'tenancy_change_approvals',
+  // The maintenance outbox, after the bills it points at, and for the reason
+  // bill_announcements is backed up: it is the record of who has ALREADY been
+  // told. A restore that brought back the bills without it would find every row
+  // missing, queue the whole quarter afresh, and write to the building four
+  // times about letters they received weeks ago.
+  'maint_mail',
   'settings', 'alert_episodes', 'audit_log',
 ];
 
@@ -509,9 +533,18 @@ export function proofBackupName({ flat, utr, image_sha256: hash }, contentType =
  */
 export async function backupProofs(env, token, { limit = PROOF_BATCH } = {}) {
   const { results } = await env.DB.prepare(
-    `SELECT p.id, p.r2_key, p.utr, p.image_sha256, b.flat, b.period
+    // LEFT JOIN to BOTH bill tables, resolving flat and period from whichever id
+    // the proof carries. The old INNER JOIN to `bills` alone silently dropped
+    // every MAINTENANCE proof — bill_id is null on those — so a whole class of
+    // payment evidence was never copied off-site. maint's quarter stands in for
+    // the gas period; it is only a folder name on Drive. The image itself is
+    // read from the bucket the proof belongs to — see proofBucket().
+    `SELECT p.id, p.r2_key, p.utr, p.image_sha256, p.maint_bill_id,
+            COALESCE(b.flat, mb.flat) AS flat,
+            COALESCE(b.period, mb.quarter) AS period
        FROM payment_proofs p
-       JOIN bills b ON b.id = p.bill_id
+       LEFT JOIN bills b ON b.id = p.bill_id
+       LEFT JOIN maint_bills mb ON mb.id = p.maint_bill_id
       WHERE p.r2_key IS NOT NULL
         AND p.deleted_at IS NULL
         AND p.backed_up_at IS NULL
@@ -531,7 +564,7 @@ export async function backupProofs(env, token, { limit = PROOF_BATCH } = {}) {
 
   for (const row of pending) {
     try {
-      const object = await env.PROOFS.get(row.r2_key);
+      const object = await proofBucket(env, row).get(row.r2_key);
       // The row says there is an image and the bucket disagrees. Marking it
       // copied would be a lie; leaving it unmarked retries a file that will
       // never appear, every night. Counted as a failure so the digest says so,
