@@ -8,6 +8,7 @@ import {
   archiveConfigured, archiveKey, writeMonthlyArchive, ARCHIVE_SETTING, maskForViewer,
 } from '../functions/lib/backup.js';
 import { mailConfigured } from '../functions/lib/mailer.js';
+import { testEnv, seed, rows } from './support/d1.js';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -410,6 +411,84 @@ describe('the proof images go too', () => {
     };
     await backupProofs(env, 'tok');
     expect(called).toBe(false);
+  });
+});
+
+describe('maintenance proofs are backed up too, from their own bucket', () => {
+  // Real migrations, because the guarantee is the JOIN: backupProofs() used to
+  // INNER JOIN `bills`, which silently dropped every maintenance proof (bill_id
+  // is null on those), so maintenance payment evidence was never copied off-site.
+  const image = () => ({
+    httpMetadata: { contentType: 'image/jpeg' },
+    arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+  });
+  const driveOk = () => {
+    globalThis.fetch = async (url, init) => (init?.method === 'POST' || String(url).includes('upload')
+      ? { ok: true, json: async () => ({ id: 'F', name: 'x.jpg' }) }
+      : { ok: true, json: async () => ({ files: [{ id: 'DIR' }] }) });
+  };
+  afterEach(() => { globalThis.fetch = undefined; });
+
+  function seeded(extra = {}) {
+    const { db, env } = testEnv({ GOOGLE_BACKUP_FOLDER_ID: 'PARENT', ...extra });
+    seed(db, { flats: ['4B'], people: [{ id: 3, flat: '4B', relationship: 'tenant' }] });
+    db.prepare(
+      `INSERT INTO maint_quarters (quarter, owner_rate, tenant_rate, late_fee, issue_date, due_date, status, created_at)
+       VALUES ('2026-Q4', 7500, 9000, 750, '2026-10-01', '2026-10-11', 'issued', '2026-09-24T00:00:00Z')`
+    ).run();
+    db.prepare(
+      `INSERT INTO maint_bills (id, flat, quarter, owner_id, rate_applied, basis, late_fee, total, status, created_at)
+       VALUES (1, '4B', '2026-Q4', 3, 9000, 'tenant', 0, 9000, 'unpaid', '2026-10-01T00:00:00Z')`
+    ).run();
+    return { db, env };
+  }
+
+  it('sweeps a maintenance proof and reads it from MAINT_PROOFS, not PROOFS', async () => {
+    // PROOFS returns null: if backupProofs read the wrong bucket the object
+    // would be "missing", counted failed and never marked. Only the maint bucket
+    // holds it, so a copied:1 proves the query picked the maint proof up AND the
+    // read used the right bucket.
+    const { db, env } = seeded({
+      PROOFS: { get: async () => null },
+      MAINT_PROOFS: { get: async () => image() },
+    });
+    db.prepare(
+      `INSERT INTO payment_proofs (bill_id, maint_bill_id, owner_id, r2_key, image_sha256, utr, parsed_amount, status, created_at)
+       VALUES (NULL, 1, 3, 'proofs/2026-Q4/4B/abc.jpg', 'abc', '402318889021', 9000, 'pending', '2026-10-02T00:00:00Z')`
+    ).run();
+    driveOk();
+
+    const out = await backupProofs(env, 'tok');
+    expect(out).toMatchObject({ copied: 1, failed: 0 });
+    const [p] = rows(db, 'SELECT backed_up_at FROM payment_proofs WHERE maint_bill_id = 1');
+    expect(p.backed_up_at).not.toBeNull();
+  });
+
+  it('still routes a gas proof to PROOFS, not the maintenance bucket', async () => {
+    const { db, env } = seeded({
+      PROOFS: { get: async () => image() },
+      MAINT_PROOFS: { get: async () => null },   // a gas proof must NOT be read here
+    });
+    db.prepare(
+      `INSERT OR IGNORE INTO periods (period, rate_per_kg, conversion_factor, due_date, late_fee, status, created_at)
+       VALUES ('2026-09', 60, 2.6, '2026-10-10', 50, 'open', '2026-09-01T00:00:00Z')`
+    ).run();
+    db.prepare(
+      `INSERT INTO bills (id, flat, period, owner_id, consumption, meter_delta, rate_per_kg,
+                          conversion_factor, gas_amount, other_charges, additional_charges,
+                          late_fee, total, status, created_at)
+       VALUES (50, '4B', '2026-09', 3, 4.0, 1.538, 60, 2.6, 240, 0, 0, 0, 240, 'unpaid', '2026-10-01T00:00:00Z')`
+    ).run();
+    db.prepare(
+      `INSERT INTO payment_proofs (bill_id, maint_bill_id, owner_id, r2_key, image_sha256, utr, parsed_amount, status, created_at)
+       VALUES (50, NULL, 3, 'proofs/2026-09/4B/def.jpg', 'def', '402318889099', 240, 'pending', '2026-10-02T00:00:00Z')`
+    ).run();
+    driveOk();
+
+    const out = await backupProofs(env, 'tok');
+    expect(out).toMatchObject({ copied: 1, failed: 0 });
+    const [p] = rows(db, 'SELECT backed_up_at FROM payment_proofs WHERE bill_id = 50');
+    expect(p.backed_up_at).not.toBeNull();
   });
 });
 

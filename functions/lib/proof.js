@@ -233,3 +233,17 @@ export function shapeQueue({ proofs = [], claimed = [], decided = [] }) {
 export function r2Key(flat, period, hash) {
   return `proofs/${period}/${flat}/${hash.slice(0, 16)}.jpg`;
 }
+
+/**
+ * Which R2 bucket a payment proof's image lives in.
+ *
+ * Maintenance proofs are stored apart from gas: PROOFS is reachable from the
+ * public gas payment path, and the committee wanted the maintenance evidence in
+ * a bucket of its own. A proof carries exactly one of the two bill ids (0042
+ * CHECKs it), so a non-null maint_bill_id is the whole test — the same signal
+ * every read here already keys off. Pass a row with `maint_bill_id`, or at
+ * upload time decide from `isMaint` directly.
+ */
+export function proofBucket(env, row) {
+  return row?.maint_bill_id != null ? env.MAINT_PROOFS : env.PROOFS;
+}

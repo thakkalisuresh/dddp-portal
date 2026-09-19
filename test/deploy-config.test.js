@@ -213,11 +213,12 @@ describe('the archive bucket is bound once, and only to production', () => {
   });
 
   it('has no preview target, because previews must not archive at all', () => {
-    // Unlike PROOFS, which needs a disposable bucket because previews really
-    // do upload. The only preview_bucket_name in the file should still be the
-    // proofs one; a second would mean somebody gave previews an archive.
-    const previewBuckets = pages.match(/^preview_bucket_name\s*=/gm) ?? [];
-    expect(previewBuckets).toHaveLength(1);
+    // Unlike the two proof buckets, which need disposable preview targets
+    // because previews really do upload. Every preview_bucket_name must point at
+    // a disposable staging bucket; none may be the archive.
+    const previewBuckets = pages.match(/^preview_bucket_name\s*=.*$/gm) ?? [];
+    expect(previewBuckets).toHaveLength(2);   // PROOFS + MAINT_PROOFS, both disposable
+    expect(previewBuckets.every((line) => /-staging"\s*$/.test(line))).toBe(true);
     expect(pages).not.toMatch(/^preview_bucket_name\s*=\s*"dddp-archive"/m);
   });
 });

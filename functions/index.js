@@ -38,7 +38,7 @@ import { reminderDecision, batchDecision, reminderEmail, periodLabel, MAX_REMIND
 import {
   approvalPolicy, canApprove, isSatisfied, needsApproval, expiresAt, approvalMessage,
 } from './lib/approvals.js';
-import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
+import { validateUpload, assessProof, shapeQueue, r2Key, proofBucket } from './lib/proof.js';
 import { validateStatement, parseStatement, reconcile, bucketReconciliation, sweepAbandonedStatements } from './lib/statement.js';
 import { maintAccountHint } from './lib/upi.js';
 import { describeDeparture, departureInputs } from './lib/tenancy-change.js';
@@ -3177,10 +3177,12 @@ async function proofArchive(env, url) {
  */
 async function deleteProof(env, session, path) {
   const id = Number(path.split('/')[4]);
-  const proof = await env.DB.prepare('SELECT r2_key FROM payment_proofs WHERE id = ?').bind(id).first();
+  const proof = await env.DB.prepare(
+    'SELECT r2_key, maint_bill_id FROM payment_proofs WHERE id = ?'
+  ).bind(id).first();
   if (!proof) return problem(404, 'DDP-PROOF-005', 'That submission could not be found.');
 
-  if (proof.r2_key) await env.PROOFS.delete(proof.r2_key).catch(() => {});
+  if (proof.r2_key) await proofBucket(env, proof).delete(proof.r2_key).catch(() => {});
   await env.DB.prepare(
     'UPDATE payment_proofs SET r2_key = NULL, deleted_at = ? WHERE id = ?'
   ).bind(new Date().toISOString(), id).run();
@@ -3684,7 +3686,11 @@ async function uploadProof(request, env, session, ctx, path) {
          session.subject.id, key, hash, parsed.utr, parsed.amount, now).first();
 
   try {
-    await env.PROOFS.put(key, bytes, { httpMetadata: { contentType: file.type } });
+    // Maintenance proofs go to their own bucket. isMaint here is what the proof
+    // row records as maint_bill_id, so upload and every later read agree on
+    // which bucket holds the object — see proofBucket().
+    await proofBucket(env, { maint_bill_id: isMaint ? bill.id : null })
+      .put(key, bytes, { httpMetadata: { contentType: file.type } });
   } catch (err) {
     // Row exists, object doesn't: visible and recoverable, unlike the reverse.
     await reportError(env, 'DDP-PROOF-004', err, ctx);
@@ -3723,7 +3729,7 @@ async function proofImage(env, session, path) {
   // an inner join to `bills` alone makes every maintenance screenshot a 404 —
   // including for the resident who uploaded it.
   const row = await env.DB.prepare(
-    `SELECT p.r2_key, p.deleted_at, p.owner_id,
+    `SELECT p.r2_key, p.deleted_at, p.owner_id, p.maint_bill_id,
             COALESCE(b.flat, mb.flat) AS flat,
             COALESCE(b.owner_id, mb.owner_id) AS bill_owner_id
        FROM payment_proofs p
@@ -3754,7 +3760,7 @@ async function proofImage(env, session, path) {
     return problem(410, 'DDP-PROOF-005', 'That image has been deleted.');
   }
 
-  const object = await env.PROOFS.get(row.r2_key);
+  const object = await proofBucket(env, row).get(row.r2_key);
   if (!object) {
     await reportError(env, 'DDP-PROOF-005', { proofId, key: row.r2_key });
     return problem(404, 'DDP-PROOF-005', 'That image is missing from storage.');

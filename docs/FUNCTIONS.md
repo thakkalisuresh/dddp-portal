@@ -692,6 +692,7 @@ Payment proofs.
 | fn | `validateUpload` |  |
 | fn | `shapeQueue` | The treasurer's queue has TWO sections, because most residents pay and never upload anything — that is the normal case, not an edge case (plan §4b). |
 | fn | `r2Key` |  |
+| fn | `proofBucket` | Which R2 bucket a payment proof's image lives in. |
 
 ### `functions/lib/public.js`
 
@@ -1209,4 +1210,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-670 exports. 291 have no doc comment.
+671 exports. 291 have no doc comment.

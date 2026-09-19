@@ -35,6 +35,17 @@ bucket_name = "dddp-payment-proofs"
 # alongside them. Staging uploads go somewhere disposable instead.
 preview_bucket_name = "dddp-proofs-staging"
 
+# Maintenance payment screenshots, in their own bucket — the twin of the
+# MAINT_PROOFS binding in ../wrangler.toml, and it must match: backup.js reads
+# this binding on the cron Worker while the upload runs here, and a binding
+# present in one deployment and absent in the other is this project's worst
+# class of bug. Not optional like ARCHIVE — a missing binding throws on a
+# maintenance upload or view. Create the prod bucket in APAC, like PROOFS.
+[[r2_buckets]]
+binding = "MAINT_PROOFS"
+bucket_name = "dddp-maint-proofs"
+preview_bucket_name = "dddp-maint-proofs-staging"
+
 # The association's own archive. Bound here as well as in ../wrangler.toml
 # because these two configs must agree on every binding the shared code reads —
 # the same premise as the D1 above. The nightly write happens on the cron
@@ -121,6 +132,10 @@ database_id = "adf039cd-4cec-4e66-9395-fd4a548cd01c"
 [[env.preview.r2_buckets]]
 binding = "PROOFS"
 bucket_name = "dddp-proofs-staging"
+
+[[env.preview.r2_buckets]]
+binding = "MAINT_PROOFS"
+bucket_name = "dddp-maint-proofs-staging"
 
 [env.preview.vars]
 UPI_VPA = "qr.ddwelfare@sib"

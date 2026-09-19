@@ -10,6 +10,7 @@
 import { reportError, fail } from './errors.js';
 import { noticeHtml, noticeSignature } from './notice-doc.js';
 import { roleAsSeenBy } from './tenancy.js';
+import { proofBucket } from './proof.js';
 
 /**
  * Every table carried off-site, in dependency order — restore reads top to
@@ -532,9 +533,18 @@ export function proofBackupName({ flat, utr, image_sha256: hash }, contentType =
  */
 export async function backupProofs(env, token, { limit = PROOF_BATCH } = {}) {
   const { results } = await env.DB.prepare(
-    `SELECT p.id, p.r2_key, p.utr, p.image_sha256, b.flat, b.period
+    // LEFT JOIN to BOTH bill tables, resolving flat and period from whichever id
+    // the proof carries. The old INNER JOIN to `bills` alone silently dropped
+    // every MAINTENANCE proof — bill_id is null on those — so a whole class of
+    // payment evidence was never copied off-site. maint's quarter stands in for
+    // the gas period; it is only a folder name on Drive. The image itself is
+    // read from the bucket the proof belongs to — see proofBucket().
+    `SELECT p.id, p.r2_key, p.utr, p.image_sha256, p.maint_bill_id,
+            COALESCE(b.flat, mb.flat) AS flat,
+            COALESCE(b.period, mb.quarter) AS period
        FROM payment_proofs p
-       JOIN bills b ON b.id = p.bill_id
+       LEFT JOIN bills b ON b.id = p.bill_id
+       LEFT JOIN maint_bills mb ON mb.id = p.maint_bill_id
       WHERE p.r2_key IS NOT NULL
         AND p.deleted_at IS NULL
         AND p.backed_up_at IS NULL
@@ -554,7 +564,7 @@ export async function backupProofs(env, token, { limit = PROOF_BATCH } = {}) {
 
   for (const row of pending) {
     try {
-      const object = await env.PROOFS.get(row.r2_key);
+      const object = await proofBucket(env, row).get(row.r2_key);
       // The row says there is an image and the bucket disagrees. Marking it
       // copied would be a lie; leaving it unmarked retries a file that will
       // never appear, every night. Counted as a failure so the digest says so,

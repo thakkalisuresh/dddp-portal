@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   normaliseVisionResult, assessProof, validateUpload, extractUtr, shapeQueue, r2Key, MAX_BYTES,
-  referenceKind, isBankComparable,
+  referenceKind, isBankComparable, proofBucket,
 } from '../functions/lib/proof.js';
 import { safeJson, bytesToBase64 } from '../functions/lib/vision.js';
 import { proofVerdict } from '../public/js/ui.js';
@@ -294,5 +294,22 @@ describe('base64 encoding', () => {
     const b64 = bytesToBase64(bytes);
     expect(b64.length).toBeGreaterThan(300_000);
     expect(Buffer.from(b64, 'base64').length).toBe(bytes.length);
+  });
+});
+
+describe('which bucket a proof lives in', () => {
+  const env = { PROOFS: 'gas-bucket', MAINT_PROOFS: 'maint-bucket' };
+
+  it('sends a maintenance proof to MAINT_PROOFS', () => {
+    // A proof carries exactly one of the two bill ids (0042 CHECKs it), so a
+    // non-null maint_bill_id is the whole test the read paths key off.
+    expect(proofBucket(env, { maint_bill_id: 7 })).toBe('maint-bucket');
+  });
+
+  it('sends a gas proof to PROOFS', () => {
+    expect(proofBucket(env, { maint_bill_id: null })).toBe('gas-bucket');
+    // A row with no maint_bill_id column at all is a gas proof too, not a crash.
+    expect(proofBucket(env, {})).toBe('gas-bucket');
+    expect(proofBucket(env, null)).toBe('gas-bucket');
   });
 });
