@@ -20,9 +20,11 @@ Return ONLY a JSON object with these keys, using null where you cannot read a va
 The amount is the rupees transferred.
 If the screenshot shows both a 12-digit UTR/RRN and a longer app transaction id,
 put the 12-digit one in "utr" and the other in "reference".
-"note" is the free-text remarks the sender typed — the "message", "note to payee",
-"description" or "remarks" line, e.g. "2B_MAINT_Q4_26". It is NOT the UTR or the
-transaction id; leave it null if there is no such message.
+"note" is any free text the sender added to say what the payment is for — the
+"message", "note to payee", "description" or "remarks" line, or a short label
+shown near the amount. It is usually a flat number and/or a purpose the resident
+typed themselves, e.g. "3B" or "12A gas bill" — not a structured code. It is NOT
+the UTR or the transaction id; leave it null if there is no such message.
 "payer_name" is the name of the person who SENT the money (the "from"/"paid by"
 account holder), not the payee who received it.
 Do not guess; use null if unsure.`;
