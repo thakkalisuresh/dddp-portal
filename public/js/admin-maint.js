@@ -21,7 +21,7 @@
  */
 
 import { api } from './api.js';
-import { el, esc, showError, askFirst, setChildren } from './ui.js';
+import { el, showError, askFirst, setChildren } from './ui.js';
 import { money, dayLabel } from './i18n.js';
 import { trackAction } from './track.js';
 
@@ -1059,16 +1059,16 @@ function exemptionsPanel() {
       el('p', { class: 'label' }, 'Late fee — per person'),
       fee.length
         ? el('ul', { class: 'list' }, ...fee.map((e) => el('li', {},
-            `${esc(e.resident ?? '')} (${esc(e.flat ?? '')}) — until ${dayLabel(e.ends_at)}`,
-            el('div', { class: 'small muted' }, esc(e.reason ?? '')),
+            `${e.resident ?? ''} (${e.flat ?? ''}) — until ${dayLabel(e.ends_at)}`,
+            el('div', { class: 'small muted' }, e.reason ?? ''),
             e.approved_by ? null : el('span', { class: 'chip chip--awaiting' }, 'Needs a second admin'))))
         : el('p', { class: 'muted small' }, 'None.'),
 
       el('p', { class: 'label' }, 'Voting — per flat'),
       voting.length
         ? el('ul', { class: 'list' }, ...voting.map((e) => el('li', {},
-            `${esc(e.flat)} — ${e.ends_at ? `until ${dayLabel(e.ends_at)}` : 'open-ended'}`,
-            el('div', { class: 'small muted' }, esc(e.reason ?? '')),
+            `${e.flat} — ${e.ends_at ? `until ${dayLabel(e.ends_at)}` : 'open-ended'}`,
+            el('div', { class: 'small muted' }, e.reason ?? ''),
             e.approved_by ? null : el('span', { class: 'chip chip--awaiting' }, 'Needs a second admin'))))
         : el('p', { class: 'muted small' }, 'None.')));
 }
@@ -1212,11 +1212,11 @@ function advanceRow(a) {
   }
 
   return el('tr', { class: a.state === 'cancelled' ? 'muted' : null },
-    el('td', { style: a.state === 'cancelled' ? 'text-decoration:line-through' : null }, esc(a.flat ?? '')),
-    el('td', { class: 'small' }, esc(a.paidByName ?? '—')),
+    el('td', { style: a.state === 'cancelled' ? 'text-decoration:line-through' : null }, a.flat ?? ''),
+    el('td', { class: 'small' }, a.paidByName ?? '—'),
     el('td', { class: 'r' }, a.amount != null ? money(a.amount) : '—'),
     el('td', { class: 'small' }, a.paidOn ? isoToSlash(a.paidOn) : '—'),
-    el('td', {}, esc(a.paidThrough ?? '—')),
+    el('td', {}, a.paidThrough ?? '—'),
     el('td', {}, chip),
     el('td', {}, action));
 }
@@ -1442,9 +1442,9 @@ function cancelAdvanceForm() {
   feeToggle.addEventListener('change', () => { feeFields.style.display = feeToggle.checked ? '' : 'none'; });
 
   const form = el('form', { class: 'note note--bad stack' },
-    el('p', { class: 'label' }, `Cancel advance — ${esc(a.flat)}`),
+    el('p', { class: 'label' }, `Cancel advance — ${a.flat}`),
     el('p', { class: 'small' },
-      `This advance (${a.amount != null ? money(a.amount) : ''}, covers ${esc(a.paidThrough ?? '')}) may already `
+      `This advance (${a.amount != null ? money(a.amount) : ''}, covers ${a.paidThrough ?? ''}) may already `
       + 'have settled a bill. Cancelling reopens that bill as unpaid, and the resident is chased again.'),
     el('label', { class: 'field' },
       el('span', { class: 'label' }, 'Reason', el('span', { class: 'bad' }, ' *')), reason,
@@ -1536,12 +1536,12 @@ function approvalCard(r) {
 
   return el('div', { class: 'note note--plain stack', style: 'gap:var(--s-2)' },
     el('div', { class: 'row row--between' },
-      el('strong', {}, `${isCancel ? 'Cancel advance' : 'Advance'} · ${esc(r.flat ?? '')}`),
+      el('strong', {}, `${isCancel ? 'Cancel advance' : 'Advance'} · ${r.flat ?? ''}`),
       el('span', { class: 'chip chip--awaiting' }, 'Needs 1 admin')),
-    el('div', { class: 'small' }, esc(detail || '—')),
+    el('div', { class: 'small' }, detail || '—'),
     el('div', { class: 'small muted' },
-      `${isCancel ? 'Cancel asked by' : 'Asked by'} ${esc(r.requested_by_name ?? 'an admin')}`
-      + (r.reason ? ` — ${esc(r.reason)}` : '')),
+      `${isCancel ? 'Cancel asked by' : 'Asked by'} ${r.requested_by_name ?? 'an admin'}`
+      + (r.reason ? ` — ${r.reason}` : '')),
     buttons);
 }
 

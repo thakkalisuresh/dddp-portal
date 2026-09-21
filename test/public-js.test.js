@@ -351,3 +351,32 @@ describe('gas and maintenance dues are never merged', () => {
     }
   });
 });
+
+/**
+ * `el()` (public/js/ui.js) inserts a string child via
+ * `document.createTextNode`, which is already XSS-safe and never parses
+ * HTML. Wrapping such a child in `esc()` on top of that double-encodes it:
+ * an apostrophe became the literal text "&#39;" on the cancel-approval card
+ * ("Flat 3&#39;s Q3 bill"), and the same double-encoding mangled any real
+ * name with an apostrophe, ampersand, or quote.
+ *
+ * There is no DOM in this suite (see the note atop this file), so this
+ * cannot render the approval card and read its textContent. It instead
+ * guards the regression the same way the file's other checks do: the
+ * literal source pattern that caused it must not come back. Every `esc(`
+ * call in admin-maint.js fed an `el()` text child -- none fed an `html:`
+ * attribute or innerHTML -- so the fix removed the import along with every
+ * call, and this asserts both stay gone.
+ */
+describe('admin-maint text children are not double-escaped', () => {
+  const source = readFileSync('public/js/admin-maint.js', 'utf8');
+
+  it('does not import esc from ui.js', () => {
+    expect(source).toMatch(/from '\.\/ui\.js'/);
+    expect(source).not.toMatch(/\besc\b/);
+  });
+
+  it('no longer calls esc(...) anywhere in the file', () => {
+    expect(source).not.toContain('esc(');
+  });
+});
