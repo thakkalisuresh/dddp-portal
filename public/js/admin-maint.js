@@ -39,6 +39,7 @@ let root = null;
  */
 const advanceUi = {
   formOpen: false,
+  cancelFor: null,   // the advanceId whose cancel dialog is open, or null
   flatFilter: '',
   statusFilter: 'all',
   quarterFilter: '',
@@ -1091,6 +1092,7 @@ function advancesPanel() {
         }, advanceUi.formOpen ? 'Close' : '＋ Record an advance')),
 
       advanceUi.formOpen ? recordAdvanceForm() : null,
+      advanceUi.cancelFor != null ? cancelAdvanceForm() : null,
 
       state.advances.length ? advancesFilterBar() : null,
       rows.length
@@ -1192,8 +1194,22 @@ function advanceRow(a) {
   }, 'Withdraw');
 
   let action;
-  if (a.canWithdraw) { cell.append(withdrawButton()); action = cell; }
-  else action = el('span', { class: 'small muted' }, trail);
+  if (a.canWithdraw) {
+    cell.append(withdrawButton());
+    action = cell;
+  } else if (a.state === 'approved' && a.cancelRequested) {
+    action = el('span', { class: 'small' },
+      el('span', { class: 'chip chip--awaiting' }, 'Cancel pending'));
+  } else if (a.canRequestCancel) {
+    action = el('span', { class: 'row', style: 'gap:var(--s-2);flex-wrap:wrap;justify-content:flex-end' },
+      el('span', { class: 'small muted' }, trail),
+      el('button', {
+        class: 'btn btn--ghost btn--sm', type: 'button',
+        onclick: () => { advanceUi.cancelFor = a.advanceId; render(); },
+      }, 'Request cancel'));
+  } else {
+    action = el('span', { class: 'small muted' }, trail);
+  }
 
   return el('tr', { class: a.state === 'cancelled' ? 'muted' : null },
     el('td', { style: a.state === 'cancelled' ? 'text-decoration:line-through' : null }, esc(a.flat ?? '')),
@@ -1395,6 +1411,84 @@ function slashToIso(text) {
 }
 
 /**
+ * Cancel an APPROVED advance (Option B). One admin asks with a reason and,
+ * optionally, a late fee; a DIFFERENT admin approves it from the queue, and the
+ * approval reopens whatever bill the advance had settled. Nothing reverses here.
+ *
+ * Rendered full-width above the table rather than inside the row's narrow cell,
+ * for the same reason the record form is: it has a reason, a toggle and two
+ * more fields, and none of that fits a table cell.
+ */
+function cancelAdvanceForm() {
+  const a = (state.advances ?? []).find((x) => x.advanceId === advanceUi.cancelFor);
+  const close = () => { advanceUi.cancelFor = null; render(); };
+  if (!a) { close(); return el('div'); }
+
+  const out = el('p', { class: 'small muted' });
+  const reason = el('textarea', { class: 'input', rows: '2', placeholder: 'e.g. Bank confirmed the money never arrived.' });
+
+  const feeToggle = el('input', { type: 'checkbox' });
+  const feeAmount = el('input', { class: 'input', type: 'number', min: '0', step: '1',
+                                  inputmode: 'numeric', value: String(state.row?.late_fee ?? 750) });
+  const feeFrom = el('input', { class: 'input', type: 'text', placeholder: 'DD/MM/YYYY', inputmode: 'numeric' });
+  const feeFields = el('div', { class: 'stack', style: 'border-left:2px solid var(--accent-line);padding-left:var(--s-3)' },
+    el('div', { class: 'row', style: 'gap:var(--s-4);flex-wrap:wrap' },
+      el('label', { class: 'field' },
+        el('span', { class: 'label' }, 'Late fee applies from', el('span', { class: 'bad' }, ' *')), feeFrom),
+      el('label', { class: 'field' },
+        el('span', { class: 'label' }, 'Amount', el('span', { class: 'bad' }, ' *')), feeAmount)),
+    el('p', { class: 'small muted' }, 'Defaults to the quarter’s late fee; editable.'));
+  feeFields.style.display = 'none';
+  feeToggle.addEventListener('change', () => { feeFields.style.display = feeToggle.checked ? '' : 'none'; });
+
+  const form = el('form', { class: 'note note--bad stack' },
+    el('p', { class: 'label' }, `Cancel advance — ${esc(a.flat)}`),
+    el('p', { class: 'small' },
+      `This advance (${a.amount != null ? money(a.amount) : ''}, covers ${esc(a.paidThrough ?? '')}) may already `
+      + 'have settled a bill. Cancelling reopens that bill as unpaid, and the resident is chased again.'),
+    el('label', { class: 'field' },
+      el('span', { class: 'label' }, 'Reason', el('span', { class: 'bad' }, ' *')), reason,
+      el('p', { class: 'small muted' }, 'Goes to the second admin, and is kept on the record.')),
+    el('label', { class: 'row', style: 'gap:var(--s-2);align-items:center' },
+      feeToggle, el('span', {}, 'Apply a late fee to the reopened bill')),
+    el('p', { class: 'small muted' }, 'Default is off — turn on only if the resident should carry a late fee.'),
+    feeFields,
+    el('p', { class: 'small muted' },
+      'On approval: the bill reopens as unpaid, the late fee (if set) is added from the date you chose, '
+      + 'and the standard due/overdue letters resume. No special “reopened” notice is sent.'),
+    el('div', { class: 'row', style: 'gap:var(--s-3)' },
+      el('button', { class: 'btn btn--danger', type: 'submit' }, 'Request cancel'),
+      el('button', { class: 'linkish small', type: 'button', onclick: close }, 'Back')),
+    out);
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    out.textContent = ''; out.style.color = 'var(--ink-muted)';
+    if (!reason.value.trim()) { out.textContent = 'Say why, for the second admin.'; out.style.color = 'var(--overdue)'; return; }
+    let lateFee = null;
+    if (feeToggle.checked) {
+      const amount = Number(feeAmount.value);
+      const from = slashToIso(feeFrom.value);
+      if (!(amount > 0)) { out.textContent = 'Give the late fee amount.'; out.style.color = 'var(--overdue)'; return; }
+      if (!from) { out.textContent = 'Give the date the late fee applies from (DD/MM/YYYY).'; out.style.color = 'var(--overdue)'; return; }
+      lateFee = { amount, from };
+    }
+    out.textContent = 'Sending…';
+    try {
+      trackAction('maint.advance.cancel');
+      await api.admin.requestAdvanceCancel(a.advanceId, { reason: reason.value.trim(), lateFee });
+      advanceUi.cancelFor = null;
+      await reload(step);
+    } catch (err) {
+      out.textContent = err.message ?? 'Could not request that cancel.';
+      out.style.color = 'var(--overdue)';
+    }
+  });
+
+  return form;
+}
+
+/**
  * A QUEUE, not buttons on the row that asked for it.
  *
  * Approving is a second person's deliberate act, and it should not sit under
@@ -1412,12 +1506,19 @@ function approvalsPanel() {
 
 function approvalCard(r) {
   const p = r.payload ?? {};
-  const detail = [
-    p.amount != null ? money(p.amount) : null,
-    p.paidThrough ? `covers ${p.paidThrough}` : null,
-    p.paidOn ? `paid ${isoToSlash(p.paidOn)}` : null,
-    p.paidByName ? `by ${p.paidByName}` : null,
-  ].filter(Boolean).join(' · ');
+  const isCancel = r.type === 'cancel';
+  const detail = isCancel
+    ? [
+        p.amount != null ? money(p.amount) : null,
+        p.paidThrough ? `covers ${p.paidThrough}` : null,
+        p.lateFee != null ? `late fee ${money(p.lateFee)} from ${p.lateFeeFrom ? isoToSlash(p.lateFeeFrom) : '—'}` : 'no late fee',
+      ].filter(Boolean).join(' · ')
+    : [
+        p.amount != null ? money(p.amount) : null,
+        p.paidThrough ? `covers ${p.paidThrough}` : null,
+        p.paidOn ? `paid ${isoToSlash(p.paidOn)}` : null,
+        p.paidByName ? `by ${p.paidByName}` : null,
+      ].filter(Boolean).join(' · ');
 
   const slot = el('span', {});
   const buttons = r.canApprove
@@ -1435,11 +1536,11 @@ function approvalCard(r) {
 
   return el('div', { class: 'note note--plain stack', style: 'gap:var(--s-2)' },
     el('div', { class: 'row row--between' },
-      el('strong', {}, `Advance · ${esc(r.flat ?? '')}`),
+      el('strong', {}, `${isCancel ? 'Cancel advance' : 'Advance'} · ${esc(r.flat ?? '')}`),
       el('span', { class: 'chip chip--awaiting' }, 'Needs 1 admin')),
     el('div', { class: 'small' }, esc(detail || '—')),
     el('div', { class: 'small muted' },
-      `Asked by ${esc(r.requested_by_name ?? 'an admin')}`
+      `${isCancel ? 'Cancel asked by' : 'Asked by'} ${esc(r.requested_by_name ?? 'an admin')}`
       + (r.reason ? ` — ${esc(r.reason)}` : '')),
     buttons);
 }
@@ -1447,7 +1548,8 @@ function approvalCard(r) {
 async function decide(r, approve, slot) {
   slot.textContent = '';
   try {
-    await api.admin.decideAdvance(r.id, approve);
+    if (r.type === 'cancel') await api.admin.decideAdvanceCancel(r.id, approve);
+    else await api.admin.decideAdvance(r.id, approve);
     await reload(step);
   } catch (err) {
     slot.textContent = ` ${err.message ?? 'Refused.'}`;

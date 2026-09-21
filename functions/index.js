@@ -18,7 +18,7 @@ import {
   ADVANCE_KIND, recordAdvanceRequest, applyAdvanceRequest,
   advanceRequestEmail, advanceDecisionEmail,
 } from './lib/maint-approvals.js';
-import { scheduleQuarter, previewLetter } from './lib/maint-cron.js';
+import { scheduleQuarter, previewLetter, revertBillsSettledByAdvance } from './lib/maint-cron.js';
 import { dashboardPayload } from './lib/dashboard.js';
 import { billPdf, istSlashDate } from './lib/bill-pdf.js';
 // The Worker's own date label — the browser's lives in js/i18n.js.
@@ -344,6 +344,14 @@ export default {
         }
         if (request.method === 'POST' && /^\/api\/admin\/maint\/advances\/\d+\/withdraw$/.test(path)) {
           return withdrawAdvance(env, session, path);
+        }
+        // Cancelling an APPROVED advance (Option B): one admin requests it, a
+        // different admin approves, and the approval reopens the settled bill.
+        if (request.method === 'POST' && /^\/api\/admin\/maint\/advances\/\d+\/cancel$/.test(path)) {
+          return requestAdvanceCancel(request, env, session, path);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/maint\/advances\/\d+\/cancel\/(approve|reject)$/.test(path)) {
+          return decideAdvanceCancel(env, session, path, path.endsWith('/approve') ? 'approve' : 'reject');
         }
         // The generic decision endpoint: it dispatches by the request's `kind`,
         // and this session implements the `advance` applier only.
@@ -1118,7 +1126,8 @@ async function listResidents(env, session, url) {
             -- assertion until a second agrees, and advanceCovers() refuses to
             -- count it — so showing it here would contradict the rule.
             (SELECT MAX(a.paid_through) FROM maint_advances a
-              WHERE a.flat = o.flat AND a.approved_by IS NOT NULL) AS advance_through
+              WHERE a.flat = o.flat AND a.approved_by IS NOT NULL
+                AND a.cancelled_at IS NULL) AS advance_through
        FROM owners o JOIN flats f ON f.flat = o.flat
       ${wantsPast ? '' : 'WHERE o.active = 1'}
       ORDER BY f.floor, o.flat, o.active DESC, o.relationship`
@@ -1954,6 +1963,114 @@ async function notifyAdvanceDecision(env, { req, decision, decidedBy, origin }) 
     });
     await sendEmail(env, { to: requester.email, subject, text });
   } catch { /* a failed notification must never undo an approved advance */ }
+}
+
+/**
+ * Request to cancel an APPROVED advance (Option B). Nothing reverses here — the
+ * pending-cancel fields are set on the advance and a DIFFERENT admin must agree,
+ * the same maker≠checker rule as everything else. The late fee is the admin's
+ * choice, carried on the advance until the cancel is approved and the bill
+ * reopens.
+ */
+async function requestAdvanceCancel(request, env, session, path) {
+  const id = Number(path.split('/')[5]);   // /api/admin/maint/advances/:id/cancel
+  const body = await readJson(request);
+  const reason = String(body?.reason ?? '').trim();
+  if (!reason) return problem(400, 'DDP-ADMIN-004', 'Say why, for the second admin.');
+
+  const advance = await env.DB.prepare('SELECT * FROM maint_advances WHERE id = ?').bind(id).first();
+  if (!advance) return problem(404, 'DDP-ADMIN-017', 'No such advance.');
+  if (!advance.approved_by) return problem(409, 'DDP-ADMIN-017', 'That advance is not approved yet.');
+  if (advance.cancelled_at) return problem(409, 'DDP-ADMIN-017', 'That advance is already cancelled.');
+  if (advance.cancel_requested_at) {
+    return problem(409, 'DDP-ADMIN-017', 'A cancel is already waiting for a second admin on this advance.');
+  }
+
+  // The late fee, when the admin turned it on: a whole-rupee amount from a date.
+  let lateFee = null;
+  let lateFeeFrom = null;
+  if (body?.lateFee) {
+    lateFee = Number(body.lateFee.amount);
+    lateFeeFrom = String(body.lateFee.from ?? '').slice(0, 10);
+    if (!Number.isFinite(lateFee) || lateFee <= 0 || Math.round(lateFee * 100) % 100 !== 0) {
+      return problem(400, 'DDP-MAINT-005', 'Give the late fee as a whole-rupee amount.');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(lateFeeFrom)) {
+      return problem(400, 'DDP-MAINT-002', 'Give the date the late fee applies from.');
+    }
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `UPDATE maint_advances
+        SET cancel_requested_by = ?, cancel_requested_at = ?, cancel_reason = ?,
+            cancel_late_fee = ?, cancel_late_fee_from = ?
+      WHERE id = ? AND cancelled_at IS NULL AND cancel_requested_at IS NULL`
+  ).bind(session.actor.id, now, reason.slice(0, 300), lateFee, lateFeeFrom, id).run();
+
+  await audit(env, session, 'maint.advance.cancel.request',
+    { advanceId: id, flat: advance.flat, lateFee, lateFeeFrom });
+  return json({ ok: true, status: 'cancel-pending' }, { status: 201 });
+}
+
+/**
+ * A different admin decides the pending cancel. On approval the advance is
+ * soft-cancelled and every bill it had settled reopens as unpaid, with the
+ * admin's chosen late fee (if any). Maker≠checker: canApprove refuses the admin
+ * who requested it, and the flat's own household, exactly as for the advance
+ * itself.
+ */
+async function decideAdvanceCancel(env, session, path, decision) {
+  const id = Number(path.split('/')[5]);   // /api/admin/maint/advances/:id/cancel/(approve|reject)
+  const advance = await env.DB.prepare('SELECT * FROM maint_advances WHERE id = ?').bind(id).first();
+  if (!advance) return problem(404, 'DDP-ADMIN-017', 'No such advance.');
+  if (advance.cancelled_at) return problem(409, 'DDP-ADMIN-017', 'That advance is already cancelled.');
+  if (!advance.cancel_requested_at) {
+    return problem(409, 'DDP-ADMIN-017', 'No cancel is waiting on that advance.');
+  }
+
+  const policy = approvalPolicy({
+    admins: await approvalBench(env), requesterId: advance.cancel_requested_by, billFlat: advance.flat,
+  });
+  const verdict = canApprove({
+    policy, approver: session.actor,
+    request: { status: 'pending', requested_by: advance.cancel_requested_by, requested_at: advance.cancel_requested_at },
+  });
+  if (!verdict.ok) {
+    await reportError(env, verdict.code, { advanceId: id, actor: session.actor.id, reason: verdict.reason });
+    return problem(403, verdict.code,
+      verdict.reason === 'requester' ? 'You requested this cancel, so you cannot approve it.'
+      : verdict.reason === 'too-soon' ? `An admin still has ${verdict.hoursLeft}h to answer.`
+      : 'This is not yours to approve.');
+  }
+
+  const now = new Date().toISOString();
+
+  if (decision === 'reject') {
+    // Clear the pending-cancel fields; the advance stays approved and live.
+    await env.DB.prepare(
+      `UPDATE maint_advances
+          SET cancel_requested_by = NULL, cancel_requested_at = NULL, cancel_reason = NULL,
+              cancel_late_fee = NULL, cancel_late_fee_from = NULL
+        WHERE id = ? AND cancelled_at IS NULL`
+    ).bind(id).run();
+    await audit(env, session, 'maint.advance.cancel.reject', { advanceId: id, flat: advance.flat });
+    return json({ ok: true, status: 'cancel-rejected' });
+  }
+
+  // Apply: soft-cancel the advance, then reopen the bills it had settled.
+  await env.DB.prepare(
+    `UPDATE maint_advances SET cancelled_at = ?, cancelled_by = ?
+      WHERE id = ? AND cancelled_at IS NULL AND cancel_requested_by <> ?`
+  ).bind(now, session.actor.id, id, session.actor.id).run();
+
+  const { reopened } = await revertBillsSettledByAdvance(env, { advance, now });
+
+  await audit(env, session, 'maint.advance.cancel.approve',
+    { advanceId: id, flat: advance.flat, cancelledBy: session.actor.id,
+      reopened: reopened.map((b) => b.quarter),
+      lateFee: advance.cancel_late_fee, lateFeeFrom: advance.cancel_late_fee_from });
+  return json({ ok: true, status: 'cancelled', reopened });
 }
 
 /* ── a tenant moving out ─────────────────────────────────────────────────

@@ -500,6 +500,7 @@ The maintenance quarter's life, as scheduled work: draft, confirm, issue, charge
 | fn | `flatsWithPeople` |  |
 | fn | `scheduleQuarter` | Confirm a quarter: record the issue date, fix the rates, and record what the admin was looking at when they did. |
 | fn | `issueQuarter` | Raise the quarter's bills and queue the telling of it, as one act. |
+| fn | `revertBillsSettledByAdvance` | Reopen the bills an approved advance had settled, as its cancel is approved. |
 | fn | `applyMaintLateFees` | Charge the quarter's late fees. |
 | fn | `applyLateFeeToMaintBill` | Charge ONE bill, now, if it is due one. |
 | fn | `queueDueLetters` | Queue the two reminders that fall between issuing and the due date. |
@@ -1225,4 +1226,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-679 exports. 292 have no doc comment.
+680 exports. 292 have no doc comment.

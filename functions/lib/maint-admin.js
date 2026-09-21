@@ -404,6 +404,9 @@ export async function maintAdminPayload(env, quarterLabel, { today = istToday(),
       // Withdraw is the requester's own, and only on a still-pending row.
       canWithdraw: Boolean(session && a.state === 'awaiting'
         && a.requestedBy === session.actor.id),
+      // Request-cancel is offered on a live approved advance that has no cancel
+      // already waiting. Any admin may ask; a DIFFERENT one approves.
+      canRequestCancel: Boolean(session && a.state === 'approved' && !a.cancelRequested),
     }));
 
   // The queue an approver actually works: only the kinds with an applier, each
@@ -418,6 +421,7 @@ export async function maintAdminPayload(env, quarterLabel, { today = istToday(),
         ? canApprove({ policy, approver: session.actor, request: r })
         : { ok: false, reason: 'not-open' };
       return {
+        type: 'advance',
         id: r.id,
         kind: r.kind,
         flat: r.flat,
@@ -433,6 +437,37 @@ export async function maintAdminPayload(env, quarterLabel, { today = istToday(),
           paidByName: payload.owner_id ? nameById.get(payload.owner_id) ?? null : null,
           method: payload.method ?? null,
           reference: payload.reference ?? null,
+        },
+        canApprove: verdict.ok,
+        blockedBecause: verdict.ok ? null : verdict.reason,
+        hoursLeft: verdict.hoursLeft ?? null,
+      };
+    });
+
+  // Pending cancels of approved advances (Option B) surface in the SAME queue,
+  // read from the advances themselves — a cancel is a fact on the advance row
+  // (cancel_requested_at set, cancelled_at not), not a maint_approval_requests
+  // row. A different admin approves; canApprove keys off who requested it.
+  const cancelApprovals = advanceRows
+    .filter((a) => a.cancel_requested_at && !a.cancelled_at)
+    .map((a) => {
+      const policy = approvalPolicy({ admins: bench, requesterId: a.cancel_requested_by, billFlat: a.flat });
+      const verdict = session
+        ? canApprove({ policy, approver: session.actor,
+            request: { status: 'pending', requested_by: a.cancel_requested_by, requested_at: a.cancel_requested_at } })
+        : { ok: false, reason: 'not-open' };
+      return {
+        type: 'cancel',
+        id: a.id,
+        flat: a.flat,
+        reason: a.cancel_reason,
+        requested_by_name: nameById.get(a.cancel_requested_by) ?? null,
+        required: 1,
+        payload: {
+          amount: a.amount ?? null,
+          paidThrough: a.paid_through ?? null,
+          lateFee: a.cancel_late_fee ?? null,
+          lateFeeFrom: a.cancel_late_fee_from ?? null,
         },
         canApprove: verdict.ok,
         blockedBecause: verdict.ok ? null : verdict.reason,
@@ -475,8 +510,9 @@ export async function maintAdminPayload(env, quarterLabel, { today = istToday(),
     // A QUEUE, not buttons on the row that asked for it. Approving is a second
     // person's deliberate act and it should not sit under the mouse of whoever
     // made the request. Each row carries the decoded effect and whether this
-    // viewer may act on it.
-    approvals: approvalsView,
+    // viewer may act on it. Advance requests and pending advance-cancels share
+    // the queue — both are one second admin's decision.
+    approvals: [...approvalsView, ...cancelApprovals],
     // For the picker. Earlier quarters open read-only.
     quarters: (quarters.results ?? []).map((q) => q.quarter),
     // Read-only when the quarter is behind us: the page is for working a

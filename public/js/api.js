@@ -238,6 +238,14 @@ export const api = {
       request('POST', `/api/admin/maint/advances/${requestId}/withdraw`),
     decideAdvance: (requestId, approve) =>
       request('POST', `/api/admin/maint/approvals/${requestId}/${approve ? 'approve' : 'reject'}`),
+
+    // Cancelling an APPROVED advance (Option B). Requesting sets a pending
+    // cancel; a different admin approves it, which reopens the settled bill.
+    // `body` is { reason, lateFee: { amount, from } | null }.
+    requestAdvanceCancel: (advanceId, body) =>
+      request('POST', `/api/admin/maint/advances/${advanceId}/cancel`, body),
+    decideAdvanceCancel: (advanceId, approve) =>
+      request('POST', `/api/admin/maint/advances/${advanceId}/cancel/${approve ? 'approve' : 'reject'}`),
     /** Two blocks, never totalled together. See duesReport in the Worker. */
     dues:          ()        => request('GET', '/api/admin/dues'),
 

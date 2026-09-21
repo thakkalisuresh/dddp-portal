@@ -355,8 +355,12 @@ export async function issueQuarter(env, quarterLabel, { today = istToday() } = {
   // advanceCovers() enforces the same predicate, but the query does too so an
   // unapproved advance never even reaches the decision.
   const advanceRows = await env.DB.prepare(
+    // Approved and NOT cancelled. advanceCovers()/furthestAdvance() enforce both
+    // predicates too, but the query excludes a cancelled advance so it never
+    // even reaches the settle decision — a cancelled advance is money the
+    // committee agreed did not arrive.
     `SELECT id, flat, paid_through, amount, reference, approved_by
-       FROM maint_advances WHERE approved_by IS NOT NULL`
+       FROM maint_advances WHERE approved_by IS NOT NULL AND cancelled_at IS NULL`
   ).all();
   const advancesByFlat = new Map();
   for (const adv of advanceRows.results ?? []) {
@@ -455,6 +459,80 @@ export async function issueQuarter(env, quarterLabel, { today = istToday() } = {
       total: total - quarter.scheduled_total,
     },
   };
+}
+
+/* ── cancelling an approved advance (Option B) ─────────────────────────────
+   A second admin agreed to reverse an approved advance. The advance row is
+   soft-cancelled elsewhere (its cancelled_at is set); this reopens whatever
+   bills that advance had settled, because a bill paid from money the committee
+   now says did not arrive is a bill that is owed again.
+
+   It lives HERE, beside issueQuarter, on purpose: the settle side raised those
+   bills as 'paid' with paid_method='advance', and the revert is the exact
+   inverse. One place owns the shape of an advance-settled bill, so the two can
+   never drift into disagreeing about how to recognise one.                    */
+
+/**
+ * Reopen the bills an approved advance had settled, as its cancel is approved.
+ *
+ * The bills are found by the same marker issueQuarter stamped — paid_method
+ * 'advance' and the advance's own paid_reference — so exactly the bills this
+ * advance settled reopen, and no others. An advance that never settled a bill
+ * (cancelled before its quarter issued, the launch case) simply reopens none.
+ *
+ * The late fee is the admin's choice, carried on the advance (0047):
+ *   - set   → apply that amount from the chosen date, and queue the overdue
+ *             letter with it, so a fee is never charged without the resident
+ *             being told — the invariant applyMaintLateFees also keeps.
+ *   - unset → reopen with no fee, and PARK the bill against the automatic
+ *             nightly fee (stamp late_fee_at), because the committee decided
+ *             this reopening carries no penalty. The resident is chased by the
+ *             standard due/overdue reminders and their own dues screen; no
+ *             special "reopened" notice is sent, which is the committee's call.
+ */
+export async function revertBillsSettledByAdvance(env, { advance, now }) {
+  const marker = advance.reference ?? `advance#${advance.id}`;
+  const bills = (await env.DB.prepare(
+    `SELECT id, quarter, rate_applied FROM maint_bills
+      WHERE flat = ? AND status = 'paid' AND paid_method = 'advance' AND paid_reference = ?`
+  ).bind(advance.flat, marker).all()).results ?? [];
+
+  const feeOn = advance.cancel_late_fee != null;
+  const fee = Number(advance.cancel_late_fee ?? 0);
+  const feeFrom = advance.cancel_late_fee_from ?? now;
+
+  const statements = [];
+  const reopened = [];
+  for (const b of bills) {
+    if (feeOn) {
+      statements.push(env.DB.prepare(
+        `UPDATE maint_bills
+            SET status = 'unpaid', paid_at = NULL, paid_method = NULL, paid_reference = NULL,
+                late_fee = ?, late_fee_at = ?, total = rate_applied + ?
+          WHERE id = ? AND status = 'paid'`
+      ).bind(fee, feeFrom, fee, b.id));
+      statements.push(env.DB.prepare(
+        `INSERT INTO maint_mail (bill_id, kind, status, attempts, queued_at)
+         SELECT b.id, 'overdue',
+                CASE WHEN o.email IS NULL OR trim(o.email) = '' THEN 'unreachable' ELSE 'queued' END,
+                0, ?
+           FROM maint_bills b LEFT JOIN owners o ON o.id = b.owner_id
+          WHERE b.id = ?
+         ON CONFLICT (bill_id, kind) DO NOTHING`
+      ).bind(now, b.id));
+    } else {
+      statements.push(env.DB.prepare(
+        `UPDATE maint_bills
+            SET status = 'unpaid', paid_at = NULL, paid_method = NULL, paid_reference = NULL,
+                late_fee = 0, late_fee_at = ?, total = rate_applied
+          WHERE id = ? AND status = 'paid'`
+      ).bind(now, b.id));
+    }
+    reopened.push({ id: b.id, quarter: b.quarter });
+  }
+
+  if (statements.length) await env.DB.batch(statements);
+  return { reopened };
 }
 
 /* ── the late fee ─────────────────────────────────────────────────────────  */

@@ -406,13 +406,18 @@ export function advanceCovers(advance, label) {
   // admin's assertion until a second agrees, and treating it as payment would
   // make "record an advance" a way for one person to clear a flat's dues.
   if (!advance.approved_by) return false;
+  // A CANCELLED advance settles nothing. Two admins agreed to reverse it (the
+  // soft-cancel in 0047), and the moment they did, any bill it had settled
+  // reopens — so it must stop counting here too, or the reopened bill and this
+  // predicate would disagree about whether the flat has paid.
+  if (advance.cancelled_at) return false;
   return String(label) <= String(advance.paid_through);
 }
 
 /** The best advance on a flat — the one reaching furthest forward. */
 export function furthestAdvance(advances) {
   return (advances ?? [])
-    .filter((a) => a.approved_by && isQuarterLabel(a.paid_through))
+    .filter((a) => a.approved_by && !a.cancelled_at && isQuarterLabel(a.paid_through))
     .sort((a, b) => String(b.paid_through).localeCompare(String(a.paid_through)))[0] ?? null;
 }
 
