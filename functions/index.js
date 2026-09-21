@@ -1843,7 +1843,7 @@ async function alertAdvanceApprovers(env, {
  * Only the person who raised it, and only while it is still pending.
  */
 async function withdrawAdvance(env, session, path) {
-  const id = Number(path.split('/')[6]);   // /api/admin/maint/advances/:id/withdraw
+  const id = Number(path.split('/')[5]);   // /api/admin/maint/advances/:id/withdraw
   const req = await env.DB.prepare(
     "SELECT * FROM maint_approval_requests WHERE id = ? AND kind = 'advance'"
   ).bind(id).first();

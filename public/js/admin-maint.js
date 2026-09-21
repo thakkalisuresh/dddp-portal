@@ -1171,19 +1171,29 @@ function advanceRow(a) {
       ? `by ${a.cancelledByName ?? 'an admin'}`
       : `by ${a.recordedByName ?? 'an admin'}`;
 
-  const slot = el('span', {});
-  const action = a.canWithdraw
-    ? el('span', {},
-        el('button', {
-          class: 'btn btn--ghost btn--sm', type: 'button',
-          onclick: async () => {
-            if (!await askFirst(slot, 'Withdraw this request? It will not be recorded.', 'Withdraw')) return;
-            try { await api.admin.withdrawAdvance(a.requestId); await reload(step); }
-            catch (err) { slot.textContent = err.message ?? 'Could not withdraw.'; }
-          },
-        }, 'Withdraw'),
-        slot)
-    : el('span', { class: 'small muted' }, trail);
+  // A COMPACT confirm, not askFirst's full note box — this lives in a narrow
+  // table cell, where the wide alertdialog overflows and clips at the viewport
+  // edge. Withdraw is low-stakes (nothing was recorded), so a two-button inline
+  // confirm sized to the cell is enough, and it does not spill.
+  const cell = el('span', { class: 'row', style: 'gap:var(--s-2);flex-wrap:wrap;justify-content:flex-end' });
+  const withdrawButton = () => el('button', {
+    class: 'btn btn--ghost btn--sm', type: 'button',
+    onclick: () => setChildren(cell,
+      el('span', { class: 'small muted' }, 'Withdraw?'),
+      el('button', {
+        class: 'btn btn--sm btn--danger', type: 'button',
+        onclick: async () => {
+          try { await api.admin.withdrawAdvance(a.requestId); await reload(step); }
+          catch (err) { setChildren(cell, el('span', { class: 'small bad' }, err.message ?? 'Could not withdraw.')); }
+        },
+      }, 'Yes'),
+      el('button', { class: 'linkish small', type: 'button',
+                     onclick: () => setChildren(cell, withdrawButton()) }, 'No')),
+  }, 'Withdraw');
+
+  let action;
+  if (a.canWithdraw) { cell.append(withdrawButton()); action = cell; }
+  else action = el('span', { class: 'small muted' }, trail);
 
   return el('tr', { class: a.state === 'cancelled' ? 'muted' : null },
     el('td', { style: a.state === 'cancelled' ? 'text-decoration:line-through' : null }, esc(a.flat ?? '')),
