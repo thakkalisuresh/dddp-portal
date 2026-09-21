@@ -155,6 +155,24 @@ describe('a second admin approves', () => {
     expect(advanceCovers(adv, '2027-Q1')).toBe(false);
   });
 
+  it('applies at most once — a second apply of the same pending request mints nothing', async () => {
+    const { db, env } = building();
+    await record(env, 10);
+    // Both callers hold the request as it was READ — pending — which is exactly
+    // the state two admins racing Approve, or one admin double-clicking, share.
+    const req = rows(db, 'SELECT * FROM maint_approval_requests WHERE id = 1')[0];
+
+    const first = await applyAdvanceRequest(env, { req, actorId: 11, now: '2026-09-16T09:00:00Z' });
+    const second = await applyAdvanceRequest(env, { req, actorId: 11, now: '2026-09-16T09:00:01Z' });
+
+    expect(first.advanceId).toBeGreaterThan(0);
+    // The loser claimed nothing and minted nothing.
+    expect(second).toEqual({ advanceId: null, alreadyApplied: true });
+    // Exactly one advance exists, and the request is applied once.
+    expect(rows(db, 'SELECT COUNT(*) n FROM maint_advances')[0].n).toBe(1);
+    expect(rows(db, 'SELECT status FROM maint_approval_requests WHERE id = 1')[0].status).toBe('applied');
+  });
+
   it('the database refuses an advance whose maker and checker are the same person', async () => {
     const { db, env } = building();
     await record(env, 10);

@@ -1928,18 +1928,30 @@ async function decideMaintApproval(env, session, path, decision, origin = '') {
   ).bind(id, session.actor.id, decision, verdict.substitute ? 1 : 0, now).run();
 
   if (decision === 'reject') {
-    await env.DB.prepare(
-      "UPDATE maint_approval_requests SET status = 'rejected', resolved_at = ? WHERE id = ?"
+    // Claim on reject too, `WHERE status = 'pending'`: a reject that races an
+    // approve is the same hole — without the guard it could stamp 'rejected'
+    // over a request an approval had already applied, leaving a live advance row
+    // whose request reads rejected. Only the claim that changes a row decides.
+    const claim = await env.DB.prepare(
+      "UPDATE maint_approval_requests SET status = 'rejected', resolved_at = ? WHERE id = ? AND status = 'pending'"
     ).bind(now, id).run();
+    if (Number(claim?.meta?.changes ?? 0) !== 1) {
+      return problem(409, 'DDP-ADMIN-017', 'That request was just decided by another admin.');
+    }
     await audit(env, session, 'maint.advance.reject', { requestId: id, flat: req.flat });
     await notifyAdvanceDecision(env, { req, decision: 'reject', decidedBy: session.actor.name, origin });
     return json({ ok: true, status: 'rejected' });
   }
 
-  // One approval satisfies an advance, so the applier runs now. The
+  // One approval satisfies an advance, so the applier runs now. It claims the
+  // request `WHERE status = 'pending'` and mints the advance only if that claim
+  // won, so two approvals that both read pending cannot both apply. The
   // recorded_by <> approved_by CHECK is the database's own backstop under
   // canApprove's requester guard.
-  const { advanceId } = await applyAdvanceRequest(env, { req, actorId: session.actor.id, now });
+  const { advanceId, alreadyApplied } = await applyAdvanceRequest(env, { req, actorId: session.actor.id, now });
+  if (alreadyApplied) {
+    return problem(409, 'DDP-ADMIN-017', 'That advance was just approved by another admin.');
+  }
 
   await audit(env, session, 'maint.advance.approve',
     { requestId: id, advanceId, flat: req.flat, approvedBy: session.actor.id });

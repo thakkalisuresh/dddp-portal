@@ -256,15 +256,32 @@ export async function recordAdvanceRequest(env, {
 
 /**
  * The applier the approve endpoint dispatches to when kind='advance' and the
- * request is satisfied. INSERTs the `maint_advances` row from the payload —
- * recorded_by is the original requester, approved_by this second admin — and
- * marks the request applied, in one batch so a half-written advance cannot
- * exist. The schema's `recorded_by <> approved_by` CHECK is the backstop under
- * canApprove's own requester guard.
+ * request is satisfied. It CLAIMS the request first — flipping it to 'applied'
+ * only `WHERE status = 'pending'` — and mints the `maint_advances` row solely
+ * when that claim won (changes === 1). recorded_by is the original requester,
+ * approved_by this second admin.
+ *
+ * The claim is the guard against a double-apply: two approve calls that both
+ * read the request as pending (two admins racing, or one admin's double-click /
+ * retry) reach here together, but only the first claim changes a row, so only it
+ * inserts an advance — the loser returns `alreadyApplied` and mints nothing.
+ * D1 serialises the UPDATE, so no transaction is needed. It mirrors the
+ * `WHERE status = 'pending'` guard withdrawAdvance already uses. The schema's
+ * `recorded_by <> approved_by` CHECK is the backstop under canApprove's own
+ * requester guard.
  */
 export async function applyAdvanceRequest(env, { req, actorId, now }) {
   let p = {};
   try { p = req.payload ? JSON.parse(req.payload) : {}; } catch { p = {}; }
+
+  // Claim before minting. If this changes no row, a concurrent approval already
+  // applied it — do nothing and say so, rather than insert a duplicate advance.
+  const claim = await env.DB.prepare(
+    "UPDATE maint_approval_requests SET status = 'applied', resolved_at = ? WHERE id = ? AND status = 'pending'"
+  ).bind(now, req.id).run();
+  if (Number(claim?.meta?.changes ?? 0) !== 1) {
+    return { advanceId: null, alreadyApplied: true };
+  }
 
   const inserted = await env.DB.prepare(
     `INSERT INTO maint_advances
@@ -277,10 +294,6 @@ export async function applyAdvanceRequest(env, { req, actorId, now }) {
     p.method ?? null, p.reference ?? null, p.paid_on ?? null,
     req.requested_by, req.requested_at, actorId, now, req.reason ?? null,
   ).first();
-
-  await env.DB.prepare(
-    "UPDATE maint_approval_requests SET status = 'applied', resolved_at = ? WHERE id = ?"
-  ).bind(now, req.id).run();
 
   return { advanceId: inserted?.id ?? null };
 }
