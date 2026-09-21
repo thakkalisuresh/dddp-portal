@@ -175,10 +175,12 @@ try {
   refuses('the foreign key into payment_proofs is back, not quietly dropped',
     `INSERT INTO reconciliations (id, proof_id, bill_id, verdict, created_at)
      VALUES (901, 88888, 11, 'confirmed', '2026-10-01T00:00:00Z')`);
-  check('both reconciliation indexes exist again',
+  check('every reconciliation index exists again',
         sql(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='reconciliations' AND name LIKE 'ix_%' ORDER BY name`)
           .map((r) => r.name),
-        ['ix_reconciliations_bill', 'ix_reconciliations_proof']);
+        // ix_reconciliations_maint is 0044's, added after this check was first
+        // written; it survives the rebuild like the other two and belongs here.
+        ['ix_reconciliations_bill', 'ix_reconciliations_maint', 'ix_reconciliations_proof']);
 
   // ── the whole database is still sound ─────────────────────────────────
   const orphans = sql(`PRAGMA foreign_key_check`);

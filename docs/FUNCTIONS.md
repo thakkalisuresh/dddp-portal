@@ -470,6 +470,21 @@ The admin side of maintenance — step 6.
 | fn | `maintAdminPayload` | Everything the Maintenance page needs, for one quarter. |
 | fn | `adminHomeCard` | The card on Admin Home while a quarter needs attention. |
 
+### `functions/lib/maint-approvals.js`
+
+Recording a maintenance advance, and approving it — the create/approve side.
+
+| | Export | What it does |
+|---|---|---|
+| const | `ADVANCE_KIND` |  |
+| fn | `quarterSpan` | How many quarters an advance reaches, inclusive of both ends. |
+| fn | `advanceAmountCheck` | Does the amount look right for the quarters it claims to cover? A SOFT check, and it stays soft on purpose: a resident may round, pay a part quarter, or clear an odd balance, and the committee asked for a warning the admin can overrule rather than a block. |
+| fn | `advanceRequestEmail` | What an approver is told when an advance is waiting for them. |
+| fn | `advanceDecisionEmail` | What the requester is told once a second admin has decided. |
+| fn | `mergeAdvancesView` | One list, three states, from the two tables that hold them. |
+| fn | `recordAdvanceRequest` | Raise the request. |
+| fn | `applyAdvanceRequest` | The applier the approve endpoint dispatches to when kind='advance' and the request is satisfied. |
+
 ### `functions/lib/maint-cron.js`
 
 The maintenance quarter's life, as scheduled work: draft, confirm, issue, charge the fee.
@@ -1210,4 +1225,4 @@ Generate the standalone UPI intent-resolution test page.
 
 ---
 
-671 exports. 291 have no doc comment.
+679 exports. 292 have no doc comment.

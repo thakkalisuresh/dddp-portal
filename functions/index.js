@@ -14,6 +14,10 @@ import {
   SETTLED_STATUSES, isQuarterLabel, dueDateFor, describeQuarter, flatVotingStatus,
 } from './lib/maint.js';
 import { maintAdminPayload, duesReport, adminHomeCard } from './lib/maint-admin.js';
+import {
+  ADVANCE_KIND, recordAdvanceRequest, applyAdvanceRequest,
+  advanceRequestEmail, advanceDecisionEmail,
+} from './lib/maint-approvals.js';
 import { scheduleQuarter, previewLetter } from './lib/maint-cron.js';
 import { dashboardPayload } from './lib/dashboard.js';
 import { billPdf, istSlashDate } from './lib/bill-pdf.js';
@@ -310,7 +314,7 @@ export default {
         // otherwise make on every visit to /admin.
         // ── maintenance ────────────────────────────────────────────────
         if (route === 'GET /api/admin/maint') {
-          return json(await maintAdminPayload(env, url.searchParams.get('quarter')));
+          return json(await maintAdminPayload(env, url.searchParams.get('quarter'), { session }));
         }
         if (route === 'PUT /api/admin/maint/rates') return putMaintRates(request, env, session);
         if (route === 'POST /api/admin/maint/schedule') return postMaintSchedule(request, env, session);
@@ -331,6 +335,21 @@ export default {
         }
         if (request.method === 'POST' && /^\/api\/admin\/maint\/voting\/exempt\/\d+\/approve$/.test(path)) {
           return approveVotingExemption(env, session, path);
+        }
+        // ── advances ──────────────────────────────────────────────────
+        // Recording an advance raises a request; a second admin approves it
+        // from the queue below. Withdraw pulls back one's own pending request.
+        if (route === 'POST /api/admin/maint/advances') {
+          return recordAdvance(request, env, session, url.origin);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/maint\/advances\/\d+\/withdraw$/.test(path)) {
+          return withdrawAdvance(env, session, path);
+        }
+        // The generic decision endpoint: it dispatches by the request's `kind`,
+        // and this session implements the `advance` applier only.
+        if (request.method === 'POST'
+            && /^\/api\/admin\/maint\/approvals\/\d+\/(approve|reject)$/.test(path)) {
+          return decideMaintApproval(env, session, path, path.endsWith('/approve') ? 'approve' : 'reject', url.origin);
         }
         if (route === 'POST /api/admin/tenancy/departure/preview') {
           return previewDeparture(request, env);
@@ -1463,7 +1482,7 @@ async function putMaintRates(request, env, session) {
          new Date().toISOString()).run();
 
   await audit(env, session, 'maint.rates', { quarter, ownerRate, tenantRate, lateFee });
-  return json(await maintAdminPayload(env, quarter));
+  return json(await maintAdminPayload(env, quarter, { session }));
 }
 
 /** Why a quarter would not schedule, in words an admin can act on. */
@@ -1534,7 +1553,7 @@ async function postMaintSchedule(request, env, session) {
       // knowingly left in it.
       acknowledgedUndated: result.acknowledgedUndated === true,
     });
-    return json(await maintAdminPayload(env, quarter));
+    return json(await maintAdminPayload(env, quarter, { session }));
   } catch (err) {
     // A refusal here is a sentence the admin must read — a stale tenancy, a
     // quarter in the wrong state — not a 500.
@@ -1569,7 +1588,7 @@ async function postMaintUnschedule(request, env, session) {
   // WHO DID IT, recorded. An unschedule moves ninety-nine bills out of the post
   // and the next person to look should be able to see whose decision that was.
   await audit(env, session, 'maint.unschedule', { quarter, issueDate: row.issue_date });
-  return json(await maintAdminPayload(env, quarter));
+  return json(await maintAdminPayload(env, quarter, { session }));
 }
 
 /**
@@ -1712,6 +1731,229 @@ async function approveVotingExemption(env, session, path) {
 
   await audit(env, session, 'maint.voting.exempt.approve', { id, flat: row.flat });
   return json({ id, flat: row.flat, approved: true });
+}
+
+/* ── recording an advance ────────────────────────────────────────────────
+   A flat paying ahead. One admin records it, a second agrees, and only then
+   does the `maint_advances` row exist — the same maker≠checker rule the gas
+   bill-edit and tenancy-change queues run, and the shape 0042 built the advance
+   table for (a single `approved_by`, one second admin, not two). approvalBench
+   and approvalPolicy are the same helpers the gas bill-edit queue uses.        */
+
+/**
+ * Raise the request. Nothing about any advance changes here; the proposed
+ * advance waits in the request's payload until a second admin approves. The
+ * approver(s) are emailed at once, non-blocking — a send that fails or is off
+ * never fails the recording, exactly as the bill-edit alert never does.
+ */
+async function recordAdvance(request, env, session, origin = '') {
+  const body = await readJson(request);
+  const flat = normaliseFlat(String(body?.flat ?? ''));
+  const amount = Number(body?.amount);
+  const paidThrough = String(body?.paidThrough ?? '').trim();
+  const paidOn = String(body?.paidOn ?? '').slice(0, 10);
+  const ownerId = body?.ownerId != null ? Number(body.ownerId) : null;
+  const method = body?.method ? String(body.method).slice(0, 40) : null;
+  const reference = body?.reference ? String(body.reference).slice(0, 120) : null;
+  const reason = String(body?.reason ?? '').trim();
+
+  if (!flat) return problem(400, 'DDP-ADMIN-004', 'Which flat?');
+  const flatRow = await env.DB.prepare('SELECT flat FROM flats WHERE flat = ?').bind(flat).first();
+  if (!flatRow) return problem(404, 'DDP-ADMIN-004', 'No such flat.');
+  if (!Number.isFinite(amount) || amount <= 0 || Math.round(amount * 100) % 100 !== 0) {
+    return problem(400, 'DDP-MAINT-005', 'Give a whole-rupee amount.');
+  }
+  if (!isQuarterLabel(paidThrough)) {
+    return problem(400, 'DDP-MAINT-001', 'Say which quarter the advance covers up to.');
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) {
+    return problem(400, 'DDP-MAINT-002', 'Give the date the money was paid.');
+  }
+  if (!reason) return problem(400, 'DDP-ADMIN-004', 'Say why, for the approver.');
+
+  // Enough admins to field one eligible approver? The advance needs exactly one
+  // second admin, but there must BE one who is neither the requester nor the
+  // flat's own household, or the request would sit unactionable forever.
+  const policy = approvalPolicy({
+    admins: await approvalBench(env), requesterId: session.actor.id, billFlat: flat,
+  });
+  if (!policy.approverIds.length) {
+    await reportError(env, 'DDP-ADMIN-016', { flat, actor: session.actor.id });
+    return problem(409, 'DDP-ADMIN-016',
+      'There is no other admin free to approve this advance. Add an admin, or ask the committee.');
+  }
+
+  const now = new Date().toISOString();
+  const { requestId } = await recordAdvanceRequest(env, {
+    actorId: session.actor.id, flat, ownerId, amount, paidOn, paidThrough,
+    method, reference, reason, now, expiresAt: expiresAt(now),
+  });
+
+  await audit(env, session, 'maint.advance.request',
+    { requestId, flat, amount, paidThrough, paidOn, ownerId });
+
+  // Tell the approvers, and report who was reached — an alert that went nowhere
+  // looks identical to one nobody has answered yet. Never fails the record.
+  const alerted = await alertAdvanceApprovers(env, {
+    policy, flat, amount, paidThrough, paidOn, ownerId, reason,
+    requestedBy: session.actor.name, origin,
+  }).catch(() => ({ emailed: 0, missing: [], mail: false }));
+
+  return json({ ok: true, pending: true, requestId, required: 1, alerted }, { status: 201 });
+}
+
+/** Email each eligible approver who has an address. Mirrors alertApprovers. */
+async function alertAdvanceApprovers(env, {
+  policy, flat, amount, paidThrough, paidOn, ownerId, reason, requestedBy, origin,
+}) {
+  if (!policy.approverIds.length) return { emailed: 0, missing: [], mail: false };
+  const mail = mailConfigured(env);
+  if (!mail) return { emailed: 0, missing: [], mail: false };
+
+  const people = await env.DB.prepare(
+    `SELECT id, name, email FROM owners WHERE id IN (${policy.approverIds.map(() => '?').join(',')})`
+  ).bind(...policy.approverIds).all();
+
+  // The payer's name for the email, when one was named. A missing owner_id is
+  // fine — the message shows a dash rather than inventing a name.
+  const payer = ownerId
+    ? await env.DB.prepare('SELECT name FROM owners WHERE id = ?').bind(ownerId).first()
+    : null;
+
+  const { subject, text } = advanceRequestEmail({
+    flat, amount, paidThrough, paidOn: istSlashDate(paidOn),
+    paidByName: payer?.name ?? null, reason, requestedBy, origin,
+  });
+
+  let emailed = 0;
+  const missing = [];
+  for (const person of people.results ?? []) {
+    if (!person.email) { missing.push(person.name); continue; }
+    const sent = await sendEmail(env, { to: person.email, subject, text });
+    if (sent.sent) emailed += 1;
+    else missing.push(`${person.name} (${sent.reason})`);
+  }
+  if (!emailed && missing.length) await reportError(env, 'DDP-ADMIN-018', { flat, missing });
+  return { emailed, missing, mail };
+}
+
+/**
+ * Withdraw one's own pending advance request. No second admin: nothing was
+ * recorded, so there is nothing to un-record — the request is simply cancelled.
+ * Only the person who raised it, and only while it is still pending.
+ */
+async function withdrawAdvance(env, session, path) {
+  const id = Number(path.split('/')[6]);   // /api/admin/maint/advances/:id/withdraw
+  const req = await env.DB.prepare(
+    "SELECT * FROM maint_approval_requests WHERE id = ? AND kind = 'advance'"
+  ).bind(id).first();
+  if (!req) return problem(404, 'DDP-ADMIN-017', 'No such request.');
+  if (req.status !== 'pending') {
+    return problem(409, 'DDP-ADMIN-017', `That request is already ${req.status}.`);
+  }
+  if (req.requested_by !== session.actor.id) {
+    return problem(403, 'DDP-ADMIN-017', 'Only the admin who recorded it can withdraw it.');
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    "UPDATE maint_approval_requests SET status = 'cancelled', resolved_at = ? WHERE id = ? AND status = 'pending'"
+  ).bind(now, id).run();
+  await audit(env, session, 'maint.advance.withdraw', { requestId: id, flat: req.flat });
+  return json({ ok: true, status: 'cancelled' });
+}
+
+/**
+ * Approve or reject a maintenance approval request. GENERIC: it lapses,
+ * gates on canApprove and records the approval the same way for any `kind`, then
+ * dispatches the applier by kind. This session implements the `advance` applier
+ * only; any other kind that reaches satisfaction is refused loudly rather than
+ * applied by code that does not exist yet.
+ *
+ * ONE SECOND ADMIN for an advance: unlike a gas bill edit (two), the first
+ * eligible approval satisfies it — the committee's decision, and the shape of
+ * the single `approved_by` column. Eligibility is still lib/approvals.js's.
+ */
+async function decideMaintApproval(env, session, path, decision, origin = '') {
+  const id = Number(path.split('/')[5]);   // /api/admin/maint/approvals/:id/(approve|reject)
+  const req = await env.DB.prepare('SELECT * FROM maint_approval_requests WHERE id = ?')
+    .bind(id).first();
+  if (!req) return problem(404, 'DDP-ADMIN-017', 'No such request.');
+
+  // Lapsed on read, as the other two queues do: the expiry only has to be true
+  // at the moment somebody acts, and a cron for it would fail quietly.
+  if (req.status === 'pending' && Date.parse(req.expires_at) < Date.now()) {
+    await env.DB.prepare(
+      "UPDATE maint_approval_requests SET status = 'expired', resolved_at = ? WHERE id = ? AND status = 'pending'"
+    ).bind(new Date().toISOString(), id).run();
+    return problem(409, 'DDP-ADMIN-017', 'That request has lapsed. Raise it again if it still stands.');
+  }
+  if (req.status !== 'pending') {
+    return problem(409, 'DDP-ADMIN-017', `That request is already ${req.status}.`);
+  }
+  if (req.kind !== ADVANCE_KIND) {
+    // The other four kinds have no create UI and no applier this session. A
+    // request of one could only exist by raw SQL, and applying it here would be
+    // code pretending to a decision it cannot carry out.
+    return problem(409, 'DDP-ADMIN-017', `Approving a ${req.kind} request is not built yet.`);
+  }
+
+  const policy = approvalPolicy({
+    admins: await approvalBench(env), requesterId: req.requested_by, billFlat: req.flat,
+  });
+  const verdict = canApprove({ policy, approver: session.actor, request: req });
+  if (!verdict.ok) {
+    await reportError(env, verdict.code, { requestId: id, actor: session.actor.id, reason: verdict.reason });
+    return problem(403, verdict.code,
+      verdict.reason === 'requester' ? 'You recorded this, so you cannot approve it.'
+      : verdict.reason === 'too-soon' ? `An admin still has ${verdict.hoursLeft}h to answer.`
+      : 'This is not yours to approve.');
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO maint_approvals (request_id, approver_id, decision, substitute, at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (request_id, approver_id) DO UPDATE SET
+       decision = excluded.decision, at = excluded.at, substitute = excluded.substitute`
+  ).bind(id, session.actor.id, decision, verdict.substitute ? 1 : 0, now).run();
+
+  if (decision === 'reject') {
+    await env.DB.prepare(
+      "UPDATE maint_approval_requests SET status = 'rejected', resolved_at = ? WHERE id = ?"
+    ).bind(now, id).run();
+    await audit(env, session, 'maint.advance.reject', { requestId: id, flat: req.flat });
+    await notifyAdvanceDecision(env, { req, decision: 'reject', decidedBy: session.actor.name, origin });
+    return json({ ok: true, status: 'rejected' });
+  }
+
+  // One approval satisfies an advance, so the applier runs now. The
+  // recorded_by <> approved_by CHECK is the database's own backstop under
+  // canApprove's requester guard.
+  const { advanceId } = await applyAdvanceRequest(env, { req, actorId: session.actor.id, now });
+
+  await audit(env, session, 'maint.advance.approve',
+    { requestId: id, advanceId, flat: req.flat, approvedBy: session.actor.id });
+  await notifyAdvanceDecision(env, { req, decision: 'approve', decidedBy: session.actor.name, origin });
+
+  return json({ ok: true, status: 'applied', advanceId });
+}
+
+/** Email the requester the outcome. Non-blocking, gated, never fails the decision. */
+async function notifyAdvanceDecision(env, { req, decision, decidedBy, origin }) {
+  try {
+    if (!mailConfigured(env)) return;
+    const requester = await env.DB.prepare('SELECT name, email FROM owners WHERE id = ?')
+      .bind(req.requested_by).first();
+    if (!requester?.email) return;
+    let payload = {};
+    try { payload = req.payload ? JSON.parse(req.payload) : {}; } catch { payload = {}; }
+    const { subject, text } = advanceDecisionEmail({
+      decision, flat: req.flat, amount: payload.amount,
+      paidThrough: payload.paid_through, decidedBy, origin,
+    });
+    await sendEmail(env, { to: requester.email, subject, text });
+  } catch { /* a failed notification must never undo an approved advance */ }
 }
 
 /* ── a tenant moving out ─────────────────────────────────────────────────

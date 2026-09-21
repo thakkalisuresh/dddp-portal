@@ -226,6 +226,18 @@ export const api = {
     confirmTenancy: (id, leaseEndsAt = null) =>
                                request('POST', '/api/admin/maint/tenancy/confirm',
                                        { id, leaseEndsAt }),
+
+    /**
+     * Advances — a flat paying ahead. Recording one raises a request; a second
+     * admin approves it from the same queue the bill edits and departures use.
+     * Every one returns the whole maintenance payload, like the steps above, so
+     * the advances table and the approvals queue never disagree with each other.
+     */
+    recordAdvance: (body) => request('POST', '/api/admin/maint/advances', body),
+    withdrawAdvance: (requestId) =>
+      request('POST', `/api/admin/maint/advances/${requestId}/withdraw`),
+    decideAdvance: (requestId, approve) =>
+      request('POST', `/api/admin/maint/approvals/${requestId}/${approve ? 'approve' : 'reject'}`),
     /** Two blocks, never totalled together. See duesReport in the Worker. */
     dues:          ()        => request('GET', '/api/admin/dues'),
 

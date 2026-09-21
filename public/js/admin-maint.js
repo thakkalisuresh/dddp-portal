@@ -30,6 +30,23 @@ let step = 1;
 let root = null;
 
 /**
+ * The advances panel's own view state, kept across re-renders.
+ *
+ * The panel redraws whole on every reload (a saved rate moves the preview, so
+ * the page is rebuilt rather than patched), and the filter, the sort and a
+ * half-filled form must survive that. Module-level rather than on `state`
+ * because it is the screen's memory, not the server's.
+ */
+const advanceUi = {
+  formOpen: false,
+  flatFilter: '',
+  statusFilter: 'all',
+  quarterFilter: '',
+  sortKey: 'paidThrough',
+  sortDir: 'desc',
+};
+
+/**
  * The Maintenance tab.
  *
  * RETURNS ITS NODE. The tab dispatcher in admin-console.js calls every panel as
@@ -1055,32 +1072,316 @@ function exemptionsPanel() {
         : el('p', { class: 'muted small' }, 'None.')));
 }
 
+/* ── advances ──────────────────────────────────────────────────────────────
+   A flat paying ahead. Recorded by one admin, approved by a second, and shown
+   in one table whatever its state — awaiting, approved or cancelled — because an
+   admin looking for "has 2B paid ahead" wants one place to look, not three.   */
+
 function advancesPanel() {
-  return el('details', { class: 'panel' },
+  const rows = advanceRowsFiltered();
+  return el('details', { class: 'panel', open: 'open' },
     el('summary', {}, `Advances (${state.advances.length})`),
-    state.advances.length
-      ? el('div', { class: 'scroll-x' },
-          el('table', { class: 'table' },
-            el('thead', {}, el('tr', {},
-              el('th', {}, 'Flat'),
-              el('th', { class: 'r' }, 'Amount'),
-              el('th', {}, 'Paid up to'),
-              el('th', {}, 'Reference'),
-              el('th', {}, 'Recorded / approved'))),
-            el('tbody', {}, ...state.advances.map((a) => el('tr', {},
-              el('td', {}, a.flat),
-              el('td', { class: 'r' }, money(a.amount)),
-              el('td', {}, a.paid_through),
-              el('td', { class: 'small muted' },
-                `${esc(a.method ?? '')} ${esc(a.reference ?? '')}`.trim() || '—'),
-              el('td', { class: 'small muted' },
-                // An unapproved advance has not been banked. Said on the row,
-                // because advanceCovers() refuses to count it and an admin
-                // seeing the amount would otherwise assume it counts.
-                a.approved_by
-                  ? `${esc(a.recorded_by_name ?? '')} → ${esc(a.approved_by_name ?? '')}`
-                  : el('span', { class: 'chip chip--awaiting' }, 'Needs a second admin')))))))
-      : el('p', { class: 'muted small' }, 'No advances recorded.'));
+    el('div', { class: 'stack' },
+      el('div', { class: 'row row--between' },
+        el('p', { class: 'small muted' },
+          'A flat paying ahead. Takes effect only after one other admin approves.'),
+        el('button', {
+          class: 'btn btn--sm', type: 'button',
+          onclick: () => { advanceUi.formOpen = !advanceUi.formOpen; render(); },
+        }, advanceUi.formOpen ? 'Close' : '＋ Record an advance')),
+
+      advanceUi.formOpen ? recordAdvanceForm() : null,
+
+      state.advances.length ? advancesFilterBar() : null,
+      rows.length
+        ? el('div', { class: 'scroll-x' },
+            el('table', { class: 'table' },
+              el('thead', {}, el('tr', {},
+                sortableTh('Flat', 'flat'),
+                el('th', {}, 'Paid by'),
+                el('th', { class: 'r' }, 'Amount'),
+                el('th', {}, 'Paid on'),
+                sortableTh('Covers to', 'paidThrough'),
+                el('th', {}, 'Status'),
+                el('th', {}, ''))),
+              el('tbody', {}, ...rows.map(advanceRow))))
+        : el('p', { class: 'muted small' },
+            state.advances.length ? 'No advances match that filter.' : 'No advances recorded.')));
+}
+
+function sortableTh(label, key) {
+  const on = advanceUi.sortKey === key;
+  return el('th', {
+    style: 'cursor:pointer', role: 'button', 'aria-sort': on ? (advanceUi.sortDir === 'asc' ? 'ascending' : 'descending') : 'none',
+    onclick: () => {
+      if (advanceUi.sortKey === key) advanceUi.sortDir = advanceUi.sortDir === 'asc' ? 'desc' : 'asc';
+      else { advanceUi.sortKey = key; advanceUi.sortDir = 'asc'; }
+      render();
+    },
+  }, `${label}${on ? (advanceUi.sortDir === 'asc' ? ' ▲' : ' ▼') : ''}`);
+}
+
+function advancesFilterBar() {
+  const quarters = [...new Set(state.advances.map((a) => a.paidThrough).filter(Boolean))].sort();
+  return el('div', { class: 'row', style: 'gap:var(--s-3);flex-wrap:wrap;align-items:end' },
+    el('label', { class: 'field', style: 'margin:0' },
+      el('span', { class: 'label' }, 'Flat'),
+      el('input', {
+        class: 'input input--sm', value: advanceUi.flatFilter, placeholder: 'Any flat',
+        oninput: (e) => { advanceUi.flatFilter = e.target.value; render(); },
+      })),
+    el('label', { class: 'field', style: 'margin:0' },
+      el('span', { class: 'label' }, 'Status'),
+      el('select', {
+        class: 'input input--sm',
+        onchange: (e) => { advanceUi.statusFilter = e.target.value; render(); },
+      }, ...[['all', 'All'], ['approved', 'Approved'], ['awaiting', 'Awaiting'], ['cancelled', 'Cancelled']]
+        .map(([v, t]) => el('option', { value: v, selected: advanceUi.statusFilter === v ? 'selected' : null }, t)))),
+    el('label', { class: 'field', style: 'margin:0' },
+      el('span', { class: 'label' }, 'Quarter'),
+      el('select', {
+        class: 'input input--sm',
+        onchange: (e) => { advanceUi.quarterFilter = e.target.value; render(); },
+      }, el('option', { value: '', selected: advanceUi.quarterFilter === '' ? 'selected' : null }, 'Any'),
+        ...quarters.map((q) => el('option', { value: q, selected: advanceUi.quarterFilter === q ? 'selected' : null }, q)))));
+}
+
+function advanceRowsFiltered() {
+  const flat = advanceUi.flatFilter.trim().toUpperCase();
+  const filtered = (state.advances ?? []).filter((a) =>
+    (!flat || String(a.flat ?? '').toUpperCase().includes(flat))
+    && (advanceUi.statusFilter === 'all' || a.state === advanceUi.statusFilter)
+    && (!advanceUi.quarterFilter || a.paidThrough === advanceUi.quarterFilter));
+
+  const dir = advanceUi.sortDir === 'asc' ? 1 : -1;
+  const key = advanceUi.sortKey;
+  return filtered.sort((a, b) =>
+    dir * String(a[key] ?? '').localeCompare(String(b[key] ?? ''))
+    || String(a.flat ?? '').localeCompare(String(b.flat ?? '')));
+}
+
+function advanceRow(a) {
+  const chip = a.state === 'approved' ? el('span', { class: 'chip chip--paid' }, 'Approved')
+    : a.state === 'cancelled' ? el('span', { class: 'chip chip--overdue' }, 'Cancelled')
+    : el('span', { class: 'chip chip--awaiting' }, 'Needs 1 admin');
+
+  const trail = a.state === 'approved'
+    ? `${a.recordedByName ?? 'an admin'} → ${a.approvedByName ?? 'an admin'}`
+    : a.state === 'cancelled'
+      ? `by ${a.cancelledByName ?? 'an admin'}`
+      : `by ${a.recordedByName ?? 'an admin'}`;
+
+  const slot = el('span', {});
+  const action = a.canWithdraw
+    ? el('span', {},
+        el('button', {
+          class: 'btn btn--ghost btn--sm', type: 'button',
+          onclick: async () => {
+            if (!await askFirst(slot, 'Withdraw this request? It will not be recorded.', 'Withdraw')) return;
+            try { await api.admin.withdrawAdvance(a.requestId); await reload(step); }
+            catch (err) { slot.textContent = err.message ?? 'Could not withdraw.'; }
+          },
+        }, 'Withdraw'),
+        slot)
+    : el('span', { class: 'small muted' }, trail);
+
+  return el('tr', { class: a.state === 'cancelled' ? 'muted' : null },
+    el('td', { style: a.state === 'cancelled' ? 'text-decoration:line-through' : null }, esc(a.flat ?? '')),
+    el('td', { class: 'small' }, esc(a.paidByName ?? '—')),
+    el('td', { class: 'r' }, a.amount != null ? money(a.amount) : '—'),
+    el('td', { class: 'small' }, a.paidOn ? isoToSlash(a.paidOn) : '—'),
+    el('td', {}, esc(a.paidThrough ?? '—')),
+    el('td', {}, chip),
+    el('td', {}, action));
+}
+
+/**
+ * Record an advance. One admin fills this; nothing is recorded until a second
+ * admin approves it from the queue below.
+ */
+function recordAdvanceForm() {
+  const flats = state.flatPeople ?? [];
+  const out = el('p', { class: 'small muted' });
+
+  const flatSel = el('select', { class: 'input' },
+    el('option', { value: '' }, 'Choose…'),
+    ...flats.map((f) => el('option', { value: f.flat },
+      `${f.flat}${ownerName(f) ? ` — ${ownerName(f)}` : ''}`)));
+
+  const paidBySel = el('select', { class: 'input' }, el('option', { value: '' }, '—'));
+  const amount = el('input', { class: 'input', type: 'number', min: '0', step: '1', inputmode: 'numeric' });
+  const paidOn = el('input', { class: 'input', type: 'text', placeholder: 'DD/MM/YYYY', inputmode: 'numeric' });
+  const covers = el('select', { class: 'input' },
+    ...advanceQuarterOptions().map((q) =>
+      el('option', { value: q.value, selected: q.value === state.quarter ? 'selected' : null }, q.label)));
+  const method = el('select', { class: 'input' },
+    ...['Bank transfer', 'UPI', 'Cheque', 'Cash'].map((m) => el('option', { value: m }, m)));
+  const reference = el('input', { class: 'input', placeholder: 'e.g. UTR 4821' });
+  const reason = el('textarea', { class: 'input', rows: '2' });
+  const warn = el('div', {});
+
+  // Paid-by follows the flat: default the flat's owner, offer its tenants and
+  // co-owners. Recomputed on every flat change so the list is never stale.
+  const fillPaidBy = () => {
+    const f = flats.find((x) => x.flat === flatSel.value);
+    const people = f?.people ?? [];
+    setChildren(paidBySel, ...(people.length
+      ? people.map((p, i) => el('option', {
+          value: String(p.id),
+          selected: (p.relationship === 'owner' && i === people.findIndex((q) => q.relationship === 'owner')) ? 'selected' : null,
+        }, `${p.name} (${p.relationship})`))
+      : [el('option', { value: '' }, 'Nobody on record')]));
+    checkAmount();
+  };
+  const checkAmount = () => {
+    const f = flats.find((x) => x.flat === flatSel.value);
+    const payer = f?.people?.find((p) => String(p.id) === paidBySel.value);
+    const rate = payer?.relationship === 'tenant'
+      ? (state.row?.tenant_rate ?? state.previous?.tenant_rate)
+      : (state.row?.owner_rate ?? state.previous?.owner_rate);
+    setChildren(warn, ...amountWarning({
+      amount: Number(amount.value), rate, from: state.quarter, through: covers.value,
+    }));
+  };
+
+  flatSel.addEventListener('change', fillPaidBy);
+  paidBySel.addEventListener('change', checkAmount);
+  amount.addEventListener('input', checkAmount);
+  covers.addEventListener('change', checkAmount);
+
+  const field = (label, node, hint = null, req = true) => el('label', { class: 'field' },
+    el('span', { class: 'label' }, label, req ? el('span', { class: 'bad' }, ' *') : el('span', { class: 'muted' }, ' (optional)')),
+    node, hint ? el('p', { class: 'small muted' }, hint) : null);
+
+  const submit = el('button', { class: 'btn', type: 'submit' }, 'Send for approval');
+
+  const form = el('form', { class: 'note note--plain stack' },
+    el('p', { class: 'label' }, 'New advance'),
+    el('div', { class: 'row', style: 'gap:var(--s-4);flex-wrap:wrap' },
+      field('Flat', flatSel),
+      field('Paid by', paidBySel, 'Defaults to the owner; change if a tenant or co-owner paid.')),
+    el('div', { class: 'row', style: 'gap:var(--s-4);flex-wrap:wrap' },
+      field('Amount received', amount),
+      field('Payment date', paidOn, 'The day the money arrived.')),
+    el('div', { class: 'row', style: 'gap:var(--s-4);flex-wrap:wrap' },
+      field('Covers up to (quarter)', covers),
+      field('Method', method, null, false)),
+    field('Reference / UTR', reference, 'Encouraged — it is how the treasurer ties this to the bank statement.', false),
+    field('Reason (goes to the approver)', reason),
+    warn,
+    el('div', { class: 'row', style: 'gap:var(--s-3)' }, submit,
+      el('button', { class: 'linkish small', type: 'button',
+                     onclick: () => { advanceUi.formOpen = false; render(); } }, 'Cancel')),
+    out);
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    out.textContent = '';
+    out.style.color = 'var(--ink-muted)';
+    const flat = flatSel.value;
+    const iso = slashToIso(paidOn.value);
+    if (!flat) return fail('Choose a flat.');
+    if (!(Number(amount.value) > 0)) return fail('Give the amount received.');
+    if (!iso) return fail('Give the payment date as DD/MM/YYYY.');
+    if (!reason.value.trim()) return fail('Say why, for the approver.');
+
+    // Duplicate warn-and-confirm — not a block. Another live advance reaching
+    // this quarter is usually a mistake, but a flat that genuinely paid twice is
+    // real, so the admin gets to say so rather than being stopped.
+    const dup = (state.advances ?? []).some((x) =>
+      x.flat === flat && (x.state === 'approved' || x.state === 'awaiting')
+      && String(x.paidThrough ?? '') >= String(covers.value));
+    if (dup && !await askFirst(warn,
+      `${flat} already has an advance reaching that quarter or beyond. Record another?`, 'Record anyway')) {
+      return;
+    }
+
+    out.textContent = 'Sending…';
+    try {
+      trackAction('maint.advance');
+      await api.admin.recordAdvance({
+        flat,
+        ownerId: paidBySel.value ? Number(paidBySel.value) : null,
+        amount: Number(amount.value),
+        paidOn: iso,
+        paidThrough: covers.value,
+        method: method.value,
+        reference: reference.value.trim() || null,
+        reason: reason.value.trim(),
+      });
+      advanceUi.formOpen = false;
+      await reload(step);
+    } catch (err) {
+      fail(err.message ?? 'Could not record that advance.');
+    }
+  });
+
+  function fail(msg) { out.textContent = msg; out.style.color = 'var(--overdue)'; }
+
+  fillPaidBy();
+  return form;
+}
+
+function ownerName(f) {
+  return (f.people ?? []).find((p) => p.relationship === 'owner')?.name ?? '';
+}
+
+/** The soft amount↔quarter warning, computed in the browser from the flat's rate. */
+function amountWarning({ amount, rate, from, through }) {
+  const quarters = quarterSpan(from, through);
+  if (!quarters || !(rate > 0) || !(amount > 0)) return [];
+  const expected = rate * quarters;
+  if (Math.abs(amount - expected) < rate) return [];
+  return [el('div', { class: 'note note--warn small' },
+    `That amount covers about ${Math.max(1, Math.round(amount / rate))} quarter(s) at this flat's rate, `
+    + `but “covers up to” is ${quarters} quarter(s) (≈ ${money(expected)}). `
+    + 'Check the amount or the quarter — you can still submit.')];
+}
+
+/** Quarters from the working quarter forward, for the "covers up to" picker. */
+function advanceQuarterOptions() {
+  const out = [];
+  let q = state.quarter;
+  for (let i = 0; i < 8 && q; i += 1) {
+    out.push({ value: q, label: q });
+    q = nextQuarterLabel(q);
+  }
+  return out;
+}
+
+function nextQuarterLabel(label) {
+  const m = /^(\d{4})-Q([1-4])$/.exec(String(label));
+  if (!m) return null;
+  const y = Number(m[1]); const n = Number(m[2]);
+  return n === 4 ? `${y + 1}-Q1` : `${y}-Q${n + 1}`;
+}
+
+/** Quarters inclusive between two labels, or null. Mirrors lib/maint-approvals. */
+function quarterSpan(from, through) {
+  const a = /^(\d{4})-Q([1-4])$/.exec(String(from));
+  const b = /^(\d{4})-Q([1-4])$/.exec(String(through));
+  if (!a || !b) return null;
+  const av = Number(a[1]) * 4 + Number(a[2]);
+  const bv = Number(b[1]) * 4 + Number(b[2]);
+  return bv < av ? null : bv - av + 1;
+}
+
+/** ISO 'YYYY-MM-DD' -> 'DD/MM/YYYY'. Empty for anything malformed. */
+function isoToSlash(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso ?? ''));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
+}
+
+/** 'DD/MM/YYYY' -> ISO 'YYYY-MM-DD'. Null for anything that is not a real date. */
+function slashToIso(text) {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(text ?? '').trim());
+  if (!m) return null;
+  const d = Number(m[1]); const mo = Number(m[2]); const y = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const iso = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  // Round-trip through Date to reject 31/02 and friends.
+  const back = new Date(`${iso}T00:00:00Z`);
+  return back.toISOString().slice(0, 10) === iso ? iso : null;
 }
 
 /**
@@ -1095,11 +1396,56 @@ function approvalsPanel() {
   return el('details', { class: 'panel', open: state.approvals.length ? 'open' : null },
     el('summary', {}, `Approvals waiting (${state.approvals.length})`),
     state.approvals.length
-      ? el('ul', { class: 'list' }, ...state.approvals.map((r) => el('li', {},
-          el('strong', {}, esc(r.kind ?? '')),
-          r.flat ? ` · ${esc(r.flat)}` : '',
-          el('div', { class: 'small muted' },
-            `asked by ${esc(r.requested_by_name ?? 'an admin')}`
-            + (r.reason ? ` — ${esc(r.reason)}` : '')))))
+      ? el('div', { class: 'stack' }, ...state.approvals.map(approvalCard))
       : el('p', { class: 'muted small' }, 'Nothing waiting.'));
+}
+
+function approvalCard(r) {
+  const p = r.payload ?? {};
+  const detail = [
+    p.amount != null ? money(p.amount) : null,
+    p.paidThrough ? `covers ${p.paidThrough}` : null,
+    p.paidOn ? `paid ${isoToSlash(p.paidOn)}` : null,
+    p.paidByName ? `by ${p.paidByName}` : null,
+  ].filter(Boolean).join(' · ');
+
+  const slot = el('span', {});
+  const buttons = r.canApprove
+    ? el('div', { class: 'row', style: 'gap:var(--s-3)' },
+        el('button', {
+          class: 'btn btn--sm', type: 'button',
+          onclick: async () => { await decide(r, true, slot); },
+        }, 'Approve'),
+        el('button', {
+          class: 'btn btn--sm btn--danger', type: 'button',
+          onclick: async () => { await decide(r, false, slot); },
+        }, 'Reject'),
+        slot)
+    : el('p', { class: 'small muted' }, whyBlocked(r), slot);
+
+  return el('div', { class: 'note note--plain stack', style: 'gap:var(--s-2)' },
+    el('div', { class: 'row row--between' },
+      el('strong', {}, `Advance · ${esc(r.flat ?? '')}`),
+      el('span', { class: 'chip chip--awaiting' }, 'Needs 1 admin')),
+    el('div', { class: 'small' }, esc(detail || '—')),
+    el('div', { class: 'small muted' },
+      `Asked by ${esc(r.requested_by_name ?? 'an admin')}`
+      + (r.reason ? ` — ${esc(r.reason)}` : '')),
+    buttons);
+}
+
+async function decide(r, approve, slot) {
+  slot.textContent = '';
+  try {
+    await api.admin.decideAdvance(r.id, approve);
+    await reload(step);
+  } catch (err) {
+    slot.textContent = ` ${err.message ?? 'Refused.'}`;
+  }
+}
+
+function whyBlocked(r) {
+  if (r.blockedBecause === 'requester') return 'You recorded this, so you cannot approve it.';
+  if (r.blockedBecause === 'too-soon') return `An admin still has ${r.hoursLeft}h to answer.`;
+  return 'Waiting for another admin to approve.';
 }

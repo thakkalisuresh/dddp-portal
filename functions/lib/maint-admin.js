@@ -18,6 +18,8 @@ import {
   quarterOf, nextQuarter, isQuarterLabel, isSettled,
 } from './maint.js';
 import { flatsWithPeople, DRAFT_LEAD_DAYS } from './maint-cron.js';
+import { approvalPolicy, canApprove } from './approvals.js';
+import { ADVANCE_KIND, mergeAdvancesView } from './maint-approvals.js';
 
 /**
  * How long a tenancy may go unchecked before it is flagged.
@@ -267,7 +269,7 @@ function block(rows, today, cadence) {
  * separately would mean an admin watching a screen assemble itself in pieces
  * while deciding whether to bill ninety-nine flats.
  */
-export async function maintAdminPayload(env, quarterLabel, { today = istToday() } = {}) {
+export async function maintAdminPayload(env, quarterLabel, { today = istToday(), session = null } = {}) {
   const label = isQuarterLabel(quarterLabel) ? quarterLabel : await workingQuarter(env, today);
   if (!label) return null;
 
@@ -327,11 +329,13 @@ export async function maintAdminPayload(env, quarterLabel, { today = istToday() 
 
   const [advances, feeExemptions, voteExemptions, approvals, quarters] = await Promise.all([
     env.DB.prepare(
-      `SELECT a.*, r.name AS recorded_by_name, p.name AS approved_by_name, o.name AS resident
+      `SELECT a.*, r.name AS recorded_by_name, p.name AS approved_by_name,
+              o.name AS resident, c.name AS cancelled_by_name
          FROM maint_advances a
          LEFT JOIN owners r ON r.id = a.recorded_by
          LEFT JOIN owners p ON p.id = a.approved_by
          LEFT JOIN owners o ON o.id = a.owner_id
+         LEFT JOIN owners c ON c.id = a.cancelled_by
         ORDER BY a.paid_through DESC, a.flat`
     ).all(),
 
@@ -358,6 +362,84 @@ export async function maintAdminPayload(env, quarterLabel, { today = istToday() 
     ).all(),
   ]);
 
+  // ── the advances panel and the approvals queue, enriched ────────────────
+  // Names and people come off the rows already in hand — no extra query — so the
+  // Flat and Paid-by pickers can show "2B — Suresh" and the merged advances
+  // table can name the payer without a second round trip.
+  const nameById = new Map();
+  const flatPeople = [];
+  for (const row of rows) {
+    const active = (row.people ?? [])
+      .filter((p) => p.active)
+      .map((p) => ({ id: p.id, name: p.name, relationship: p.relationship }));
+    for (const p of active) nameById.set(p.id, p.name);
+    flatPeople.push({ flat: row.flat, people: active });
+  }
+
+  const allApprovals = approvals.results ?? [];
+  const advanceRows = advances.results ?? [];
+
+  // The pending advance intents live in the approvals table; give each the
+  // payer's name so the merged view can show it before the advance row exists.
+  const pendingAdvances = allApprovals
+    .filter((r) => r.kind === ADVANCE_KIND)
+    .map((r) => {
+      let p = {};
+      try { p = r.payload ? JSON.parse(r.payload) : {}; } catch { p = {}; }
+      return { ...r, paid_by_name: p.owner_id ? nameById.get(p.owner_id) ?? null : null };
+    });
+
+  // Who could ever approve, once, so the buttons can be gated per row rather
+  // than offering an action the server will refuse.
+  const bench = session
+    ? ((await env.DB.prepare(
+        `SELECT id, role, flat FROM owners
+          WHERE active = 1 AND role IN ('admin','superadmin') ORDER BY id`
+      ).all()).results ?? [])
+    : [];
+
+  const advancesView = mergeAdvancesView({ advances: advanceRows, pendingRequests: pendingAdvances })
+    .map((a) => ({
+      ...a,
+      // Withdraw is the requester's own, and only on a still-pending row.
+      canWithdraw: Boolean(session && a.state === 'awaiting'
+        && a.requestedBy === session.actor.id),
+    }));
+
+  // The queue an approver actually works: only the kinds with an applier, each
+  // with the decoded effect and whether this viewer may act, and why not.
+  const approvalsView = allApprovals
+    .filter((r) => r.kind === ADVANCE_KIND)
+    .map((r) => {
+      let payload = {};
+      try { payload = r.payload ? JSON.parse(r.payload) : {}; } catch { payload = {}; }
+      const policy = approvalPolicy({ admins: bench, requesterId: r.requested_by, billFlat: r.flat });
+      const verdict = session
+        ? canApprove({ policy, approver: session.actor, request: r })
+        : { ok: false, reason: 'not-open' };
+      return {
+        id: r.id,
+        kind: r.kind,
+        flat: r.flat,
+        reason: r.reason,
+        requested_by_name: r.requested_by_name,
+        // One second admin for an advance; named so the screen does not have to
+        // know the count rule.
+        required: 1,
+        payload: {
+          amount: payload.amount ?? null,
+          paidThrough: payload.paid_through ?? null,
+          paidOn: payload.paid_on ?? null,
+          paidByName: payload.owner_id ? nameById.get(payload.owner_id) ?? null : null,
+          method: payload.method ?? null,
+          reference: payload.reference ?? null,
+        },
+        canApprove: verdict.ok,
+        blockedBecause: verdict.ok ? null : verdict.reason,
+        hoursLeft: verdict.hoursLeft ?? null,
+      };
+    });
+
   return {
     quarter: label,
     quarterLabel: describeQuarter(label),
@@ -376,7 +458,12 @@ export async function maintAdminPayload(env, quarterLabel, { today = istToday() 
     preview,
     bills,
     collect: quarter ? collectFigures({ bills, quarter, today }) : null,
-    advances: advances.results ?? [],
+    // The merged advances list — approved, cancelled, and still-awaiting — that
+    // the panel draws, newest-reaching quarter first.
+    advances: advancesView,
+    // The people on each flat, for the record-advance form's Flat and Paid-by
+    // pickers. Active only; a moved-out owner cannot have paid this quarter.
+    flatPeople,
     exemptions: {
       // Two labelled groups in one panel: an admin looking for "who is excused
       // what" should find both in one place, and the labels carry the
@@ -387,8 +474,9 @@ export async function maintAdminPayload(env, quarterLabel, { today = istToday() 
     },
     // A QUEUE, not buttons on the row that asked for it. Approving is a second
     // person's deliberate act and it should not sit under the mouse of whoever
-    // made the request.
-    approvals: approvals.results ?? [],
+    // made the request. Each row carries the decoded effect and whether this
+    // viewer may act on it.
+    approvals: approvalsView,
     // For the picker. Earlier quarters open read-only.
     quarters: (quarters.results ?? []).map((q) => q.quarter),
     // Read-only when the quarter is behind us: the page is for working a
