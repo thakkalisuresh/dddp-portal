@@ -167,7 +167,7 @@ export function announcementEmail({ flat, period, total, dueDate, consumption, r
         ['Gas used', `${consumption} kg`],
         ['Rate', `₹${ratePerKg} per kg`],
       ]),
-      para('The full working — your meter reading, last month’s, and what '
+      para("The full working — your meter reading, last month's, and what "
         + 'the difference came to — is on the portal.'),
       action('See the working', `${site}/dashboard`),
       aside('Paying is done on the portal too. Nobody from the association will '

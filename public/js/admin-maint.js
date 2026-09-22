@@ -180,7 +180,7 @@ function votingBody(data, reloadVoting) {
           el('p', { class: 'label' }, 'Waiting for a second admin'),
           ...pending.map((e) => el('div', { class: 'note note--warn' },
             el('p', { class: 'small' },
-              `${e.flat} — “${e.reason}” · `
+              `${e.flat} — "${e.reason}" · `
               + (e.ends_at ? `until ${e.ends_at}` : 'open-ended')
               + ` · granted by ${e.granted_by_name ?? 'an admin'}`),
             el('button', {
@@ -204,7 +204,7 @@ function approvedExemptions(data) {
   return el('details', {},
     el('summary', { class: 'small muted' }, `${live.length} exemption${live.length === 1 ? '' : 's'} granted`),
     ...live.map((e) => el('p', { class: 'small muted' },
-      `${e.flat} — “${e.reason}” · `
+      `${e.flat} — "${e.reason}" · `
       + (e.ends_at ? `until ${e.ends_at}` : 'open-ended')
       + ` · ${e.granted_by_name ?? 'an admin'}, approved by ${e.approved_by_name ?? 'an admin'}`)));
 }
@@ -1360,7 +1360,7 @@ function amountWarning({ amount, rate, from, through }) {
   if (Math.abs(amount - expected) < rate) return [];
   return [el('div', { class: 'note note--warn small' },
     `That amount covers about ${Math.max(1, Math.round(amount / rate))} quarter(s) at this flat's rate, `
-    + `but “covers up to” is ${quarters} quarter(s) (≈ ${money(expected)}). `
+    + `but "covers up to" is ${quarters} quarter(s) (≈ ${money(expected)}). `
     + 'Check the amount or the quarter — you can still submit.')];
 }
 
@@ -1437,7 +1437,7 @@ function cancelAdvanceForm() {
         el('span', { class: 'label' }, 'Late fee applies from', el('span', { class: 'bad' }, ' *')), feeFrom),
       el('label', { class: 'field' },
         el('span', { class: 'label' }, 'Amount', el('span', { class: 'bad' }, ' *')), feeAmount)),
-    el('p', { class: 'small muted' }, 'Defaults to the quarter’s late fee; editable.'));
+    el('p', { class: 'small muted' }, "Defaults to the quarter's late fee; editable."));
   feeFields.style.display = 'none';
   feeToggle.addEventListener('change', () => { feeFields.style.display = feeToggle.checked ? '' : 'none'; });
 
@@ -1455,7 +1455,7 @@ function cancelAdvanceForm() {
     feeFields,
     el('p', { class: 'small muted' },
       'On approval: the bill reopens as unpaid, the late fee (if set) is added from the date you chose, '
-      + 'and the standard due/overdue letters resume. No special “reopened” notice is sent.'),
+      + 'and the standard due/overdue letters resume. No special "reopened" notice is sent.'),
     el('div', { class: 'row', style: 'gap:var(--s-3)' },
       el('button', { class: 'btn btn--danger', type: 'submit' }, 'Request cancel'),
       el('button', { class: 'linkish small', type: 'button', onclick: close }, 'Back')),

@@ -273,7 +273,7 @@ async function residentsDirectory() {
     const people = shown.reduce((n, g) => n + g.people.length, 0);
 
     heading.textContent = query
-      ? `Residents · ${people} in ${shown.length} flat${shown.length === 1 ? '' : 's'} matching “${search.value.trim()}”`
+      ? `Residents · ${people} in ${shown.length} flat${shown.length === 1 ? '' : 's'} matching "${search.value.trim()}"`
       : `Residents · ${people} in ${shown.length} flat${shown.length === 1 ? '' : 's'}`;
 
     if (!shown.length) {
@@ -1020,7 +1020,7 @@ function contactRequests(status) {
         el('span', { class: 'muted' }, r.current || 'none'),
         ' → ',
         el('strong', {}, r.value || 'none')),
-      el('p', { class: 'small muted' }, `“${r.reason}” — ${r.requestedBy}, ${r.at}`));
+      el('p', { class: 'small muted' }, `"${r.reason}" — ${r.requestedBy}, ${r.at}`));
 
     if (me.role !== 'superadmin') return line;
 
@@ -1446,7 +1446,7 @@ function unavailablePanel() {
   ];
   return el('div', { class: 'panel stack' },
     el('div', { class: 'note note--warn' },
-      'Could not load this month’s figures. The sections below still work — '
+      "Could not load this month's figures. The sections below still work — "
       + 'open one to see where things stand.'),
     el('p', { class: 'label' }, 'Go to'),
     ...links.map(([label, to]) => {
@@ -2246,7 +2246,7 @@ function occupancyControl(group, status, reload) {
       // constraint violation. The server checks it too and answers with the
       // same sentence rather than a 500.
       el('p', { class: 'small muted' },
-        'Their own number, not the owner’s — it is the login id, so one number '
+        "Their own number, not the owner's — it is the login id, so one number "
         + 'is one account.'),
       el('div', { class: 'field' }, el('label', {}, 'Email'), tenantEmail));
 
@@ -2290,7 +2290,7 @@ function occupancyControl(group, status, reload) {
       !billed
         ? el('div', { class: 'stack', style: 'gap:var(--s-2)' },
             el('p', { class: 'note note--warn small' },
-              `${group.flat} is not being billed${group.reason ? ` — “${group.reason}”` : ''}.`),
+              `${group.flat} is not being billed${group.reason ? ` — "${group.reason}"` : ''}.`),
             el('label', { class: 'small', style: 'display:flex;gap:var(--s-2)' },
               billingBack, 'Bill it again'),
             el('div', { class: 'field' },

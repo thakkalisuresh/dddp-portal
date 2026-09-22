@@ -223,7 +223,7 @@ function render() {
 
   rail.replaceChildren(
     shell(1, 'The price of gas', priceSub(), priceBody, priceState()),
-    shell(2, 'This month’s readings', readingsSub(), readingsBody, readingsState()),
+    shell(2, "This month's readings", readingsSub(), readingsBody, readingsState()),
     shell(3, 'Review and publish', reviewSub(), reviewBody, reviewState()),
   );
 
@@ -242,7 +242,7 @@ function render() {
             // Stating BOTH months is not redundancy — it is the difference
             // between a correct year and one that is silently a month out. The
             // building is walked in September to close August.
-            `Meters read in ${periodLabel(grid.readMonth)} · closes ${periodLabel(grid.period)}’s gas`)),
+            `Meters read in ${periodLabel(grid.readMonth)} · closes ${periodLabel(grid.period)}'s gas`)),
         el('span', {
           class: `chip ${isPublished() ? 'chip--paid' : grid.rate != null ? 'chip--neutral' : 'chip--awaiting'}`,
         }, isPublished() ? 'Published' : grid.rate != null ? 'Draft' : 'Not started')),
@@ -407,7 +407,7 @@ function priceBody() {
   return el('div', { class: 'stack' },
     el('p', { class: 'small muted', style: 'max-width:62ch' },
       'Set this every month, even when it has not changed. Nothing is carried '
-      + 'forward: an inherited rate produces a building’s worth of bills that '
+      + "forward: an inherited rate produces a building's worth of bills that "
       + 'look normal and are all wrong.'),
     el('div', { class: 'billfields' },
       el('div', { class: 'field' }, el('label', { for: 'b-rate' }, 'Rate per kg'), rate),
@@ -675,7 +675,7 @@ function importPanel(tbody, out, refresh) {
           'CSV, TSV or plain text. In Excel or Sheets choose File → Save as / '
           + 'Download → CSV. ',
           sample,
-          ' — it lists every billed flat with the person billed and last month’s '
+          " — it lists every billed flat with the person billed and last month's "
           + 'reading beside it, so the meter walk is a matter of filling the last '
           + 'column in.')),
       el('p', { class: 'label' }, 'Or paste it'),
@@ -853,7 +853,7 @@ function nobodyRow(f) {
   const status = el('td', { class: 'msg' },
     el('span', { class: 'msg__row' },
       el('span', { class: 'chip chip--awaiting' }, 'Nobody on file'),
-      el('span', { class: 'small muted' }, 'Not billed until someone’s added.'),
+      el('span', { class: 'small muted' }, "Not billed until someone's added."),
       el('a', { class: 'linkish', href: '#residents' }, 'Add a resident'),
       el('button', {
         class: 'linkish', type: 'button',
@@ -881,7 +881,7 @@ function nobodyPanel() {
   return el('div', { class: 'note note--bad' },
     el('b', {}, `${names} ${stuck.length > 1 ? 'have' : 'has'} nobody on file.`),
     el('p', { style: 'margin:var(--s-2) 0 0' },
-      'This month can’t be published until '
+      "This month can't be published until "
       + `${stuck.length > 1 ? 'each has' : 'it has'} a resident, or is taken off billing. `
       + 'Readings for everyone else are saved either way. Add people under ',
       el('a', { class: 'linkish', href: '#residents' }, 'Residents'),
@@ -1068,7 +1068,7 @@ const reviewSub = () => isPublished()
 function reviewBody() {
   if (isPublished()) {
     return el('p', { class: 'small muted' },
-      'Published. The readings are the building’s archive now — corrections are '
+      "Published. The readings are the building's archive now — corrections are "
       + 'on the card below.');
   }
 
@@ -1165,7 +1165,7 @@ function reviewBody() {
         el('b', {}, `Publishing emails ${billable().length - noEmail().length} residents `
           + `and makes ${billable().length} bills visible.`),
         el('p', {}, `Due ${dayLabel(grid.dueDate)}. `
-          + 'After this, the readings are the building’s archive and a correction '
+          + "After this, the readings are the building's archive and a correction "
           + 'needs two other admins.'));
     }
   };
@@ -1221,7 +1221,7 @@ function reviewBody() {
       // different problem. Listing the right options does not stop anybody
       // trying the other one.
       el('p', {}, el('b', {}, 'Entering a reading will not clear this'),
-        ', not even last month’s figure. That bills the flat at zero, and a '
+        ", not even last month's figure. That bills the flat at zero, and a "
         + 'zero bill still has to reach somebody.'),
       el('p', {}, 'The month can be published once somebody is on record, or once '
         + 'the flat stops being billed. Both are on ',
@@ -1446,10 +1446,10 @@ function publishedCard() {
         chaseSlot),
 
       el('div', { class: 'note note--warn' },
-        el('b', {}, 'Money does not move on one person’s say-so.'),
+        el('b', {}, "Money does not move on one person's say-so."),
         el('p', {}, 'A correction here goes to two other admins and applies when they '
           + 'agree — if the bill belongs to an admin, every other admin has to agree. '
-          + 'That bill’s late fee is frozen while it waits. You cannot approve your own.')),
+          + "That bill's late fee is frozen while it waits. You cannot approve your own.")),
 
       // The month-wide half of the correction rule.
       el('div', { class: 'note' },
@@ -1461,7 +1461,7 @@ function publishedCard() {
           el('button', {
             class: 'btn btn--sm btn--quiet', type: 'button',
             onclick: () => togglePanel(priceSlot, () => pricePanel(priceSlot)),
-          }, `Correct ${periodLabel(period)}’s price of gas`)),
+          }, `Correct ${periodLabel(period)}'s price of gas`)),
         priceSlot),
 
       el('div', { class: 'scroll-x' },
@@ -1483,7 +1483,7 @@ function publishedCard() {
           },
         }, `Start ${periodLabel(nextMonth(period))}`),
         el('span', { class: 'small muted' },
-          'Sets next month’s price of gas and opens its meter walk.')),
+          "Sets next month's price of gas and opens its meter walk.")),
       nextSlot)));
 }
 
@@ -1595,7 +1595,7 @@ function readingPanel(f, close) {
   const recalc = () => {
     const v = Number(reading.value);
     if (!Number.isFinite(v) || (f.previous != null && v < f.previous && !f.meterChange)) {
-      preview.textContent = `A meter cannot read below last month’s ${f.previous}.`;
+      preview.textContent = `A meter cannot read below last month's ${f.previous}.`;
       return;
     }
     const c = consumptionOf({ ...f, reading: v });
@@ -1637,7 +1637,7 @@ function readingPanel(f, close) {
                 : `Not changed yet. ${f.flat} ${periodLabel(period)}: `
                   + `${money(res.totalBefore)} → ${money(res.totalAfter)}. `
                   + `${res.required} other admins will be asked to agree, under `
-                  + 'Home → Approvals. You cannot approve your own, and this bill’s '
+                  + "Home → Approvals. You cannot approve your own, and this bill's "
                   + 'late fee is frozen until it is decided.'));
             button.disabled = false;
           } catch (err) {
@@ -1685,7 +1685,7 @@ function pricePanel(slot) {
         // treasurer that twelve paid bills were about to change while the panel
         // showed the same figure on both sides of the sentence.
         impact.replaceChildren(el('div', { class: 'note' },
-          el('b', {}, `That is already ${periodLabel(period)}’s price. Nothing changes.`)));
+          el('b', {}, `That is already ${periodLabel(period)}'s price. Nothing changes.`)));
         return;
       }
       const t = plan.totals;
@@ -1738,7 +1738,7 @@ function pricePanel(slot) {
               res.unchanged
                 ? 'That is already the price.'
                 : `Not changed yet. ${res.required} other admins will be asked to agree, `
-                  + 'under Home → Approvals. Nothing has moved on any resident’s screen.'));
+                  + "under Home → Approvals. Nothing has moved on any resident's screen."));
             button.disabled = false;
           } catch (err) {
             button.disabled = false;

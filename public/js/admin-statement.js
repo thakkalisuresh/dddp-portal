@@ -132,7 +132,7 @@ function renderUpload(message = null) {
       accountPicker(),
       el('p', { class: 'muted', style: 'padding:var(--s-4)' },
         'No maintenance quarter has been issued yet, so there is nothing on this account to reconcile. '
-        + 'Come back once the first quarter’s bills have gone out.'));
+        + "Come back once the first quarter's bills have gone out."));
     return;
   }
 
@@ -212,7 +212,7 @@ const CREDIT_GROUPS = [
   ['likelyResident', 'Probably a resident who did not upload',
                      'An unpaid bill matches this amount exactly. Most of these settle with one tap.'],
   ['unmatched',      'Nothing matches this',
-                     'Bank interest, a refund, a transfer between the association’s own accounts — '
+                     "Bank interest, a refund, a transfer between the association's own accounts — "
                      + 'or a resident who paid the wrong amount. Worth a look, rarely an error.'],
 ];
 
@@ -233,7 +233,7 @@ const MAINT_CREDIT_GROUPS = [
                  'Already settled against a flat. Shown so you can see what you have done before the '
                  + 'statement is deleted.'],
   ['unmatched',  'Nothing matches this',
-                 'Bank interest, a refund, a transfer between the association’s own accounts — '
+                 "Bank interest, a refund, a transfer between the association's own accounts — "
                  + 'or a flat that paid an amount no open bill is for. Worth a look, rarely an error.'],
 ];
 
@@ -246,7 +246,7 @@ const MATCH_LABEL = {
 
 /** How a candidate earned its place on the shortlist, in the words an admin reads. */
 const CANDIDATE_REASON = {
-  note:   'the narration carries this flat’s payment note',
+  note:   "the narration carries this flat's payment note",
   flat:   'the narration mentions this flat',
   name:   'the narration mentions this name',
   amount: 'only the amount agrees',
