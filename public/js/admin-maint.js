@@ -21,7 +21,7 @@
  */
 
 import { api } from './api.js';
-import { el, esc, showError, askFirst, setChildren } from './ui.js';
+import { el, showError, askFirst, setChildren } from './ui.js';
 import { money, dayLabel } from './i18n.js';
 import { trackAction } from './track.js';
 
@@ -180,7 +180,7 @@ function votingBody(data, reloadVoting) {
           el('p', { class: 'label' }, 'Waiting for a second admin'),
           ...pending.map((e) => el('div', { class: 'note note--warn' },
             el('p', { class: 'small' },
-              `${e.flat} — “${e.reason}” · `
+              `${e.flat} — "${e.reason}" · `
               + (e.ends_at ? `until ${e.ends_at}` : 'open-ended')
               + ` · granted by ${e.granted_by_name ?? 'an admin'}`),
             el('button', {
@@ -204,7 +204,7 @@ function approvedExemptions(data) {
   return el('details', {},
     el('summary', { class: 'small muted' }, `${live.length} exemption${live.length === 1 ? '' : 's'} granted`),
     ...live.map((e) => el('p', { class: 'small muted' },
-      `${e.flat} — “${e.reason}” · `
+      `${e.flat} — "${e.reason}" · `
       + (e.ends_at ? `until ${e.ends_at}` : 'open-ended')
       + ` · ${e.granted_by_name ?? 'an admin'}, approved by ${e.approved_by_name ?? 'an admin'}`)));
 }
@@ -1059,16 +1059,16 @@ function exemptionsPanel() {
       el('p', { class: 'label' }, 'Late fee — per person'),
       fee.length
         ? el('ul', { class: 'list' }, ...fee.map((e) => el('li', {},
-            `${esc(e.resident ?? '')} (${esc(e.flat ?? '')}) — until ${dayLabel(e.ends_at)}`,
-            el('div', { class: 'small muted' }, esc(e.reason ?? '')),
+            `${e.resident ?? ''} (${e.flat ?? ''}) — until ${dayLabel(e.ends_at)}`,
+            el('div', { class: 'small muted' }, e.reason ?? ''),
             e.approved_by ? null : el('span', { class: 'chip chip--awaiting' }, 'Needs a second admin'))))
         : el('p', { class: 'muted small' }, 'None.'),
 
       el('p', { class: 'label' }, 'Voting — per flat'),
       voting.length
         ? el('ul', { class: 'list' }, ...voting.map((e) => el('li', {},
-            `${esc(e.flat)} — ${e.ends_at ? `until ${dayLabel(e.ends_at)}` : 'open-ended'}`,
-            el('div', { class: 'small muted' }, esc(e.reason ?? '')),
+            `${e.flat} — ${e.ends_at ? `until ${dayLabel(e.ends_at)}` : 'open-ended'}`,
+            el('div', { class: 'small muted' }, e.reason ?? ''),
             e.approved_by ? null : el('span', { class: 'chip chip--awaiting' }, 'Needs a second admin'))))
         : el('p', { class: 'muted small' }, 'None.')));
 }
@@ -1212,11 +1212,11 @@ function advanceRow(a) {
   }
 
   return el('tr', { class: a.state === 'cancelled' ? 'muted' : null },
-    el('td', { style: a.state === 'cancelled' ? 'text-decoration:line-through' : null }, esc(a.flat ?? '')),
-    el('td', { class: 'small' }, esc(a.paidByName ?? '—')),
+    el('td', { style: a.state === 'cancelled' ? 'text-decoration:line-through' : null }, a.flat ?? ''),
+    el('td', { class: 'small' }, a.paidByName ?? '—'),
     el('td', { class: 'r' }, a.amount != null ? money(a.amount) : '—'),
     el('td', { class: 'small' }, a.paidOn ? isoToSlash(a.paidOn) : '—'),
-    el('td', {}, esc(a.paidThrough ?? '—')),
+    el('td', {}, a.paidThrough ?? '—'),
     el('td', {}, chip),
     el('td', {}, action));
 }
@@ -1360,7 +1360,7 @@ function amountWarning({ amount, rate, from, through }) {
   if (Math.abs(amount - expected) < rate) return [];
   return [el('div', { class: 'note note--warn small' },
     `That amount covers about ${Math.max(1, Math.round(amount / rate))} quarter(s) at this flat's rate, `
-    + `but “covers up to” is ${quarters} quarter(s) (≈ ${money(expected)}). `
+    + `but "covers up to" is ${quarters} quarter(s) (≈ ${money(expected)}). `
     + 'Check the amount or the quarter — you can still submit.')];
 }
 
@@ -1437,14 +1437,14 @@ function cancelAdvanceForm() {
         el('span', { class: 'label' }, 'Late fee applies from', el('span', { class: 'bad' }, ' *')), feeFrom),
       el('label', { class: 'field' },
         el('span', { class: 'label' }, 'Amount', el('span', { class: 'bad' }, ' *')), feeAmount)),
-    el('p', { class: 'small muted' }, 'Defaults to the quarter’s late fee; editable.'));
+    el('p', { class: 'small muted' }, "Defaults to the quarter's late fee; editable."));
   feeFields.style.display = 'none';
   feeToggle.addEventListener('change', () => { feeFields.style.display = feeToggle.checked ? '' : 'none'; });
 
   const form = el('form', { class: 'note note--bad stack' },
-    el('p', { class: 'label' }, `Cancel advance — ${esc(a.flat)}`),
+    el('p', { class: 'label' }, `Cancel advance — ${a.flat}`),
     el('p', { class: 'small' },
-      `This advance (${a.amount != null ? money(a.amount) : ''}, covers ${esc(a.paidThrough ?? '')}) may already `
+      `This advance (${a.amount != null ? money(a.amount) : ''}, covers ${a.paidThrough ?? ''}) may already `
       + 'have settled a bill. Cancelling reopens that bill as unpaid, and the resident is chased again.'),
     el('label', { class: 'field' },
       el('span', { class: 'label' }, 'Reason', el('span', { class: 'bad' }, ' *')), reason,
@@ -1455,7 +1455,7 @@ function cancelAdvanceForm() {
     feeFields,
     el('p', { class: 'small muted' },
       'On approval: the bill reopens as unpaid, the late fee (if set) is added from the date you chose, '
-      + 'and the standard due/overdue letters resume. No special “reopened” notice is sent.'),
+      + 'and the standard due/overdue letters resume. No special "reopened" notice is sent.'),
     el('div', { class: 'row', style: 'gap:var(--s-3)' },
       el('button', { class: 'btn btn--danger', type: 'submit' }, 'Request cancel'),
       el('button', { class: 'linkish small', type: 'button', onclick: close }, 'Back')),
@@ -1536,12 +1536,12 @@ function approvalCard(r) {
 
   return el('div', { class: 'note note--plain stack', style: 'gap:var(--s-2)' },
     el('div', { class: 'row row--between' },
-      el('strong', {}, `${isCancel ? 'Cancel advance' : 'Advance'} · ${esc(r.flat ?? '')}`),
+      el('strong', {}, `${isCancel ? 'Cancel advance' : 'Advance'} · ${r.flat ?? ''}`),
       el('span', { class: 'chip chip--awaiting' }, 'Needs 1 admin')),
-    el('div', { class: 'small' }, esc(detail || '—')),
+    el('div', { class: 'small' }, detail || '—'),
     el('div', { class: 'small muted' },
-      `${isCancel ? 'Cancel asked by' : 'Asked by'} ${esc(r.requested_by_name ?? 'an admin')}`
-      + (r.reason ? ` — ${esc(r.reason)}` : '')),
+      `${isCancel ? 'Cancel asked by' : 'Asked by'} ${r.requested_by_name ?? 'an admin'}`
+      + (r.reason ? ` — ${r.reason}` : '')),
     buttons);
 }
 

@@ -83,7 +83,7 @@ function pollRow(p) {
         : p.voted
           ? el('span', { class: 'chip chip--paid' }, 'Voted')
           : p.canVote
-            ? el('span', { class: 'chip chip--awaiting' }, 'Your flat hasn’t voted')
+            ? el('span', { class: 'chip chip--awaiting' }, "Your flat hasn't voted")
             : null),
     el('h2', { class: 'poll__title' }, p.title),
     el('p', { class: 'small' }, status),
@@ -186,7 +186,7 @@ function draw() {
     // out of it. Telling the second one the first one's sentence would be
     // wrong, and telling them nothing at all is the dead end this replaces.
     !p.canVote && !p.closed
-      ? (p.voting && !p.voting.canVote ? lockedCard(p) : note('You can follow this, but the vote is your flat’s owner’s.'))
+      ? (p.voting && !p.voting.canVote ? lockedCard(p) : note("You can follow this, but the vote is your flat's owner's."))
       : null,
 
     el('div', { class: 'stack' }, ...p.options.map((o) => option(o, { voting, p }))),
@@ -238,7 +238,7 @@ function option(o, { voting, p }) {
 function submitBar(p, voted) {
   const remaining = p.multi ? p.maxChoices - picked.length : 0;
   const submit = el('button', { class: 'btn btn--block', type: 'button' },
-    voted ? 'Change my flat’s vote' : 'Submit my flat’s vote');
+    voted ? "Change my flat's vote" : "Submit my flat's vote");
   submit.disabled = !picked.length;
 
   submit.addEventListener('click', async () => {
@@ -276,7 +276,7 @@ function castNote(p) {
     'Change this vote');
   change.addEventListener('click', () => { editing = true; picked = [...p.myVotes]; draw(); });
   return el('div', { class: 'stack' },
-    note('Your flat’s vote is recorded. You can change it until voting closes; '
+    note("Your flat's vote is recorded. You can change it until voting closes; "
       + 'whoever votes last for the flat is the vote that counts.', 'note--good'),
     change);
 }
@@ -570,7 +570,7 @@ function showComposer(me) {
       el('span', { class: 'label' }, 'Is this about a notice?'),
       noticePicker, noticeNote),
     el('label', { class: 'stack', style: 'gap:var(--s-2)' },
-      el('span', { class: 'label' }, 'Closes — the building’s time (IST)'),
+      el('span', { class: 'label' }, "Closes — the building's time (IST)"),
       closes, closesNote),
     el('label', { class: 'checkline' }, tenants,
       el('span', {},
@@ -714,7 +714,7 @@ function editForm(p) {
   return el('div', { class: 'stack' },
     line('The question', 'title', p.title),
     line('What it is about', 'body', p.body, { tag: 'textarea', attrs: { rows: '3' } }),
-    line('Closes — the building’s time (IST)', 'closesAt', isoToIstField(p.closesAt),
+    line("Closes — the building's time (IST)", 'closesAt', isoToIstField(p.closesAt),
       { attrs: { type: 'datetime-local' } }),
     el('label', { class: 'checkline' }, tenants,
       el('span', {}, el('b', {}, 'Let tenants read this poll'))),
