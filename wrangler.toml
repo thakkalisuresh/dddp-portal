@@ -44,6 +44,21 @@ binding = "PROOFS"
 # latency is nobody's problem.
 bucket_name = "dddp-payment-proofs"
 
+# Maintenance payment screenshots, in a bucket of their OWN — separate from the
+# gas PROOFS bucket above. Same reasoning the committee gave the separate
+# maintenance bank account: the two billing streams are kept apart end to end, so
+# nothing about one can reach into the other. proofBucket() (functions/lib/proof.js)
+# picks this bucket for any proof whose maint_bill_id is set.
+#
+# Create it in APAC, like dddp-payment-proofs — a bucket's region is fixed at
+# creation and D1 sits in APAC, so a WNAM bucket would send every Kerala
+# screenshot across the Pacific and back. NOT optional the way ARCHIVE is: a
+# missing MAINT_PROOFS binding throws on a maintenance upload or view, it does
+# not skip. It must be bound before the maintenance feature serves any proof.
+[[r2_buckets]]
+binding = "MAINT_PROOFS"
+bucket_name = "dddp-maint-proofs"
+
 # The association's own off-site copy of the nightly bundle — see the archive
 # section of functions/lib/backup.js for why a second copy exists at all.
 #
@@ -67,6 +82,19 @@ bucket_name = "dddp-archive"
 [vars]
 UPI_VPA = "qr.ddwelfare@sib"
 UPI_PAYEE = "DD Diamond Park RWA"
+MAINT_PAYEE_MODE = "account"
+MAINT_PAYEE_NAME = "DD Diamond Park RWA"
+# MAINTENANCE PAYEE. Mode is "account" until the bank issues a UPI ID for the
+# maintenance account, then "upi". The address itself is NOT here and must never
+# be: MAINT_ACCOUNT_NUMBER, MAINT_IFSC and MAINT_UPI_VPA are SECRETS, set with
+# `wrangler pages secret put`, because this repository is public. In account
+# mode lib/upi.js assembles <account>@<IFSC>.ifsc.npci at runtime, so neither
+# half is ever written down anywhere but the secret store. A test asserts these
+# files do not contain them.
+#
+# MAINT_PAYEE_NAME is a PLACEHOLDER. The committee is still deciding between
+# this and the bank's full registered name, and whichever they pick has to match
+# what a resident's UPI app shows them or the payment looks wrong.
 # MUST match pages/wrangler.toml. The two deployments share one database, so a
 # disagreement here means each one re-hashes what the other just wrote, and
 # every login pays for two derives forever. Change both or neither.
@@ -147,9 +175,15 @@ migrations_dir = "migrations"
 binding = "PROOFS"
 bucket_name = "dddp-proofs-staging"
 
+[[env.staging.r2_buckets]]
+binding = "MAINT_PROOFS"
+bucket_name = "dddp-maint-proofs-staging"
+
 [env.staging.vars]
 UPI_VPA = "qr.ddwelfare@sib"
 UPI_PAYEE = "DD Diamond Park RWA"
+MAINT_PAYEE_MODE = "account"
+MAINT_PAYEE_NAME = "DD Diamond Park RWA"
 PBKDF2_ITERATIONS = "100000"
 
 [triggers]

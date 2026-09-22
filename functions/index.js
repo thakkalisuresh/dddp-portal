@@ -9,6 +9,16 @@ import { reportError, assertAlerting, postToTelegram, requestContextFor, describ
 import { signedInPeople, loginsToday, tokensToRevoke, PRESENCE_KINDS, LEAVE_GRACE_MS } from './lib/presence.js';
 import { hashPassword, verifyPassword, generateOneTimePassword, sha256Hex, derive,
          DEFAULT_ITERATIONS } from './lib/crypto.js';
+import { billDetailPayload, paySheetPayload, resolveBill } from './lib/bill-view.js';
+import {
+  SETTLED_STATUSES, isQuarterLabel, dueDateFor, describeQuarter, flatVotingStatus,
+} from './lib/maint.js';
+import { maintAdminPayload, duesReport, adminHomeCard } from './lib/maint-admin.js';
+import {
+  ADVANCE_KIND, recordAdvanceRequest, applyAdvanceRequest,
+  advanceRequestEmail, advanceDecisionEmail,
+} from './lib/maint-approvals.js';
+import { scheduleQuarter, previewLetter, revertBillsSettledByAdvance } from './lib/maint-cron.js';
 import { dashboardPayload } from './lib/dashboard.js';
 import { billPdf, istSlashDate } from './lib/bill-pdf.js';
 // The Worker's own date label — the browser's lives in js/i18n.js.
@@ -32,8 +42,11 @@ import { reminderDecision, batchDecision, reminderEmail, periodLabel, MAX_REMIND
 import {
   approvalPolicy, canApprove, isSatisfied, needsApproval, expiresAt, approvalMessage,
 } from './lib/approvals.js';
-import { validateUpload, assessProof, shapeQueue, r2Key } from './lib/proof.js';
+import { validateUpload, assessProof, shapeQueue, r2Key, proofBucket } from './lib/proof.js';
 import { validateStatement, parseStatement, reconcile, bucketReconciliation, sweepAbandonedStatements } from './lib/statement.js';
+import { maintAccountHint } from './lib/upi.js';
+import { describeDeparture, departureInputs } from './lib/tenancy-change.js';
+import { votingBlockedFlats, votingStatusFor, votingStatuses } from './lib/voting.js';
 import { readReceipt, visionAvailable } from './lib/vision.js';
 import { runScheduled, runLateFees, isLateFeeCron, applyLateFees, staleIntents } from './lib/cron.js';
 import { listPolls, getPoll, createPoll, castVote, closePoll, publishPoll, unpublishPoll,
@@ -195,8 +208,15 @@ export default {
       if (route === 'POST /api/activity') return recordActivity(request, env, session);
       if (route === 'GET /api/capture')   return captureState(env);
       if (route === 'POST /api/clicks')   return recordClicks(request, env, session);
+      // One handler for both kinds of bill, and one visibility rule. See
+      // lib/bill-view.js for why the URL carries an id and never a kind.
+      if (route === 'GET /api/bill') return billDetail(env, session, url);
+      if (route === 'GET /api/pay')  return paySheet(env, session, request, url);
       if (request.method === 'POST' && /^\/api\/bills\/\d+\/intent$/.test(path)) {
         return logIntent(env, session, path);
+      }
+      if (request.method === 'POST' && /^\/api\/maint-bills\/\d+\/intent$/.test(path)) {
+        return logMaintIntent(env, session, path);
       }
       if (request.method === 'POST' && /^\/api\/bills\/\d+\/proof$/.test(path)) {
         return uploadProof(request, env, session, ctx, path);
@@ -292,6 +312,70 @@ export default {
         }
         // The landing screen. One request rather than the five the board would
         // otherwise make on every visit to /admin.
+        // ── maintenance ────────────────────────────────────────────────
+        if (route === 'GET /api/admin/maint') {
+          return json(await maintAdminPayload(env, url.searchParams.get('quarter'), { session }));
+        }
+        if (route === 'PUT /api/admin/maint/rates') return putMaintRates(request, env, session);
+        if (route === 'POST /api/admin/maint/schedule') return postMaintSchedule(request, env, session);
+        if (route === 'POST /api/admin/maint/unschedule') return postMaintUnschedule(request, env, session);
+        if (route === 'GET /api/admin/maint/voting') return votingOverview(env);
+        // Read-only, and it writes nothing — see previewLetter. The flat must
+        // be one the quarter would bill, so this exposes nothing the Bills
+        // screen does not.
+        if (route === 'GET /api/admin/maint/preview') {
+          return json(await previewLetter(env, url.searchParams.get('quarter'), {
+            flat: url.searchParams.get('flat'),
+            kind: url.searchParams.get('kind') || 'issued',
+            origin: url.origin,
+          }));
+        }
+        if (route === 'POST /api/admin/maint/voting/exempt') {
+          return grantVotingExemption(request, env, session);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/maint\/voting\/exempt\/\d+\/approve$/.test(path)) {
+          return approveVotingExemption(env, session, path);
+        }
+        // ── advances ──────────────────────────────────────────────────
+        // Recording an advance raises a request; a second admin approves it
+        // from the queue below. Withdraw pulls back one's own pending request.
+        if (route === 'POST /api/admin/maint/advances') {
+          return recordAdvance(request, env, session, url.origin);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/maint\/advances\/\d+\/withdraw$/.test(path)) {
+          return withdrawAdvance(env, session, path);
+        }
+        // Cancelling an APPROVED advance (Option B): one admin requests it, a
+        // different admin approves, and the approval reopens the settled bill.
+        if (request.method === 'POST' && /^\/api\/admin\/maint\/advances\/\d+\/cancel$/.test(path)) {
+          return requestAdvanceCancel(request, env, session, path);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/maint\/advances\/\d+\/cancel\/(approve|reject)$/.test(path)) {
+          return decideAdvanceCancel(env, session, path, path.endsWith('/approve') ? 'approve' : 'reject');
+        }
+        // The generic decision endpoint: it dispatches by the request's `kind`,
+        // and this session implements the `advance` applier only.
+        if (request.method === 'POST'
+            && /^\/api\/admin\/maint\/approvals\/\d+\/(approve|reject)$/.test(path)) {
+          return decideMaintApproval(env, session, path, path.endsWith('/approve') ? 'approve' : 'reject', url.origin);
+        }
+        if (route === 'POST /api/admin/tenancy/departure/preview') {
+          return previewDeparture(request, env);
+        }
+        if (route === 'POST /api/admin/tenancy/departure') {
+          return requestDeparture(request, env, session);
+        }
+        if (route === 'GET /api/admin/tenancy/departures') {
+          return listDepartureRequests(env, session);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/tenancy\/departures\/\d+\/(approve|reject)$/.test(path)) {
+          return decideDeparture(env, session, path, path.endsWith('/approve') ? 'approve' : 'reject');
+        }
+        if (route === 'POST /api/admin/maint/tenancy/confirm') {
+          return postTenancyConfirm(request, env, session);
+        }
+        if (route === 'GET /api/admin/dues') return json(await duesReport(env));
+
         if (route === 'GET /api/admin/summary') return adminSummary(env, session);
         if (route === 'GET /api/admin/residents') return listResidents(env, session, url);
         if (route.startsWith('POST /api/admin/residents/') && path.endsWith('/reset/email')) {
@@ -533,9 +617,13 @@ export default {
         if (request.method === 'PATCH' && /^\/api\/admin\/bills\/\d+$/.test(path)) {
           return patchBill(request, env, session, path);
         }
+        if (route === 'GET /api/admin/statement') return statementLanding(env);
         if (route === 'POST /api/admin/statement') return uploadStatement(request, env, session, ctx);
         if (request.method === 'GET' && /^\/api\/admin\/statement\/\d+$/.test(path)) {
           return statementReport(env, path);
+        }
+        if (request.method === 'POST' && /^\/api\/admin\/statement\/\d+\/assign$/.test(path)) {
+          return assignCredit(request, env, session, path);
         }
         if (request.method === 'POST' && /^\/api\/admin\/statement\/\d+\/finish$/.test(path)) {
           return finishStatement(env, session, path);
@@ -747,6 +835,34 @@ async function logout(env, session) {
   await destroySession(env, session.token);
   await audit(env, session, 'logout');
   return json({ ok: true }, { headers: { 'set-cookie': clearCookieHeader() } });
+}
+
+/**
+ * One bill in full — screen behind every card on Home.
+ *
+ * The bill's KIND comes from the record, not the request. A 404 covers both
+ * "no such bill" and "not yours", because telling those apart lets somebody
+ * walk the ids and learn which flats owe what.
+ */
+async function billDetail(env, session, url) {
+  const payload = await billDetailPayload(env, session.subject, url.searchParams.get('id'));
+  if (!payload) return problem(404, 'DDP-BILL-021', 'No such bill.');
+  return json(payload);
+}
+
+/**
+ * The payment sheet. Its own route rather than a sheet, so a poll's Pay button
+ * can link into it and come back — see resolveReturn for why `from` is matched
+ * against an allowlist instead of being trusted.
+ */
+async function paySheet(env, session, request, url) {
+  const payload = await paySheetPayload(env, session.subject, url.searchParams.get('bill'), {
+    userAgent: request.headers.get('user-agent') ?? '',
+    origin: url.origin,
+    from: url.searchParams.get('from') ?? '',
+  });
+  if (!payload) return problem(404, 'DDP-BILL-021', 'No such bill.');
+  return json(payload);
 }
 
 async function me(env, session, request) {
@@ -994,7 +1110,24 @@ async function listResidents(env, session, url) {
 
   const { results } = await env.DB.prepare(
     `SELECT o.id, o.flat, f.floor, o.name, o.mobile, o.email, o.role,
-            o.relationship, o.active, o.moved_in_at, o.moved_out_at, o.must_change_pw
+            o.relationship, o.active, o.moved_in_at, o.moved_out_at, o.must_change_pw,
+            o.lease_ends_at, o.tenancy_confirmed_at,
+            -- A COLUMN, not a second screen. What a resident row gains is their
+            -- current-quarter maintenance status, any advance, and their voting
+            -- state when it is blocked. Each is one fact about this person, so
+            -- each is one column rather than a page of its own.
+            (SELECT b.status FROM maint_bills b
+              WHERE b.owner_id = o.id AND b.status NOT IN ('cancelled')
+              ORDER BY b.quarter DESC LIMIT 1) AS maint_status,
+            (SELECT b.quarter FROM maint_bills b
+              WHERE b.owner_id = o.id AND b.status NOT IN ('cancelled')
+              ORDER BY b.quarter DESC LIMIT 1) AS maint_quarter,
+            -- Approved advances only. An unapproved one is one admin's
+            -- assertion until a second agrees, and advanceCovers() refuses to
+            -- count it — so showing it here would contradict the rule.
+            (SELECT MAX(a.paid_through) FROM maint_advances a
+              WHERE a.flat = o.flat AND a.approved_by IS NOT NULL
+                AND a.cancelled_at IS NULL) AS advance_through
        FROM owners o JOIN flats f ON f.flat = o.flat
       ${wantsPast ? '' : 'WHERE o.active = 1'}
       ORDER BY f.floor, o.flat, o.active DESC, o.relationship`
@@ -1005,7 +1138,21 @@ async function listResidents(env, session, url) {
   // the mailbox is what gets reported.
   // The superadmin is listed to admins as an admin -- see roleAsSeenBy for why
   // this is masked here, in the data, and not only in the page.
-  const residents = results.map((r) => ({ ...r, role: roleAsSeenBy(session.actor, r.role) }));
+  // THE REAL RULE, not a SQL approximation of it. Whether a flat's vote is
+  // blocked depends on which quarters have ENDED, on approvals in flight and on
+  // exemptions — flatVotingStatus knows all three, and a WHERE clause that got
+  // any of them slightly wrong would put a "vote locked" line on a card while
+  // the poll screen let that flat vote. Two answers to one question is worse
+  // than one answer in one place.
+  const blockedFlats = await votingBlockedFlats(env);
+
+  const residents = results.map((r) => ({
+    ...r,
+    role: roleAsSeenBy(session.actor, r.role),
+    // The vote is the flat's and the flat's vote is the owner's, so a tenant's
+    // card never carries this even when their own arrears are what caused it.
+    voting_blocked: r.relationship !== 'tenant' && blockedFlats.has(r.flat),
+  }));
   return json({ residents, mailConfigured: mailConfigured(env) });
 }
 
@@ -1246,6 +1393,942 @@ async function logIntent(env, session, path) {
   return json({ recorded: true, status: bill.status === 'unpaid' ? 'initiated' : bill.status });
 }
 
+/**
+ * The maintenance twin of logIntent — the resident opened their UPI app.
+ *
+ * NO `maint_payment_intents` TABLE, and that is deliberate rather than an
+ * omission. Migration 0042 says of `maint_bills.claimed_at` that it is "the
+ * only record of when a claim was made, and a dispute asks that question": the
+ * gas side keeps a row per tap because its late-fee hold once needed the count,
+ * and maintenance's fee does not hold on a claim at all. A table nobody reads
+ * is a table that goes stale, so the stamp on the bill is the whole record.
+ *
+ * Everything else matches gas, including the two guards that matter: an already
+ * settled bill is refused rather than re-claimed, and `claimed_at` is set only
+ * when NULL so that tapping Pay every night cannot extend anything.
+ */
+async function logMaintIntent(env, session, path) {
+  const billId = Number(path.split('/')[3]);
+
+  // Resolved through the shared rule, not a query of its own. Visibility is the
+  // one thing in this app that has already had a privacy bug.
+  const found = await resolveBill(env, session.subject, billId);
+  if (!found || found.kind !== 'maintenance') {
+    return problem(404, 'DDP-BILL-021', 'That bill could not be found.');
+  }
+
+  const bill = found.row;
+  if (SETTLED_STATUSES.includes(bill.status)) {
+    return problem(409, 'DDP-PAY-003', 'This bill is already settled.');
+  }
+
+  // Read-only impersonation must not leave footprints in a resident's record.
+  if (session.impersonating && !session.canWrite) {
+    return json({ recorded: false, reason: 'read-only session', status: bill.status });
+  }
+
+  await env.DB.prepare(
+    `UPDATE maint_bills SET status = 'initiated',
+                            claimed_at = COALESCE(claimed_at, ?)
+      WHERE id = ? AND status = 'unpaid'`
+  ).bind(new Date().toISOString(), bill.id).run();
+
+  await audit(env, session, 'maint.payment.intent', { billId: bill.id, total: bill.total });
+  return json({ recorded: true, status: bill.status === 'unpaid' ? 'initiated' : bill.status });
+}
+
+/* ── maintenance admin ───────────────────────────────────────────────────── */
+
+/**
+ * Step 1 — the rates for the quarter.
+ *
+ * Creates the quarter row if it does not exist yet: an admin opening a quarter
+ * nobody has drafted and typing the rates IS how a quarter starts, and making
+ * them press "create" first would be a step that exists only because of how the
+ * table is shaped.
+ *
+ * NO APPROVAL WHILE IT IS A DRAFT. Nothing has been promised to anybody, and an
+ * approval queue on a number no resident has seen is ceremony. Once the quarter
+ * is scheduled the rates are frozen and this refuses; after issuing, a rate
+ * moves per bill through the rate-switch approval.
+ */
+async function putMaintRates(request, env, session) {
+  const body = await readJson(request);
+  const quarter = String(body?.quarter ?? '');
+  if (!isQuarterLabel(quarter)) {
+    return problem(400, 'DDP-MAINT-001', 'That is not a quarter.');
+  }
+
+  const rates = ['ownerRate', 'tenantRate', 'lateFee'].map((k) => Number(body?.[k]));
+  if (rates.some((n) => !Number.isFinite(n) || n < 0 || Math.round(n * 100) % 100 !== 0)) {
+    // Whole rupees, for the reason the schema CHECKs it: a fractional figure
+    // passes the application and then dies at the database as a 500 rather than
+    // as a message anybody can act on.
+    return problem(400, 'DDP-MAINT-005', 'Rates and the late fee must be whole rupees.');
+  }
+  const [ownerRate, tenantRate, lateFee] = rates;
+  if (ownerRate <= 0 || tenantRate <= 0) {
+    return problem(400, 'DDP-MAINT-004', 'Both rates must be more than zero.');
+  }
+
+  const existing = await env.DB.prepare('SELECT status FROM maint_quarters WHERE quarter = ?')
+    .bind(quarter).first();
+  if (existing && existing.status !== 'draft') {
+    return problem(409, 'DDP-MAINT-008',
+      'This quarter is no longer a draft. Its rates are fixed.');
+  }
+
+  const issueDate = firstDayOf(quarter);
+  await env.DB.prepare(
+    `INSERT INTO maint_quarters
+       (quarter, owner_rate, tenant_rate, late_fee, issue_date, due_date, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'draft', ?)
+     ON CONFLICT (quarter) DO UPDATE
+       SET owner_rate = excluded.owner_rate,
+           tenant_rate = excluded.tenant_rate,
+           late_fee = excluded.late_fee`
+  ).bind(quarter, ownerRate, tenantRate, lateFee, issueDate, dueDateFor(issueDate),
+         new Date().toISOString()).run();
+
+  await audit(env, session, 'maint.rates', { quarter, ownerRate, tenantRate, lateFee });
+  return json(await maintAdminPayload(env, quarter, { session }));
+}
+
+/** Why a quarter would not schedule, in words an admin can act on. */
+function refusalSentence(result) {
+  if (result?.reason === 'stale-tenancy') {
+    return result.readiness?.message
+      ?? 'Some tenancies on record have leases that ended before the issue date.';
+  }
+  if (result?.reason === 'undated-leases') {
+    const flats = [...new Set((result.undated ?? []).map((u) => u.flat))].join(', ');
+    return `${result.undated.length} tenanc${result.undated.length === 1 ? 'y has' : 'ies have'} `
+      + `no lease end date (${flats}). Add the dates, or confirm you want to schedule `
+      + 'without them.';
+  }
+  if (result?.reason === 'unresolved-flats') {
+    const flats = (result.unresolved ?? []).map((u) => u.flat).join(', ');
+    return `Somebody is living in ${flats} with no owner on record. `
+      + 'Resolve that before scheduling — otherwise nobody is billed for it.';
+  }
+  return 'That quarter could not be scheduled.';
+}
+
+/** The first day of a quarter — '2026-Q4' → '2026-10-01'. */
+function firstDayOf(quarter) {
+  const [year, q] = String(quarter).split('-Q').map(Number);
+  return `${year}-${String((q - 1) * 3 + 1).padStart(2, '0')}-01`;
+}
+
+/**
+ * Step 3 — schedule.
+ *
+ * No typed confirmation and no second-admin approval: scheduling is reversible,
+ * nothing has reached a resident, and an approval on a reversible act teaches
+ * people to click through approvals.
+ *
+ * The tenancy refusals live in scheduleQuarter rather than here, so there is
+ * one rule in one place: an ENDED lease refuses outright, and an UNDATED one
+ * refuses unless the caller acknowledges it. The screen sets that flag only
+ * after an admin has worked through the flagged rows, so an undated lease can
+ * be scheduled past deliberately but never silently — and somebody calling this
+ * endpoint directly gets a refusal naming what to acknowledge rather than a
+ * warning they would never see.
+ */
+async function postMaintSchedule(request, env, session) {
+  const body = await readJson(request);
+  const quarter = String(body?.quarter ?? '');
+  if (!isQuarterLabel(quarter)) {
+    return problem(400, 'DDP-MAINT-001', 'That is not a quarter.');
+  }
+
+  try {
+    const result = await scheduleQuarter(env, quarter, {
+      actorId: session.actor.id,
+      issueDate: body?.issueDate ?? null,
+      acknowledgeUndated: body?.acknowledgeUndated === true,
+    });
+
+    // A refusal is a sentence the admin must read, not a silent no-op. Without
+    // this the screen would reload unchanged and they would press the button
+    // again, which is how "it does nothing" gets reported.
+    if (!result?.scheduled) {
+      return problem(409, 'DDP-MAINT-008', refusalSentence(result));
+    }
+
+    await audit(env, session, 'maint.schedule', {
+      quarter, issueDate: result.issueDate,
+      // Worth recording: whether this quarter went out with undated leases
+      // knowingly left in it.
+      acknowledgedUndated: result.acknowledgedUndated === true,
+    });
+    return json(await maintAdminPayload(env, quarter, { session }));
+  } catch (err) {
+    // A refusal here is a sentence the admin must read — a stale tenancy, a
+    // quarter in the wrong state — not a 500.
+    return problem(409, err?.code ?? 'DDP-MAINT-008',
+      err?.message ?? 'That quarter could not be scheduled.');
+  }
+}
+
+/**
+ * Unschedule — back to draft, any time before the issue date.
+ *
+ * Possible BECAUSE nothing has reached a resident yet. Once the bills are
+ * issued this refuses: withdrawing ninety-nine bills people have already been
+ * emailed is a different act with a different name, and it is per bill.
+ */
+async function postMaintUnschedule(request, env, session) {
+  const body = await readJson(request);
+  const quarter = String(body?.quarter ?? '');
+
+  const row = await env.DB.prepare('SELECT status, issue_date FROM maint_quarters WHERE quarter = ?')
+    .bind(quarter).first();
+  if (!row) return problem(404, 'DDP-MAINT-007', 'No such quarter.');
+  if (row.status !== 'scheduled') {
+    return problem(409, 'DDP-MAINT-008', 'Only a scheduled quarter can be unscheduled.');
+  }
+
+  await env.DB.prepare(
+    `UPDATE maint_quarters SET status = 'draft', scheduled_by = NULL, scheduled_at = NULL
+      WHERE quarter = ? AND status = 'scheduled'`
+  ).bind(quarter).run();
+
+  // WHO DID IT, recorded. An unschedule moves ninety-nine bills out of the post
+  // and the next person to look should be able to see whose decision that was.
+  await audit(env, session, 'maint.unschedule', { quarter, issueDate: row.issue_date });
+  return json(await maintAdminPayload(env, quarter, { session }));
+}
+
+/**
+ * "Still here" — an admin stamps a tenancy as checked.
+ *
+ * The cheapest of the three ways to clear a flag in step 2, and the only one
+ * that changes nothing about the tenancy itself: it records that a human looked
+ * at it on a date. That is exactly what the `unchecked` flag is asking for.
+ */
+async function postTenancyConfirm(request, env, session) {
+  const body = await readJson(request);
+  const id = Number(body?.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return problem(400, 'DDP-ADMIN-004', 'Which tenancy?');
+  }
+
+  const person = await env.DB.prepare(
+    "SELECT id, flat, relationship FROM owners WHERE id = ? AND relationship = 'tenant'"
+  ).bind(id).first();
+  if (!person) return problem(404, 'DDP-ADMIN-004', 'No such tenancy.');
+
+  const at = new Date().toISOString();
+  // The lease end can be supplied at the same time, which is what clears a
+  // `missing-date` row — otherwise confirming it would stamp a record that is
+  // still missing the thing that made it a problem.
+  const leaseEnd = body?.leaseEndsAt ? String(body.leaseEndsAt).slice(0, 10) : null;
+  if (leaseEnd && !/^\d{4}-\d{2}-\d{2}$/.test(leaseEnd)) {
+    return problem(400, 'DDP-MAINT-002', 'That is not a date.');
+  }
+
+  await env.DB.prepare(
+    `UPDATE owners SET tenancy_confirmed_at = ?,
+                       lease_ends_at = COALESCE(?, lease_ends_at)
+      WHERE id = ?`
+  ).bind(at, leaseEnd, id).run();
+
+  await audit(env, session, 'maint.tenancy.confirm', { id, flat: person.flat, leaseEnd });
+  return json({ confirmed: true, at, leaseEndsAt: leaseEnd });
+}
+
+/* ── the voting block, and the committee's exceptions ────────────────────
+   The rule itself is `flatVotingStatus` and it is enforced at the ballot
+   (lib/polls.js). What an admin needs is to SEE it — which flats it catches and
+   why — and to excuse a flat the committee has decided about. 0042 gave the
+   exemption two signatures at the schema, in the CHECK that the grantor and the
+   approver differ, for the same reason every other maintenance decision has
+   them: this one restores a vote.                                             */
+
+async function votingOverview(env) {
+  const [statuses, exemptions] = await Promise.all([
+    votingStatuses(env),
+    env.DB.prepare(
+      `SELECT e.*, g.name AS granted_by_name, a.name AS approved_by_name
+         FROM voting_exemptions e
+         LEFT JOIN owners g ON g.id = e.granted_by
+         LEFT JOIN owners a ON a.id = e.approved_by
+        ORDER BY e.granted_at DESC`
+    ).all(),
+  ]);
+
+  return json({
+    // Only the flats the rule has something to say about. Ninety-nine rows
+    // saying "clear" is a screen nobody reads to the bottom of.
+    flats: [...statuses]
+      .filter(([, v]) => !v.canVote || v.reason === 'exempt')
+      // Described, through the same helper the resident card uses. An internal
+      // key is defensible on an admin screen in isolation; two screens naming
+      // the same blocked quarter two ways is how a shared phrasing quietly
+      // stops being shared.
+      .map(([flat, v]) => ({ ...v, flat, quarters: (v.quarters ?? []).map(describeQuarter) }))
+      .sort((a, b) => String(a.flat).localeCompare(String(b.flat))),
+    exemptions: exemptions.results ?? [],
+    today: istToday(),
+  });
+}
+
+/** One admin proposes an exemption. It does nothing until another agrees. */
+async function grantVotingExemption(request, env, session) {
+  const body = await readJson(request);
+  const flat = String(body?.flat ?? '').trim().toUpperCase();
+  const reason = String(body?.reason ?? '').trim();
+  // NOT NULLABLE HERE even though the column allows it. 0042 left `ends_at`
+  // open-ended on purpose — a flat in a long dispute is a deliberate committee
+  // decision — but an open-ended exemption is the one an admin grants by
+  // accident and nobody ever revisits, so it has to be asked for explicitly.
+  const endsAt = body?.endsAt ? String(body.endsAt).slice(0, 10) : null;
+  const openEnded = Boolean(body?.openEnded);
+
+  if (!flat) return problem(400, 'DDP-ADMIN-004', 'Which flat?');
+  if (!reason) return problem(400, 'DDP-ADMIN-004', 'Say why, for the record.');
+  if (!endsAt && !openEnded) {
+    return problem(400, 'DDP-MAINT-002',
+      'Give an end date, or say plainly that this one is open-ended.');
+  }
+  if (endsAt && !/^\d{4}-\d{2}-\d{2}$/.test(endsAt)) {
+    return problem(400, 'DDP-MAINT-002', 'That is not a date.');
+  }
+
+  const exists = await env.DB.prepare('SELECT flat FROM flats WHERE flat = ?').bind(flat).first();
+  if (!exists) return problem(404, 'DDP-ADMIN-004', 'No such flat.');
+
+  const now = new Date().toISOString();
+  const created = await env.DB.prepare(
+    `INSERT INTO voting_exemptions (flat, reason, ends_at, granted_by, granted_at)
+     VALUES (?, ?, ?, ?, ?) RETURNING id`
+  ).bind(flat, reason.slice(0, 300), openEnded ? null : endsAt, session.actor.id, now).first();
+
+  await audit(env, session, 'maint.voting.exempt.grant',
+    { id: created.id, flat, endsAt: openEnded ? null : endsAt });
+  return json({ id: created.id, flat, approved: false }, { status: 201 });
+}
+
+/**
+ * A second admin agrees, and only now does the vote come back.
+ *
+ * The rule is in the schema: 0042 CHECKs that granted_by and approved_by
+ * differ, and `isVotingExemptOn` refuses an unapproved row outright. Both
+ * belts are deliberate — an exemption restores a right, and one admin restoring
+ * it for their own flat is exactly the shape this is guarding against.
+ */
+async function approveVotingExemption(env, session, path) {
+  const id = Number(path.split('/')[6]);   // /api/admin/maint/voting/exempt/:id/approve
+  const row = await env.DB.prepare('SELECT * FROM voting_exemptions WHERE id = ?').bind(id).first();
+  if (!row) return problem(404, 'DDP-ADMIN-017', 'No such exemption.');
+  if (row.approved_by) return problem(409, 'DDP-ADMIN-017', 'That exemption is already approved.');
+  if (row.granted_by === session.actor.id) {
+    return problem(403, 'DDP-ADMIN-017', 'You granted this one, so you cannot approve it.');
+  }
+  // An admin's own flat, for the reason approvalPolicy gives at length: an
+  // admin has a flat like everybody else, and their own is precisely where a
+  // quiet restoration looks worst.
+  if (String(session.actor.flat) === String(row.flat)) {
+    return problem(403, 'DDP-ADMIN-017', 'This is your own flat.');
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    'UPDATE voting_exemptions SET approved_by = ?, approved_at = ? WHERE id = ? AND approved_by IS NULL'
+  ).bind(session.actor.id, now, id).run();
+
+  await audit(env, session, 'maint.voting.exempt.approve', { id, flat: row.flat });
+  return json({ id, flat: row.flat, approved: true });
+}
+
+/* ── recording an advance ────────────────────────────────────────────────
+   A flat paying ahead. One admin records it, a second agrees, and only then
+   does the `maint_advances` row exist — the same maker≠checker rule the gas
+   bill-edit and tenancy-change queues run, and the shape 0042 built the advance
+   table for (a single `approved_by`, one second admin, not two). approvalBench
+   and approvalPolicy are the same helpers the gas bill-edit queue uses.        */
+
+/**
+ * Raise the request. Nothing about any advance changes here; the proposed
+ * advance waits in the request's payload until a second admin approves. The
+ * approver(s) are emailed at once, non-blocking — a send that fails or is off
+ * never fails the recording, exactly as the bill-edit alert never does.
+ */
+async function recordAdvance(request, env, session, origin = '') {
+  const body = await readJson(request);
+  const flat = normaliseFlat(String(body?.flat ?? ''));
+  const amount = Number(body?.amount);
+  const paidThrough = String(body?.paidThrough ?? '').trim();
+  const paidOn = String(body?.paidOn ?? '').slice(0, 10);
+  const ownerId = body?.ownerId != null ? Number(body.ownerId) : null;
+  const method = body?.method ? String(body.method).slice(0, 40) : null;
+  const reference = body?.reference ? String(body.reference).slice(0, 120) : null;
+  const reason = String(body?.reason ?? '').trim();
+
+  if (!flat) return problem(400, 'DDP-ADMIN-004', 'Which flat?');
+  const flatRow = await env.DB.prepare('SELECT flat FROM flats WHERE flat = ?').bind(flat).first();
+  if (!flatRow) return problem(404, 'DDP-ADMIN-004', 'No such flat.');
+  if (!Number.isFinite(amount) || amount <= 0 || Math.round(amount * 100) % 100 !== 0) {
+    return problem(400, 'DDP-MAINT-005', 'Give a whole-rupee amount.');
+  }
+  if (!isQuarterLabel(paidThrough)) {
+    return problem(400, 'DDP-MAINT-001', 'Say which quarter the advance covers up to.');
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) {
+    return problem(400, 'DDP-MAINT-002', 'Give the date the money was paid.');
+  }
+  if (!reason) return problem(400, 'DDP-ADMIN-004', 'Say why, for the approver.');
+
+  // Enough admins to field one eligible approver? The advance needs exactly one
+  // second admin, but there must BE one who is neither the requester nor the
+  // flat's own household, or the request would sit unactionable forever.
+  const policy = approvalPolicy({
+    admins: await approvalBench(env), requesterId: session.actor.id, billFlat: flat,
+  });
+  if (!policy.approverIds.length) {
+    await reportError(env, 'DDP-ADMIN-016', { flat, actor: session.actor.id });
+    return problem(409, 'DDP-ADMIN-016',
+      'There is no other admin free to approve this advance. Add an admin, or ask the committee.');
+  }
+
+  const now = new Date().toISOString();
+  const { requestId } = await recordAdvanceRequest(env, {
+    actorId: session.actor.id, flat, ownerId, amount, paidOn, paidThrough,
+    method, reference, reason, now, expiresAt: expiresAt(now),
+  });
+
+  await audit(env, session, 'maint.advance.request',
+    { requestId, flat, amount, paidThrough, paidOn, ownerId });
+
+  // Tell the approvers, and report who was reached — an alert that went nowhere
+  // looks identical to one nobody has answered yet. Never fails the record.
+  const alerted = await alertAdvanceApprovers(env, {
+    policy, flat, amount, paidThrough, paidOn, ownerId, reason,
+    requestedBy: session.actor.name, origin,
+  }).catch(() => ({ emailed: 0, missing: [], mail: false }));
+
+  return json({ ok: true, pending: true, requestId, required: 1, alerted }, { status: 201 });
+}
+
+/** Email each eligible approver who has an address. Mirrors alertApprovers. */
+async function alertAdvanceApprovers(env, {
+  policy, flat, amount, paidThrough, paidOn, ownerId, reason, requestedBy, origin,
+}) {
+  if (!policy.approverIds.length) return { emailed: 0, missing: [], mail: false };
+  const mail = mailConfigured(env);
+  if (!mail) return { emailed: 0, missing: [], mail: false };
+
+  const people = await env.DB.prepare(
+    `SELECT id, name, email FROM owners WHERE id IN (${policy.approverIds.map(() => '?').join(',')})`
+  ).bind(...policy.approverIds).all();
+
+  // The payer's name for the email, when one was named. A missing owner_id is
+  // fine — the message shows a dash rather than inventing a name.
+  const payer = ownerId
+    ? await env.DB.prepare('SELECT name FROM owners WHERE id = ?').bind(ownerId).first()
+    : null;
+
+  const { subject, text } = advanceRequestEmail({
+    flat, amount, paidThrough, paidOn: istSlashDate(paidOn),
+    paidByName: payer?.name ?? null, reason, requestedBy, origin,
+  });
+
+  let emailed = 0;
+  const missing = [];
+  for (const person of people.results ?? []) {
+    if (!person.email) { missing.push(person.name); continue; }
+    const sent = await sendEmail(env, { to: person.email, subject, text });
+    if (sent.sent) emailed += 1;
+    else missing.push(`${person.name} (${sent.reason})`);
+  }
+  if (!emailed && missing.length) await reportError(env, 'DDP-ADMIN-018', { flat, missing });
+  return { emailed, missing, mail };
+}
+
+/**
+ * Withdraw one's own pending advance request. No second admin: nothing was
+ * recorded, so there is nothing to un-record — the request is simply cancelled.
+ * Only the person who raised it, and only while it is still pending.
+ */
+async function withdrawAdvance(env, session, path) {
+  const id = Number(path.split('/')[5]);   // /api/admin/maint/advances/:id/withdraw
+  const req = await env.DB.prepare(
+    "SELECT * FROM maint_approval_requests WHERE id = ? AND kind = 'advance'"
+  ).bind(id).first();
+  if (!req) return problem(404, 'DDP-ADMIN-017', 'No such request.');
+  if (req.status !== 'pending') {
+    return problem(409, 'DDP-ADMIN-017', `That request is already ${req.status}.`);
+  }
+  if (req.requested_by !== session.actor.id) {
+    return problem(403, 'DDP-ADMIN-017', 'Only the admin who recorded it can withdraw it.');
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    "UPDATE maint_approval_requests SET status = 'cancelled', resolved_at = ? WHERE id = ? AND status = 'pending'"
+  ).bind(now, id).run();
+  await audit(env, session, 'maint.advance.withdraw', { requestId: id, flat: req.flat });
+  return json({ ok: true, status: 'cancelled' });
+}
+
+/**
+ * Approve or reject a maintenance approval request. GENERIC: it lapses,
+ * gates on canApprove and records the approval the same way for any `kind`, then
+ * dispatches the applier by kind. This session implements the `advance` applier
+ * only; any other kind that reaches satisfaction is refused loudly rather than
+ * applied by code that does not exist yet.
+ *
+ * ONE SECOND ADMIN for an advance: unlike a gas bill edit (two), the first
+ * eligible approval satisfies it — the committee's decision, and the shape of
+ * the single `approved_by` column. Eligibility is still lib/approvals.js's.
+ */
+async function decideMaintApproval(env, session, path, decision, origin = '') {
+  const id = Number(path.split('/')[5]);   // /api/admin/maint/approvals/:id/(approve|reject)
+  const req = await env.DB.prepare('SELECT * FROM maint_approval_requests WHERE id = ?')
+    .bind(id).first();
+  if (!req) return problem(404, 'DDP-ADMIN-017', 'No such request.');
+
+  // Lapsed on read, as the other two queues do: the expiry only has to be true
+  // at the moment somebody acts, and a cron for it would fail quietly.
+  if (req.status === 'pending' && Date.parse(req.expires_at) < Date.now()) {
+    await env.DB.prepare(
+      "UPDATE maint_approval_requests SET status = 'expired', resolved_at = ? WHERE id = ? AND status = 'pending'"
+    ).bind(new Date().toISOString(), id).run();
+    return problem(409, 'DDP-ADMIN-017', 'That request has lapsed. Raise it again if it still stands.');
+  }
+  if (req.status !== 'pending') {
+    return problem(409, 'DDP-ADMIN-017', `That request is already ${req.status}.`);
+  }
+  if (req.kind !== ADVANCE_KIND) {
+    // The other four kinds have no create UI and no applier this session. A
+    // request of one could only exist by raw SQL, and applying it here would be
+    // code pretending to a decision it cannot carry out.
+    return problem(409, 'DDP-ADMIN-017', `Approving a ${req.kind} request is not built yet.`);
+  }
+
+  const policy = approvalPolicy({
+    admins: await approvalBench(env), requesterId: req.requested_by, billFlat: req.flat,
+  });
+  const verdict = canApprove({ policy, approver: session.actor, request: req });
+  if (!verdict.ok) {
+    await reportError(env, verdict.code, { requestId: id, actor: session.actor.id, reason: verdict.reason });
+    return problem(403, verdict.code,
+      verdict.reason === 'requester' ? 'You recorded this, so you cannot approve it.'
+      : verdict.reason === 'too-soon' ? `An admin still has ${verdict.hoursLeft}h to answer.`
+      : 'This is not yours to approve.');
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO maint_approvals (request_id, approver_id, decision, substitute, at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (request_id, approver_id) DO UPDATE SET
+       decision = excluded.decision, at = excluded.at, substitute = excluded.substitute`
+  ).bind(id, session.actor.id, decision, verdict.substitute ? 1 : 0, now).run();
+
+  if (decision === 'reject') {
+    // Claim on reject too, `WHERE status = 'pending'`: a reject that races an
+    // approve is the same hole — without the guard it could stamp 'rejected'
+    // over a request an approval had already applied, leaving a live advance row
+    // whose request reads rejected. Only the claim that changes a row decides.
+    const claim = await env.DB.prepare(
+      "UPDATE maint_approval_requests SET status = 'rejected', resolved_at = ? WHERE id = ? AND status = 'pending'"
+    ).bind(now, id).run();
+    if (Number(claim?.meta?.changes ?? 0) !== 1) {
+      return problem(409, 'DDP-ADMIN-017', 'That request was just decided by another admin.');
+    }
+    await audit(env, session, 'maint.advance.reject', { requestId: id, flat: req.flat });
+    await notifyAdvanceDecision(env, { req, decision: 'reject', decidedBy: session.actor.name, origin });
+    return json({ ok: true, status: 'rejected' });
+  }
+
+  // One approval satisfies an advance, so the applier runs now. It claims the
+  // request `WHERE status = 'pending'` and mints the advance only if that claim
+  // won, so two approvals that both read pending cannot both apply. The
+  // recorded_by <> approved_by CHECK is the database's own backstop under
+  // canApprove's requester guard.
+  const { advanceId, alreadyApplied } = await applyAdvanceRequest(env, { req, actorId: session.actor.id, now });
+  if (alreadyApplied) {
+    return problem(409, 'DDP-ADMIN-017', 'That advance was just approved by another admin.');
+  }
+
+  await audit(env, session, 'maint.advance.approve',
+    { requestId: id, advanceId, flat: req.flat, approvedBy: session.actor.id });
+  await notifyAdvanceDecision(env, { req, decision: 'approve', decidedBy: session.actor.name, origin });
+
+  return json({ ok: true, status: 'applied', advanceId });
+}
+
+/** Email the requester the outcome. Non-blocking, gated, never fails the decision. */
+async function notifyAdvanceDecision(env, { req, decision, decidedBy, origin }) {
+  try {
+    if (!mailConfigured(env)) return;
+    const requester = await env.DB.prepare('SELECT name, email FROM owners WHERE id = ?')
+      .bind(req.requested_by).first();
+    if (!requester?.email) return;
+    let payload = {};
+    try { payload = req.payload ? JSON.parse(req.payload) : {}; } catch { payload = {}; }
+    const { subject, text } = advanceDecisionEmail({
+      decision, flat: req.flat, amount: payload.amount,
+      paidThrough: payload.paid_through, decidedBy, origin,
+    });
+    await sendEmail(env, { to: requester.email, subject, text });
+  } catch { /* a failed notification must never undo an approved advance */ }
+}
+
+/**
+ * Request to cancel an APPROVED advance (Option B). Nothing reverses here — the
+ * pending-cancel fields are set on the advance and a DIFFERENT admin must agree,
+ * the same maker≠checker rule as everything else. The late fee is the admin's
+ * choice, carried on the advance until the cancel is approved and the bill
+ * reopens.
+ */
+async function requestAdvanceCancel(request, env, session, path) {
+  const id = Number(path.split('/')[5]);   // /api/admin/maint/advances/:id/cancel
+  const body = await readJson(request);
+  const reason = String(body?.reason ?? '').trim();
+  if (!reason) return problem(400, 'DDP-ADMIN-004', 'Say why, for the second admin.');
+
+  const advance = await env.DB.prepare('SELECT * FROM maint_advances WHERE id = ?').bind(id).first();
+  if (!advance) return problem(404, 'DDP-ADMIN-017', 'No such advance.');
+  if (!advance.approved_by) return problem(409, 'DDP-ADMIN-017', 'That advance is not approved yet.');
+  if (advance.cancelled_at) return problem(409, 'DDP-ADMIN-017', 'That advance is already cancelled.');
+  if (advance.cancel_requested_at) {
+    return problem(409, 'DDP-ADMIN-017', 'A cancel is already waiting for a second admin on this advance.');
+  }
+
+  // The late fee, when the admin turned it on: a whole-rupee amount from a date.
+  let lateFee = null;
+  let lateFeeFrom = null;
+  if (body?.lateFee) {
+    lateFee = Number(body.lateFee.amount);
+    lateFeeFrom = String(body.lateFee.from ?? '').slice(0, 10);
+    if (!Number.isFinite(lateFee) || lateFee <= 0 || Math.round(lateFee * 100) % 100 !== 0) {
+      return problem(400, 'DDP-MAINT-005', 'Give the late fee as a whole-rupee amount.');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(lateFeeFrom)) {
+      return problem(400, 'DDP-MAINT-002', 'Give the date the late fee applies from.');
+    }
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `UPDATE maint_advances
+        SET cancel_requested_by = ?, cancel_requested_at = ?, cancel_reason = ?,
+            cancel_late_fee = ?, cancel_late_fee_from = ?
+      WHERE id = ? AND cancelled_at IS NULL AND cancel_requested_at IS NULL`
+  ).bind(session.actor.id, now, reason.slice(0, 300), lateFee, lateFeeFrom, id).run();
+
+  await audit(env, session, 'maint.advance.cancel.request',
+    { advanceId: id, flat: advance.flat, lateFee, lateFeeFrom });
+  return json({ ok: true, status: 'cancel-pending' }, { status: 201 });
+}
+
+/**
+ * A different admin decides the pending cancel. On approval the advance is
+ * soft-cancelled and every bill it had settled reopens as unpaid, with the
+ * admin's chosen late fee (if any). Maker≠checker: canApprove refuses the admin
+ * who requested it, and the flat's own household, exactly as for the advance
+ * itself.
+ */
+async function decideAdvanceCancel(env, session, path, decision) {
+  const id = Number(path.split('/')[5]);   // /api/admin/maint/advances/:id/cancel/(approve|reject)
+  const advance = await env.DB.prepare('SELECT * FROM maint_advances WHERE id = ?').bind(id).first();
+  if (!advance) return problem(404, 'DDP-ADMIN-017', 'No such advance.');
+  if (advance.cancelled_at) return problem(409, 'DDP-ADMIN-017', 'That advance is already cancelled.');
+  if (!advance.cancel_requested_at) {
+    return problem(409, 'DDP-ADMIN-017', 'No cancel is waiting on that advance.');
+  }
+
+  const policy = approvalPolicy({
+    admins: await approvalBench(env), requesterId: advance.cancel_requested_by, billFlat: advance.flat,
+  });
+  const verdict = canApprove({
+    policy, approver: session.actor,
+    request: { status: 'pending', requested_by: advance.cancel_requested_by, requested_at: advance.cancel_requested_at },
+  });
+  if (!verdict.ok) {
+    await reportError(env, verdict.code, { advanceId: id, actor: session.actor.id, reason: verdict.reason });
+    return problem(403, verdict.code,
+      verdict.reason === 'requester' ? 'You requested this cancel, so you cannot approve it.'
+      : verdict.reason === 'too-soon' ? `An admin still has ${verdict.hoursLeft}h to answer.`
+      : 'This is not yours to approve.');
+  }
+
+  const now = new Date().toISOString();
+
+  if (decision === 'reject') {
+    // Clear the pending-cancel fields; the advance stays approved and live.
+    await env.DB.prepare(
+      `UPDATE maint_advances
+          SET cancel_requested_by = NULL, cancel_requested_at = NULL, cancel_reason = NULL,
+              cancel_late_fee = NULL, cancel_late_fee_from = NULL
+        WHERE id = ? AND cancelled_at IS NULL`
+    ).bind(id).run();
+    await audit(env, session, 'maint.advance.cancel.reject', { advanceId: id, flat: advance.flat });
+    return json({ ok: true, status: 'cancel-rejected' });
+  }
+
+  // Apply: soft-cancel the advance, then reopen the bills it had settled.
+  await env.DB.prepare(
+    `UPDATE maint_advances SET cancelled_at = ?, cancelled_by = ?
+      WHERE id = ? AND cancelled_at IS NULL AND cancel_requested_by <> ?`
+  ).bind(now, session.actor.id, id, session.actor.id).run();
+
+  const { reopened } = await revertBillsSettledByAdvance(env, { advance, now });
+
+  await audit(env, session, 'maint.advance.cancel.approve',
+    { advanceId: id, flat: advance.flat, cancelledBy: session.actor.id,
+      reopened: reopened.map((b) => b.quarter),
+      lateFee: advance.cancel_late_fee, lateFeeFrom: advance.cancel_late_fee_from });
+  return json({ ok: true, status: 'cancelled', reopened });
+}
+
+/* ── a tenant moving out ─────────────────────────────────────────────────
+   Recording a departure re-rates the quarter, moves an unpaid bill to somebody
+   who did not incur it, switches who the letters go to, and takes away a
+   login. 0045 holds it until a second admin agrees, for the reason 0029 held a
+   bill edit: one person should not be able to do all of that from a card while
+   nobody is looking.                                                          */
+
+/** The consequences, recomputed for whatever the dialog currently says. */
+async function previewDeparture(request, env) {
+  const body = await readJson(request);
+  const inputs = await departureInputs(env, Number(body?.personId));
+  if (!inputs) return problem(404, 'DDP-ADMIN-004', 'No such resident.');
+  if (inputs.person.relationship !== 'tenant') {
+    return problem(400, 'DDP-ADMIN-004', 'That is not a tenancy.');
+  }
+
+  const movedOutOn = String(body?.movedOutOn ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(movedOutOn)) {
+    return problem(400, 'DDP-MAINT-002', 'Pick the date they left.');
+  }
+  const becomes = ['owner', 'tenant', 'empty'].includes(body?.becomes) ? body.becomes : 'owner';
+
+  // Computed on the server and rendered by the browser, never the other way
+  // round: the dialog and the approval a week later must describe the same
+  // consequences, and a second copy of this in admin-console.js would be a
+  // dialog that quietly stopped agreeing with the request it produced.
+  return json(describeDeparture({ ...inputs, becomes, movedOutOn }));
+}
+
+/** Raise the request. Nothing about the tenancy changes here. */
+async function requestDeparture(request, env, session) {
+  const body = await readJson(request);
+  const personId = Number(body?.personId);
+  const inputs = await departureInputs(env, personId);
+  if (!inputs) return problem(404, 'DDP-ADMIN-004', 'No such resident.');
+  if (inputs.person.relationship !== 'tenant' || !inputs.person.active) {
+    return problem(400, 'DDP-ADMIN-004', 'That is not a tenancy that could end.');
+  }
+
+  const movedOutOn = String(body?.movedOutOn ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(movedOutOn)) {
+    return problem(400, 'DDP-MAINT-002', 'Pick the date they left.');
+  }
+  const becomes = ['owner', 'tenant', 'empty'].includes(body?.becomes) ? body.becomes : null;
+  if (!becomes) return problem(400, 'DDP-ADMIN-004', 'Say what the flat becomes.');
+  const reason = String(body?.reason ?? '').trim();
+  if (!reason) return problem(400, 'DDP-ADMIN-004', 'Say why, for the record.');
+
+  const plan = describeDeparture({ ...inputs, becomes, movedOutOn });
+  const now = new Date().toISOString();
+
+  // The open-request index (0045) is a UNIQUE partial, so a second one raises a
+  // constraint error rather than a duplicate. Answered here as a sentence,
+  // because two admins filing different dates for the same departure is a
+  // disagreement to resolve rather than a fault.
+  const existing = await env.DB.prepare(
+    "SELECT id FROM tenancy_change_requests WHERE person_id = ? AND status = 'pending'"
+  ).bind(personId).first();
+  if (existing) {
+    return problem(409, 'DDP-ADMIN-017',
+      'A departure is already waiting for approval for this person. Answer or withdraw that one first.');
+  }
+
+  const created = await env.DB.prepare(
+    `INSERT INTO tenancy_change_requests
+       (person_id, flat, kind, moved_out_on, becomes, reason, plan, requested_by, requested_at, expires_at)
+     VALUES (?, ?, 'moved-out', ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+  ).bind(personId, inputs.person.flat, movedOutOn, becomes, reason.slice(0, 300),
+    JSON.stringify(plan), session.actor.id, now, expiresAt(now)).first();
+
+  await audit(env, session, 'tenancy.depart.request',
+    { requestId: created.id, personId, flat: inputs.person.flat, movedOutOn, becomes });
+
+  return json({ requestId: created.id, status: 'pending', ...plan }, { status: 201 });
+}
+
+/** Open departures, with everything an approver needs to judge one. */
+async function listDepartureRequests(env, session) {
+  const rows = await env.DB.prepare(
+    `SELECT r.*, p.name AS person_name, o.name AS requested_by_name,
+            (SELECT COUNT(*) FROM tenancy_change_approvals a
+              WHERE a.request_id = r.id AND a.decision = 'approve') AS approvals
+       FROM tenancy_change_requests r
+       JOIN owners p ON p.id = r.person_id
+       LEFT JOIN owners o ON o.id = r.requested_by
+      WHERE r.status = 'pending'
+      ORDER BY r.requested_at`
+  ).all();
+
+  const bench = await approvalBench(env);
+  const out = (rows.results ?? []).map((r) => {
+    const policy = approvalPolicy({ admins: bench, requesterId: r.requested_by, billFlat: r.flat });
+    const verdict = canApprove({ policy, approver: session.actor, request: r });
+    return {
+      ...r,
+      // The snapshot the requester was shown, so an approver agrees to the same
+      // consequences rather than to a sentence summarising them.
+      plan: safeJson(r.plan),
+      required: policy.required,
+      canApprove: verdict.ok,
+      substitute: verdict.substitute ?? false,
+      blockedBecause: verdict.ok ? null : verdict.reason,
+      hoursLeft: verdict.hoursLeft ?? null,
+    };
+  });
+  return json({ requests: out });
+}
+
+async function decideDeparture(env, session, path, decision) {
+  const id = Number(path.split('/')[5]);
+  const req = await env.DB.prepare('SELECT * FROM tenancy_change_requests WHERE id = ?')
+    .bind(id).first();
+  if (!req) return problem(404, 'DDP-ADMIN-017', 'No such request.');
+
+  // Lapsed on read, as the bill-edit queue does: the expiry only has to be true
+  // at the moment somebody acts on it, and a cron for it would be one more
+  // thing to fail quietly.
+  if (req.status === 'pending' && Date.parse(req.expires_at) < Date.now()) {
+    await env.DB.prepare(
+      "UPDATE tenancy_change_requests SET status = 'expired', resolved_at = ? WHERE id = ? AND status = 'pending'"
+    ).bind(new Date().toISOString(), id).run();
+    return problem(409, 'DDP-ADMIN-017', 'That departure has lapsed. Raise it again if it still stands.');
+  }
+  if (req.status !== 'pending') {
+    return problem(409, 'DDP-ADMIN-017', `That departure is already ${req.status}.`);
+  }
+
+  const policy = approvalPolicy({
+    admins: await approvalBench(env), requesterId: req.requested_by, billFlat: req.flat,
+  });
+  const verdict = canApprove({ policy, approver: session.actor, request: req });
+  if (!verdict.ok) {
+    await reportError(env, verdict.code, { requestId: id, actor: session.actor.id, reason: verdict.reason });
+    return problem(403, verdict.code,
+      verdict.reason === 'requester' ? 'You raised this, so you cannot approve it.'
+      : verdict.reason === 'too-soon' ? `An admin still has ${verdict.hoursLeft}h to answer.`
+      : 'This is not yours to approve.');
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO tenancy_change_approvals (request_id, approver_id, decision, substitute, at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (request_id, approver_id) DO UPDATE SET
+       decision = excluded.decision, at = excluded.at, substitute = excluded.substitute`
+  ).bind(id, session.actor.id, decision, verdict.substitute ? 1 : 0, now).run();
+
+  if (decision === 'reject') {
+    await env.DB.prepare(
+      "UPDATE tenancy_change_requests SET status = 'rejected', resolved_at = ? WHERE id = ?"
+    ).bind(now, id).run();
+    await audit(env, session, 'tenancy.depart.reject', { requestId: id, personId: req.person_id });
+    return json({ ok: true, status: 'rejected' });
+  }
+
+  const approvals = await env.DB.prepare(
+    'SELECT approver_id, decision FROM tenancy_change_approvals WHERE request_id = ?'
+  ).bind(id).all();
+  if (!isSatisfied(policy, approvals.results ?? [])) {
+    const yes = (approvals.results ?? []).filter((a) => a.decision === 'approve').length;
+    await audit(env, session, 'tenancy.depart.approve',
+      { requestId: id, personId: req.person_id, yes });
+    return json({ ok: true, status: 'pending', approvals: yes, required: policy.required });
+  }
+
+  return applyDeparture(env, session, { req, id, now });
+}
+
+/**
+ * The last approval lands: now, and only now, the tenancy ends.
+ *
+ * RECOMPUTED, NOT REPLAYED. The snapshot in `plan` is what the approvers agreed
+ * to and it is kept for that reason, but a week may have passed and a bill may
+ * have been paid, waived or cancelled in it. Applying the snapshot would move
+ * money that has since settled; applying a fresh plan and recording both is
+ * what lets somebody afterwards see that the two differed and why.
+ */
+async function applyDeparture(env, session, { req, id, now }) {
+  const inputs = await departureInputs(env, req.person_id);
+  if (!inputs) return problem(404, 'DDP-ADMIN-004', 'That resident no longer exists.');
+
+  const fresh = describeDeparture({
+    ...inputs, becomes: req.becomes, movedOutOn: req.moved_out_on,
+  });
+
+  const writes = [];
+
+  for (const plan of fresh.plans) {
+    if (plan.action === 're-rate') {
+      writes.push(env.DB.prepare(
+        `UPDATE maint_bills
+            SET basis = ?, rate_applied = ?, total = ?, owner_id = COALESCE(?, owner_id),
+                reassigned_from_id = ?, reassigned_at = ?
+          WHERE id = ?`
+      ).bind(plan.basis, plan.rate, plan.total, plan.billedTo, plan.reassignedFrom, now, plan.billId));
+    } else if (plan.action === 'reassign' && plan.billedTo) {
+      // A reassignment with NO billedTo is the tenant-to-tenant case, which
+      // planOccupancyChange deliberately refuses to decide: who carries a bill
+      // raised against a departed tenant is not something arithmetic can
+      // answer, and guessing it puts somebody else's debt on their screen. It
+      // is left alone here and picked up on the Maintenance tab.
+      writes.push(env.DB.prepare(
+        `UPDATE maint_bills SET owner_id = ?, reassigned_from_id = ?, reassigned_at = ? WHERE id = ?`
+      ).bind(plan.billedTo, plan.reassignedFrom, now, plan.billId));
+    }
+  }
+
+  writes.push(env.DB.prepare(
+    "UPDATE tenancy_change_requests SET status = 'applied', resolved_at = ? WHERE id = ?"
+  ).bind(now, id));
+
+  // The departure itself, spelled the one way this codebase has spelled it
+  // since 0003: active = 0, with moved_out_at recording when. isResidentOn
+  // reads exactly these two and nothing else.
+  //
+  // LAST IN THE BATCH, AND IMMEDIATELY BEFORE THE SESSIONS GO. On 2026-09-11
+  // nine deactivated accounts on production still held thirty live sessions
+  // because nothing ended them, and a departure that left somebody signed in
+  // would be that bug with a dialog in front of it. The two statements are kept
+  // within sight of each other so the guard in session-inactive.test.js can see
+  // that they are — the test reads the source, and it is right to.
+  writes.push(env.DB.prepare('UPDATE owners SET active = 0, moved_out_at = ? WHERE id = ?')
+    .bind(req.moved_out_on, req.person_id));
+
+  await env.DB.batch(writes);
+  await destroyAllSessionsFor(env, req.person_id);
+
+  await audit(env, session, 'tenancy.depart.apply', {
+    requestId: id, personId: req.person_id, flat: req.flat,
+    movedOutOn: req.moved_out_on, becomes: req.becomes,
+    bills: fresh.plans.map((p) => ({ billId: p.billId, action: p.action })),
+    // Said out loud when the world moved under the request, which is the thing
+    // an auditor wants to find rather than to deduce.
+    changedSinceRequest: JSON.stringify(safeJson(req.plan)?.plans ?? []) !== JSON.stringify(fresh.plans),
+  });
+
+  return json({ ok: true, status: 'applied', applied: fresh.plans, lines: fresh.lines });
+}
+
+/** A stored JSON column, read without letting one bad row take down a queue. */
+function safeJson(text) {
+  try { return JSON.parse(text ?? 'null'); } catch { return null; }
+}
+
 async function postComment(request, env, session, path) {
   // Impersonation must never post in a resident's name — a comment carries
   // their name and flat to everyone in the building.
@@ -1437,6 +2520,16 @@ async function castPollVote(request, env, session, path) {
     await audit(env, session, 'poll.vote', { pollId, flat: session.subject.flat });
     return json({ ok: true, options: cast });
   } catch (err) {
+    // The maintenance block gets its own sentence. The card on the poll already
+    // explains it, so reaching here means the screen and the rule disagreed —
+    // a stale tab, or somebody calling the API by hand — and "that vote could
+    // not be recorded" would leave a resident with no idea why. PLACEHOLDER
+    // COPY, like the rest of this feature's resident-visible wording.
+    if (err?.code === 'DDP-POLL-010') {
+      return problem(409, 'DDP-POLL-010',
+        'This flat has maintenance outstanding from a closed quarter, so it cannot vote yet. '
+        + 'The vote unlocks as soon as the treasurer confirms payment.');
+    }
     // The validation message is the useful half — it names what to change.
     return problem(400, err?.code ?? 'DDP-POLL-005',
       err?.detail?.message ?? 'That vote could not be recorded.');
@@ -2455,10 +3548,12 @@ async function proofArchive(env, url) {
  */
 async function deleteProof(env, session, path) {
   const id = Number(path.split('/')[4]);
-  const proof = await env.DB.prepare('SELECT r2_key FROM payment_proofs WHERE id = ?').bind(id).first();
+  const proof = await env.DB.prepare(
+    'SELECT r2_key, maint_bill_id FROM payment_proofs WHERE id = ?'
+  ).bind(id).first();
   if (!proof) return problem(404, 'DDP-PROOF-005', 'That submission could not be found.');
 
-  if (proof.r2_key) await env.PROOFS.delete(proof.r2_key).catch(() => {});
+  if (proof.r2_key) await proofBucket(env, proof).delete(proof.r2_key).catch(() => {});
   await env.DB.prepare(
     'UPDATE payment_proofs SET r2_key = NULL, deleted_at = ? WHERE id = ?'
   ).bind(new Date().toISOString(), id).run();
@@ -2883,11 +3978,20 @@ async function uploadProof(request, env, session, ctx, path) {
     return problem(403, 'DDP-AUTH-007', 'Cannot upload while viewing as another resident.');
   }
 
-  // Resolved through the session's flat — not from the URL.
-  const bill = await billForHousehold(env, billId, session.subject,
-    'id, flat, period, total, status');
-  if (!bill) return problem(404, 'DDP-PAY-001', 'That bill could not be found.');
-  if (bill.status === 'paid' || bill.status === 'waived') {
+  // Resolved through the SHARED rule, which finds the bill of either kind and
+  // derives which it is from the record. The URL carries an id and nothing
+  // else — a `kind` in it would be a thing somebody has to remember to check,
+  // and that is where the old privacy bug lived.
+  const found = await resolveBill(env, session.subject, billId);
+  if (!found) return problem(404, 'DDP-PAY-001', 'That bill could not be found.');
+
+  const bill = found.row;
+  const isMaint = found.kind === 'maintenance';
+  // `period` is what names the stored object and what the queue displays. A
+  // quarter label serves both, so it stands in for the month here.
+  bill.period = isMaint ? bill.quarter : bill.period;
+
+  if (SETTLED_STATUSES.includes(bill.status)) {
     return problem(409, 'DDP-PAY-003', 'This bill is already settled.');
   }
 
@@ -2906,12 +4010,17 @@ async function uploadProof(request, env, session, ctx, path) {
   // Same image twice — usually an honest double-tap, sometimes last month's
   // screenshot sent again. Either way it is not new evidence.
   const dupe = await env.DB.prepare(
-    'SELECT id, bill_id FROM payment_proofs WHERE image_sha256 = ?'
+    'SELECT id, bill_id, maint_bill_id FROM payment_proofs WHERE image_sha256 = ?'
   ).bind(hash).first();
   if (dupe) {
-    await reportError(env, 'DDP-PROOF-001', { hash, billId, existing: dupe.id });
+    await reportError(env, 'DDP-PROOF-001', { hash, billId, kind: found.kind, existing: dupe.id });
+    // ACROSS BOTH KINDS. The same screenshot sent for a gas bill and then a
+    // maintenance one is one payment claimed twice, and the ids are separate
+    // sequences — so "is this the same bill" has to compare the id AND the
+    // column it came from.
+    const sameBill = isMaint ? dupe.maint_bill_id === bill.id : dupe.bill_id === bill.id;
     return problem(409, 'DDP-PROOF-001',
-      dupe.bill_id === bill.id
+      sameBill
         ? 'You have already uploaded this screenshot.'
         : 'This screenshot has already been used for another bill.');
   }
@@ -2938,24 +4047,40 @@ async function uploadProof(request, env, session, ctx, path) {
   const key = r2Key(bill.flat, bill.period, hash);
   const now = new Date().toISOString();
 
+  // EXACTLY ONE of the two columns, which 0042 CHECKs. Passing the id to both
+  // would be a payment counted twice and the database refuses it outright.
   const inserted = await env.DB.prepare(
-    `INSERT INTO payment_proofs (bill_id, owner_id, r2_key, image_sha256, utr, parsed_amount, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?) RETURNING id`
-  ).bind(bill.id, session.subject.id, key, hash, parsed.utr, parsed.amount, now).first();
+    `INSERT INTO payment_proofs
+       (bill_id, maint_bill_id, owner_id, r2_key, image_sha256, utr, parsed_amount, note, payer_name, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?) RETURNING id`
+  ).bind(isMaint ? null : bill.id, isMaint ? bill.id : null,
+         session.subject.id, key, hash, parsed.utr, parsed.amount,
+         parsed.note, parsed.payer_name, now).first();
 
   try {
-    await env.PROOFS.put(key, bytes, { httpMetadata: { contentType: file.type } });
+    // Maintenance proofs go to their own bucket. isMaint here is what the proof
+    // row records as maint_bill_id, so upload and every later read agree on
+    // which bucket holds the object — see proofBucket().
+    await proofBucket(env, { maint_bill_id: isMaint ? bill.id : null })
+      .put(key, bytes, { httpMetadata: { contentType: file.type } });
   } catch (err) {
     // Row exists, object doesn't: visible and recoverable, unlike the reverse.
     await reportError(env, 'DDP-PROOF-004', err, ctx);
     return problem(500, 'DDP-PROOF-004', 'We saved your submission but the image failed to store. The treasurer has been alerted.');
   }
 
+  // `awaiting` is what takes the Pay button off the screen — for BOTH parties
+  // on a let flat, because the status lives on the bill rather than on whoever
+  // is looking at it. That is what stops an owner and their tenant each paying
+  // the same bill after one of them has already sent a screenshot.
   await env.DB.prepare(
-    "UPDATE bills SET status = 'awaiting' WHERE id = ? AND status IN ('unpaid','initiated')"
+    isMaint
+      ? "UPDATE maint_bills SET status = 'awaiting' WHERE id = ? AND status IN ('unpaid','initiated')"
+      : "UPDATE bills SET status = 'awaiting' WHERE id = ? AND status IN ('unpaid','initiated')"
   ).bind(bill.id).run();
 
-  await audit(env, session, 'proof.upload', { billId: bill.id, proofId: inserted.id, verdict: assessment.verdict });
+  await audit(env, session, 'proof.upload',
+    { billId: bill.id, kind: found.kind, proofId: inserted.id, verdict: assessment.verdict });
 
   return json({
     proofId: inserted.id,
@@ -2972,9 +4097,16 @@ async function uploadProof(request, env, session, ctx, path) {
  */
 async function proofImage(env, session, path) {
   const proofId = Number(path.split('/')[3]);
+  // LEFT JOINs to both, because a proof carries exactly one of the two ids and
+  // an inner join to `bills` alone makes every maintenance screenshot a 404 —
+  // including for the resident who uploaded it.
   const row = await env.DB.prepare(
-    `SELECT p.r2_key, p.deleted_at, p.owner_id, b.flat, b.owner_id AS bill_owner_id
-       FROM payment_proofs p JOIN bills b ON b.id = p.bill_id
+    `SELECT p.r2_key, p.deleted_at, p.owner_id, p.maint_bill_id,
+            COALESCE(b.flat, mb.flat) AS flat,
+            COALESCE(b.owner_id, mb.owner_id) AS bill_owner_id
+       FROM payment_proofs p
+       LEFT JOIN bills b ON b.id = p.bill_id
+       LEFT JOIN maint_bills mb ON mb.id = p.maint_bill_id
       WHERE p.id = ?`
   ).bind(proofId).first();
 
@@ -3000,7 +4132,7 @@ async function proofImage(env, session, path) {
     return problem(410, 'DDP-PROOF-005', 'That image has been deleted.');
   }
 
-  const object = await env.PROOFS.get(row.r2_key);
+  const object = await proofBucket(env, row).get(row.r2_key);
   if (!object) {
     await reportError(env, 'DDP-PROOF-005', { proofId, key: row.r2_key });
     return problem(404, 'DDP-PROOF-005', 'That image is missing from storage.');
@@ -3149,7 +4281,34 @@ async function adminSummary(env, session) {
       // than showing them a queue that is never theirs.
       contacts: contacts ? contacts.n : null,
     },
+    // Null most of the time, and that is the point: the card exists for the
+    // seven days before a quarter goes out and disappears once it has.
+    maintenance: await maintenanceCard(env, today),
   });
+}
+
+/**
+ * The maintenance card for Admin Home, or nothing.
+ *
+ * Built from the same payload the Maintenance page uses, so the count of
+ * tenancies needing confirmation on the card is the count the page will show
+ * when they follow it. Two queries answering that question separately is how
+ * the card ends up saying 3 and the page saying 4.
+ *
+ * Never allowed to break Admin Home. The card is the least important thing on
+ * that screen and the board is the treasurer's way into everything else — so a
+ * failure here costs the card, not the page.
+ */
+async function maintenanceCard(env, today) {
+  try {
+    const payload = await maintAdminPayload(env, null, { today });
+    if (!payload?.row) return null;
+    return adminHomeCard({
+      quarter: payload.row, blocked: payload.blocked, preview: payload.preview, today,
+    });
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -3369,26 +4528,64 @@ async function remindAll(request, env, session) {
   });
 }
 
+/**
+ * The proof queue — ONE QUEUE, BOTH KINDS.
+ *
+ * Not forked, and that is the point rather than a convenience: two queues means
+ * two half-lists and no way to tell which is authoritative, and the treasurer
+ * reviewing screenshots is doing one job whatever bill each one answers. Each
+ * row NAMES the bill it belongs to, which is what the filter in the browser
+ * works on.
+ *
+ * A proof carries exactly one of `bill_id` and `maint_bill_id` — 0042 CHECKs
+ * it — so the LEFT JOINs below can never both match, and COALESCE picks out the
+ * one that did.
+ */
 async function proofQueue(env) {
-  const [proofs, claimed, decided] = await Promise.all([
+  // The columns every row has, whichever kind of bill it answers. `kind` is
+  // derived from which id is present rather than stored, so it cannot disagree
+  // with the row it describes.
+  const billColumns = `
+    COALESCE(b.flat, mb.flat) AS flat,
+    COALESCE(b.period, mb.quarter) AS period,
+    CASE WHEN mb.id IS NULL THEN 'gas' ELSE 'maintenance' END AS kind,
+    COALESCE(b.total, mb.total) AS total`;
+
+  const [proofs, claimed, maintClaimed, decided] = await Promise.all([
     env.DB.prepare(
-      `SELECT p.*, b.flat, b.period, b.total, o.name
+      `SELECT p.*, ${billColumns}, o.name
          FROM payment_proofs p
-         JOIN bills b ON b.id = p.bill_id
+         LEFT JOIN bills b ON b.id = p.bill_id
+         LEFT JOIN maint_bills mb ON mb.id = p.maint_bill_id
          ${ownerJoin('p.owner_id')}
         WHERE p.status = 'pending' AND p.deleted_at IS NULL
         ORDER BY p.created_at`
     ).all(),
+
     env.DB.prepare(
       // GROUP BY already collapsed the duplicate to one row here, so the count
       // was right — but which of the two names it showed was arbitrary.
-      `SELECT b.id, b.flat, b.period, b.total, o.name, MAX(i.created_at) AS last_intent
+      `SELECT b.id, b.flat, b.period, b.total, 'gas' AS kind, o.name,
+              MAX(i.created_at) AS last_intent
          FROM bills b
          JOIN payment_intents i ON i.bill_id = b.id
          ${ownerJoin('b.owner_id')}
         WHERE b.status = 'initiated'
         GROUP BY b.id ORDER BY last_intent`
     ).all(),
+
+    // Maintenance has no intents table — 0042 made `claimed_at` on the bill the
+    // whole record of a claim, because its late fee does not hold on one. So
+    // the same "they tapped Pay and nothing arrived" list comes off the stamp.
+    env.DB.prepare(
+      `SELECT b.id, b.flat, b.quarter AS period, b.total, 'maintenance' AS kind, o.name,
+              b.claimed_at AS last_intent
+         FROM maint_bills b
+         ${ownerJoin('b.owner_id')}
+        WHERE b.status = 'initiated' AND b.claimed_at IS NOT NULL
+        ORDER BY b.claimed_at`
+    ).all(),
+
     // Approving used to be the last anyone saw of a proof: the queue filters on
     // 'pending', so a decision removed the row from every screen in the system.
     // For a financial record that is not a display detail — a mistaken reject
@@ -3396,9 +4593,10 @@ async function proofQueue(env) {
     // Capped rather than paged: the queue is a working screen, and the full
     // history belongs in god mode's timeline.
     env.DB.prepare(
-      `SELECT p.*, b.flat, b.period, b.total, o.name, r.name AS reviewer
+      `SELECT p.*, ${billColumns}, o.name, r.name AS reviewer
          FROM payment_proofs p
-         JOIN bills b ON b.id = p.bill_id
+         LEFT JOIN bills b ON b.id = p.bill_id
+         LEFT JOIN maint_bills mb ON mb.id = p.maint_bill_id
          ${ownerJoin('p.owner_id')}
          LEFT JOIN owners r ON r.id = p.reviewed_by
         WHERE p.status IN ('approved', 'rejected') AND p.deleted_at IS NULL
@@ -3407,9 +4605,14 @@ async function proofQueue(env) {
     ).all(),
   ]);
 
+  // Interleaved by when the claim was made, so the oldest unanswered tap is at
+  // the top whichever kind of bill it was against.
+  const claimedRows = [...(claimed.results ?? []), ...(maintClaimed.results ?? [])]
+    .sort((a, b) => String(a.last_intent ?? '').localeCompare(String(b.last_intent ?? '')));
+
   return json(shapeQueue({
     proofs: proofs.results ?? [],
-    claimed: claimed.results ?? [],
+    claimed: claimedRows,
     decided: decided.results ?? [],
   }));
 }
@@ -3421,8 +4624,75 @@ async function proofQueue(env) {
 // — or by the 3am sweep if they walk away. The original file is never written
 // anywhere: not to R2, not to D1. See migration 0017 and lib/statement.js.
 
-/** Everything the matcher needs about the current state of the books. */
-async function reconciliationInputs(env) {
+/**
+ * The two accounts a statement can come from.
+ *
+ * 0042 put maintenance in a DIFFERENT bank account from gas, so "the
+ * statement" stopped being a single thing. An upload says which account it is,
+ * and everything downstream — which proofs are eligible, which bills can be
+ * settled, whether an amount means anything at all — follows from that one
+ * word. Nothing is ever matched across the two: a gas claim cannot be settled
+ * by maintenance money, and the screens do not offer the option.
+ */
+export const STATEMENT_ACCOUNTS = ['gas', 'maintenance'];
+
+/** Unknown, missing or misspelt all read as gas, which is what every statement was before 0044. */
+function statementAccount(value) {
+  return STATEMENT_ACCOUNTS.includes(value) ? value : 'gas';
+}
+
+/**
+ * What the account picker shows, with the payee as a quiet second line.
+ *
+ * THE SECOND LINE IS BUILT AT RUNTIME AND NEVER STORED. This repository is
+ * public; `maintAccountHint` returns four digits and never the IFSC, for the
+ * same reason the account number is a Pages secret rather than a var. Enough to
+ * tell a treasurer which of two statements they are holding, which is all this
+ * line is for.
+ */
+function statementAccountList(env, { maintenanceIssued }) {
+  return [
+    { id: 'gas', label: 'Gas', hint: env.UPI_VPA ?? null, ready: true },
+    {
+      id: 'maintenance', label: 'Maintenance', hint: maintAccountHint(env),
+      // Shown even when there is nothing to reconcile yet, with an empty state
+      // rather than a missing control. A tab that is not there reads as broken;
+      // one that is there and says "no quarter has issued yet" reads as early.
+      ready: maintenanceIssued,
+    },
+  ];
+}
+
+/** Everything the matcher needs about the current state of the books, for one account. */
+async function reconciliationInputs(env, account = 'gas') {
+  if (account === 'maintenance') {
+    const [proofs, openBills] = await Promise.all([
+      env.DB.prepare(
+        // `period` rather than `quarter` in the alias, because the matcher and
+        // every verdict shape downstream speak one word for "the billing window
+        // this is about". 0042 chose separate tables, not a separate vocabulary.
+        `SELECT p.id AS proofId, p.maint_bill_id AS billId, p.utr, p.parsed_amount AS claimedAmount,
+                p.created_at AS createdAt, b.flat, b.quarter AS period, b.total AS billed, o.name
+           FROM payment_proofs p
+           JOIN maint_bills b ON b.id = p.maint_bill_id
+           ${ownerJoin('p.owner_id')}
+          WHERE p.status = 'pending' AND p.deleted_at IS NULL
+          ORDER BY p.created_at`
+      ).all(),
+      env.DB.prepare(
+        // A cancelled bill is deliberately not here. 0042 made cancellation the
+        // way a bill raised against the wrong party is withdrawn, so offering it
+        // as somewhere to put money would undo the withdrawal by the back door.
+        `SELECT b.id, b.flat, b.quarter AS period, b.total, o.name
+           FROM maint_bills b
+           ${ownerJoin('b.owner_id')}
+          WHERE b.status IN ('unpaid', 'initiated', 'awaiting')
+          ORDER BY b.quarter, b.flat`
+      ).all(),
+    ]);
+    return { proofs: proofs.results ?? [], openBills: openBills.results ?? [] };
+  }
+
   const [proofs, openBills] = await Promise.all([
     env.DB.prepare(
       // See ownerJoin: joining on the flat alone duplicates the proof, and a
@@ -3446,16 +4716,91 @@ async function reconciliationInputs(env) {
   return { proofs: proofs.results ?? [], openBills: openBills.results ?? [] };
 }
 
-async function reportFor(env, sessionId) {
+async function reportFor(env, sessionId, account = null) {
+  const acct = account ?? statementAccount(
+    (await env.DB.prepare('SELECT account FROM statement_sessions WHERE id = ?').bind(sessionId).first())?.account
+  );
   const rows = await env.DB.prepare(
     'SELECT txn_date AS date, amount, reference, narration FROM statement_credits WHERE session_id = ? ORDER BY txn_date, id'
   ).bind(sessionId).all();
-  const { proofs, openBills } = await reconciliationInputs(env);
-  const result = reconcile({ credits: rows.results ?? [], proofs, openBills });
+  const { proofs, openBills } = await reconciliationInputs(env, acct);
+  const result = reconcile({
+    credits: rows.results ?? [], proofs, openBills,
+    // The whole no-fingerprint rule, expressed once. See lib/statement.js.
+    amountIdentifiesPayer: acct !== 'maintenance',
+  });
+
+  if (acct === 'maintenance') await foldInAssignments(env, sessionId, result);
+
   // Bucketed HERE rather than in the browser, so the rule for "is this probably
   // a resident" lives in exactly one place. A second copy in admin-statement.js
   // would be a weaker restatement of a rule reconcile() already answered.
-  return { ...result, buckets: bucketReconciliation(result) };
+  return {
+    ...result,
+    account: acct,
+    // The full open list, once for the whole report rather than once per credit.
+    // Every maintenance credit of a given amount has the same candidates — that
+    // is the problem, not an optimisation — so the picker that lets an admin
+    // reach past the ranked five reads from one list.
+    assignableBills: acct === 'maintenance' ? openBills : [],
+    buckets: bucketReconciliation(result),
+  };
+}
+
+/**
+ * Put the assignments already made in this review back onto their credits.
+ *
+ * WITHOUT THIS THE SCREEN GOES BACKWARDS. Assigning marks the bill paid, which
+ * takes it out of the open list — so on the next refresh the credit that was
+ * just assigned would show with its candidates gone and nothing in their place,
+ * reading as money nobody can explain. The reconciliation row written at assign
+ * time is the record, and this reads it back.
+ *
+ * Matched on the three statement facts the row keeps — reference, amount, date.
+ * The narration is deliberately not among them: 0017 refuses to store it,
+ * because it names other members.
+ */
+async function foldInAssignments(env, sessionId, result) {
+  const rows = await env.DB.prepare(
+    `SELECT r.maint_bill_id AS billId, r.reference, r.amount, r.txn_date AS txnDate,
+            b.flat, b.quarter AS period, b.total, o.name, a.name AS assignedByName
+       FROM reconciliations r
+       JOIN maint_bills b ON b.id = r.maint_bill_id
+       LEFT JOIN owners o ON o.id = b.owner_id
+       LEFT JOIN owners a ON a.id = r.assigned_by
+      WHERE r.session_id = ? AND r.assigned_by IS NOT NULL`
+  ).bind(sessionId).all();
+
+  const key = (r) => `${r.reference ?? ''}|${Math.round((r.amount ?? 0) * 100)}|${r.txnDate ?? ''}`;
+  const byCredit = new Map((rows.results ?? []).map((r) => [key(r), r]));
+
+  for (const d of result.discrepancies) {
+    if (d.kind !== 'credit_no_proof') continue;
+    const hit = byCredit.get(key({ reference: d.reference, amount: d.amount, txnDate: d.txnDate }));
+    if (!hit) continue;
+    d.assignedTo = {
+      billId: hit.billId, flat: hit.flat, name: hit.name,
+      period: hit.period, total: hit.total, by: hit.assignedByName,
+    };
+    d.candidates = [];
+  }
+
+  // The tallies have to move with the assignments, and cannot be computed
+  // inside `reconcile` — it is pure and has never heard of this session's
+  // reconciliation rows. Leaving them alone was the bug this paragraph exists
+  // to explain: after assigning ₹7,000 the screen still read "Confirmed 0" and
+  // "Unexplained money in ₹34,542", which is the opposite of what the treasurer
+  // had just done and exactly the figure they would have carried to the
+  // committee.
+  const assigned = result.discrepancies.filter((d) => d.kind === 'credit_no_proof' && d.assignedTo);
+  const sum = (list) => Math.round(list.reduce((t, d) => t + (d.amount ?? 0), 0) * 100) / 100;
+  result.totals = {
+    ...result.totals,
+    assignedCount: assigned.length,
+    assignedTotal: sum(assigned),
+    unmatchedCreditTotal:
+      Math.round((result.totals.unmatchedCreditTotal - sum(assigned)) * 100) / 100,
+  };
 }
 
 async function uploadStatement(request, env, session, ctx) {
@@ -3464,6 +4809,7 @@ async function uploadStatement(request, env, session, ctx) {
   if (!file || typeof file === 'string') {
     return problem(400, 'DDP-RECON-001', 'Attach the bank statement as CSV or PDF.');
   }
+  const account = statementAccount(form?.get('account'));
 
   const check = validateStatement({ type: file.type, size: file.size, name: file.name });
   if (!check.ok) return problem(400, 'DDP-RECON-001', check.message);
@@ -3486,9 +4832,9 @@ async function uploadStatement(request, env, session, ctx) {
   const total = Math.round(credits.reduce((t, c) => t + c.amount, 0) * 100) / 100;
 
   const created = await env.DB.prepare(
-    `INSERT INTO statement_sessions (created_by, filename, row_count, credit_total, status, created_at)
-     VALUES (?, ?, ?, ?, 'open', ?) RETURNING id`
-  ).bind(session.actor.id, String(file.name ?? '').slice(0, 120), credits.length, total, now).first();
+    `INSERT INTO statement_sessions (created_by, filename, row_count, credit_total, status, account, created_at)
+     VALUES (?, ?, ?, ?, 'open', ?, ?) RETURNING id`
+  ).bind(session.actor.id, String(file.name ?? '').slice(0, 120), credits.length, total, account, now).first();
 
   // Chunked: a year's statement is a few hundred rows and D1 batches are finite.
   for (let i = 0; i < credits.length; i += 50) {
@@ -3498,22 +4844,25 @@ async function uploadStatement(request, env, session, ctx) {
       ).bind(created.id, c.date, c.amount, c.reference, String(c.narration ?? '').slice(0, 300))));
   }
 
-  const report = await reportFor(env, created.id);
+  const report = await reportFor(env, created.id, account);
   await audit(env, session, 'statement.upload',
-    { sessionId: created.id, rows: credits.length, discrepancies: report.discrepancies.length });
+    { sessionId: created.id, account, rows: credits.length, discrepancies: report.discrepancies.length });
 
   return json({ sessionId: created.id, warnings: warnings ?? [], ...report }, { status: 201 });
 }
 
 async function statementReport(env, path) {
   const id = Number(path.split('/')[4]);
-  const row = await env.DB.prepare('SELECT id, status, filename, created_at FROM statement_sessions WHERE id = ?')
+  const row = await env.DB.prepare('SELECT id, status, filename, account, created_at FROM statement_sessions WHERE id = ?')
     .bind(id).first();
   if (!row) return problem(404, 'DDP-RECON-001', 'That reconciliation could not be found.');
   if (row.status !== 'open') {
     return problem(409, 'DDP-RECON-001', 'That reconciliation is closed — the statement has been deleted.');
   }
-  return json({ sessionId: id, filename: row.filename, ...(await reportFor(env, id)) });
+  return json({
+    sessionId: id, filename: row.filename,
+    ...(await reportFor(env, id, statementAccount(row.account))),
+  });
 }
 
 /**
@@ -3526,33 +4875,50 @@ async function statementReport(env, path) {
  */
 async function finishStatement(env, session, path) {
   const id = Number(path.split('/')[4]);
-  const row = await env.DB.prepare('SELECT id, status FROM statement_sessions WHERE id = ?').bind(id).first();
+  const row = await env.DB.prepare('SELECT id, status, account FROM statement_sessions WHERE id = ?').bind(id).first();
   if (!row) return problem(404, 'DDP-RECON-001', 'That reconciliation could not be found.');
   if (row.status !== 'open') return problem(409, 'DDP-RECON-001', 'That reconciliation is already closed.');
 
-  const report = await reportFor(env, id);
+  const account = statementAccount(row.account);
+  const isMaint = account === 'maintenance';
+  const report = await reportFor(env, id, account);
   const now = new Date().toISOString();
+
+  // 0017 gave the verdict table one bill column, pointing at `bills`. 0044
+  // added the maintenance twin rather than widening that key, so which column a
+  // verdict lands in is decided by the account the statement came from — the
+  // same discriminator payment_proofs uses, read off the session instead of the
+  // row. Writing a maint_bills id into `bill_id` would either fail the key or,
+  // worse, silently name an unrelated gas bill with the same number.
+  const billColumn = (billId) => (isMaint
+    ? { billId: null, maintBillId: billId ?? null }
+    : { billId: billId ?? null, maintBillId: null });
 
   const rows = [
     ...report.confirmed.map((c) => ({
-      proofId: c.proofId, billId: c.billId, verdict: 'confirmed',
+      proofId: c.proofId, ...billColumn(c.billId), verdict: 'confirmed',
       reference: c.reference, amount: c.amount, txnDate: c.txnDate, matchedBy: c.how,
     })),
-    ...report.discrepancies.map((d) => ({
-      proofId: d.proofId ?? null, billId: d.billId ?? null, verdict: d.kind,
-      // Narration is deliberately not carried across: it names other members.
-      reference: d.reference ?? null,
-      amount: d.bankAmount ?? d.amount ?? null,
-      txnDate: d.txnDate ?? null, matchedBy: null,
-    })),
+    ...report.discrepancies
+      // An assigned credit already has its row, written the moment the admin
+      // assigned it. Writing a second one here would double-count the money on
+      // every report that reads this table afterwards.
+      .filter((d) => d.assignedTo == null)
+      .map((d) => ({
+        proofId: d.proofId ?? null, ...billColumn(d.billId), verdict: d.kind,
+        // Narration is deliberately not carried across: it names other members.
+        reference: d.reference ?? null,
+        amount: d.bankAmount ?? d.amount ?? null,
+        txnDate: d.txnDate ?? null, matchedBy: null,
+      })),
   ];
 
   for (let i = 0; i < rows.length; i += 50) {
     await env.DB.batch(rows.slice(i, i + 50).map((r) =>
       env.DB.prepare(
-        `INSERT INTO reconciliations (session_id, proof_id, bill_id, verdict, reference, amount, txn_date, matched_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(id, r.proofId, r.billId, r.verdict, r.reference, r.amount, r.txnDate, r.matchedBy, now)));
+        `INSERT INTO reconciliations (session_id, proof_id, bill_id, maint_bill_id, verdict, reference, amount, txn_date, matched_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(id, r.proofId, r.billId, r.maintBillId, r.verdict, r.reference, r.amount, r.txnDate, r.matchedBy, now)));
   }
 
   await env.DB.batch([
@@ -3579,9 +4945,140 @@ async function finishStatement(env, session, path) {
   }
 
   await audit(env, session, 'statement.finish',
-    { sessionId: id, saved: rows.length, deletedRows: report.totals.creditRows });
+    { sessionId: id, account, saved: rows.length, deletedRows: report.totals.creditRows });
 
   return json({ sessionId: id, saved: rows.length, statementDeleted: true, totals: report.totals });
+}
+
+/**
+ * Assign a statement credit to a maintenance bill.
+ *
+ * WHY THIS EXISTS AT ALL. Gas settles itself: a ₹310.40 credit belongs to
+ * whoever was billed ₹310.40, and the matcher says so. Maintenance cannot —
+ * 0042 spells it out, forty-one flats owe the same rupee — so the last step is
+ * a person reading the evidence and saying which flat this money is. This is
+ * that step.
+ *
+ * ONE ADMIN, DELIBERATELY. The credit is the bank's own record that the money
+ * arrived; assigning it is reading that evidence, which is the same act as
+ * approving a payment screenshot and carries the same one signature. Asserting
+ * a payment with NO bank evidence is a different act and 0042 gave it two, on
+ * the offline-payment path. Keeping the two doors apart is what stops either
+ * becoming a way round the other — so this endpoint will only ever settle a
+ * bill against a credit that is ON THE STATEMENT IN FRONT OF IT, checked below
+ * rather than taken from the request.
+ */
+/**
+ * What the reconciliation screen needs before any statement exists.
+ *
+ * The two accounts with their labels, and whichever review is still open. The
+ * open one matters: a treasurer who reloads mid-review should come back to it
+ * rather than to an upload box that looks like their work is gone, and the
+ * screen defaults to gas — the monthly visit — only when nothing is open.
+ */
+async function statementLanding(env) {
+  const [issued, open] = await Promise.all([
+    env.DB.prepare("SELECT 1 AS n FROM maint_quarters WHERE status IN ('issued','locked') LIMIT 1").first(),
+    env.DB.prepare(
+      "SELECT id, account, filename FROM statement_sessions WHERE status = 'open' ORDER BY id DESC LIMIT 1"
+    ).first(),
+  ]);
+  return json({
+    accounts: statementAccountList(env, { maintenanceIssued: Boolean(issued) }),
+    open: open ? { sessionId: open.id, account: statementAccount(open.account), filename: open.filename } : null,
+  });
+}
+
+async function assignCredit(request, env, session, path) {
+  const id = Number(path.split('/')[4]);
+  const body = await readJson(request);
+  const billId = Number(body?.billId);
+
+  const row = await env.DB.prepare('SELECT id, status, account, filename FROM statement_sessions WHERE id = ?')
+    .bind(id).first();
+  if (!row) return problem(404, 'DDP-RECON-001', 'That reconciliation could not be found.');
+  if (row.status !== 'open') {
+    return problem(409, 'DDP-RECON-001', 'That reconciliation is closed — the statement has been deleted.');
+  }
+  if (statementAccount(row.account) !== 'maintenance') {
+    return problem(400, 'DDP-RECON-009',
+      'Credits are assigned by hand only on the maintenance account. A gas credit is matched by its amount.');
+  }
+
+  // THE CREDIT MUST BE ON THE STATEMENT. Not "the client says it is" — the
+  // amount, the date and the reference are looked up in the rows parsed on
+  // upload. Without this the endpoint would be a way for one admin to mark any
+  // bill paid by describing a payment, which is precisely the second-admin door
+  // next to it.
+  const credit = await env.DB.prepare(
+    `SELECT id, amount, txn_date AS txnDate, reference FROM statement_credits
+      WHERE session_id = ? AND txn_date IS ? AND ROUND(amount * 100) = ROUND(? * 100)
+        AND COALESCE(reference, '') = COALESCE(?, '')
+      LIMIT 1`
+  ).bind(id, body?.txnDate ?? null, Number(body?.amount), body?.reference ?? null).first();
+  if (!credit) {
+    return problem(404, 'DDP-RECON-009', 'That credit is not on the statement being reviewed.');
+  }
+
+  const bill = await env.DB.prepare(
+    'SELECT id, flat, quarter, total, status FROM maint_bills WHERE id = ?'
+  ).bind(billId).first();
+  if (!bill) return problem(404, 'DDP-RECON-009', 'That maintenance bill could not be found.');
+  if (!['unpaid', 'initiated', 'awaiting'].includes(bill.status)) {
+    return problem(409, 'DDP-RECON-009',
+      `That bill is already ${bill.status}. Nothing has been changed.`);
+  }
+
+  // A CREDIT SHORT OF THE BILL DOES NOT SETTLE IT. Assigning marks the bill
+  // paid, so letting ₹6,500 clear a ₹7,000 bill would forgive ₹500 with nobody
+  // deciding to — an outcome indistinguishable, a month later, from a waiver
+  // that at least somebody signed. The part payment is real and the flat it
+  // came from is often obvious, which is exactly why the screen still shows it
+  // and says how short it is; what it does not do is close the debt on the
+  // strength of it. An overpayment is allowed through: the surplus is an
+  // advance, which 0042 gave its own table and its own two signatures.
+  const shortfall = Math.round(((bill.total ?? 0) - credit.amount) * 100) / 100;
+  if (shortfall > 0) {
+    return problem(409, 'DDP-RECON-009',
+      `That credit is ₹${shortfall} short of ${bill.flat}'s ₹${bill.total} bill, so it cannot settle it. `
+      + 'Record it as a part payment on the maintenance screen instead.');
+  }
+
+  // One credit settles one bill. Re-tapping a slow button, or two admins
+  // working the same list from two laptops, must not pay the same bill twice
+  // or spend the same credit twice.
+  const spent = await env.DB.prepare(
+    `SELECT id FROM reconciliations
+      WHERE session_id = ? AND assigned_by IS NOT NULL
+        AND (maint_bill_id = ?
+             OR (COALESCE(reference, '') = COALESCE(?, '') AND ROUND(amount * 100) = ROUND(? * 100)
+                 AND txn_date IS ?))
+      LIMIT 1`
+  ).bind(id, billId, credit.reference ?? null, credit.amount, credit.txnDate ?? null).first();
+  if (spent) {
+    return problem(409, 'DDP-RECON-009', 'That credit has already been assigned in this review.');
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE maint_bills SET status = 'paid', paid_at = ?, paid_method = 'bank-statement', paid_reference = ?
+        WHERE id = ? AND status IN ('unpaid', 'initiated', 'awaiting')`
+    ).bind(now, credit.reference ?? `statement ${credit.txnDate ?? ''}`.trim(), billId),
+    env.DB.prepare(
+      `INSERT INTO reconciliations
+         (session_id, proof_id, bill_id, maint_bill_id, verdict, reference, amount, txn_date, matched_by, assigned_by, created_at)
+       VALUES (?, NULL, NULL, ?, 'confirmed', ?, ?, ?, NULL, ?, ?)`
+    ).bind(id, billId, credit.reference ?? null, credit.amount, credit.txnDate ?? null, session.actor.id, now),
+  ]);
+
+  await audit(env, session, 'statement.assign',
+    { sessionId: id, billId, flat: bill.flat, quarter: bill.quarter, amount: credit.amount });
+
+  return json({
+    sessionId: id, filename: row.filename ?? null,
+    ...(await reportFor(env, id, 'maintenance')),
+  });
 }
 
 async function discardStatement(env, session, path) {
@@ -3599,12 +5096,20 @@ async function discardStatement(env, session, path) {
 async function reviewProof(env, session, path, approve) {
   const proofId = Number(path.split('/')[4]);
   const proof = await env.DB.prepare(
-    'SELECT id, bill_id, status FROM payment_proofs WHERE id = ?'
+    'SELECT id, bill_id, maint_bill_id, status FROM payment_proofs WHERE id = ?'
   ).bind(proofId).first();
   if (!proof) return problem(404, 'DDP-PROOF-005', 'That submission could not be found.');
   if (proof.status !== 'pending') {
     return problem(409, 'DDP-PROOF-005', 'That submission has already been reviewed.');
   }
+
+  // Exactly one of the two is set — 0042 CHECKs it — so the table to settle is
+  // decided by which one the row carries rather than by anything the caller
+  // says. The decision itself is identical for both kinds; only the UPDATE
+  // target differs.
+  const isMaint = proof.maint_bill_id != null;
+  const billId = isMaint ? proof.maint_bill_id : proof.bill_id;
+  const table = isMaint ? 'maint_bills' : 'bills';
 
   const now = new Date().toISOString();
   await env.DB.batch([
@@ -3612,7 +5117,8 @@ async function reviewProof(env, session, path, approve) {
       'UPDATE payment_proofs SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?'
     ).bind(approve ? 'approved' : 'rejected', session.actor.id, now, proofId),
     approve
-      ? env.DB.prepare("UPDATE bills SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, proof.bill_id)
+      ? env.DB.prepare(`UPDATE ${table} SET status = 'paid', paid_at = ? WHERE id = ?`)
+          .bind(now, billId)
       // Rejection returns the bill to 'unpaid' (B13). It used to return it to
       // 'initiated', which the cron held rather than charged — so a resident
       // whose screenshot was rejected once became permanently immune to the
@@ -3626,10 +5132,11 @@ async function reviewProof(env, session, path, approve) {
       //
       // claimed_at is deliberately left alone. Their week of hold already ran;
       // clearing it would hand out a fresh one for each rejected attempt.
-      : env.DB.prepare("UPDATE bills SET status = 'unpaid' WHERE id = ?").bind(proof.bill_id),
+      : env.DB.prepare(`UPDATE ${table} SET status = 'unpaid' WHERE id = ?`).bind(billId),
   ]);
 
-  await audit(env, session, approve ? 'proof.approve' : 'proof.reject', { proofId, billId: proof.bill_id });
+  await audit(env, session, approve ? 'proof.approve' : 'proof.reject',
+    { proofId, billId, kind: isMaint ? 'maintenance' : 'gas' });
   return json({ proofId, status: approve ? 'approved' : 'rejected' });
 }
 
@@ -4538,24 +6045,82 @@ async function godPeople(env) {
 }
 
 /** Every bill, newest first, with what the arithmetic would say for each. */
+/**
+ * Every bill for a flat, BOTH KINDS, interleaved and sorted by due date.
+ *
+ * A quarter is a period whose label happens to be a quarter. Treating the two
+ * as different species is what produces two half-screens, so they arrive as one
+ * list with a `kind` on each row and the screen filters it — never a second
+ * table and never a second page.
+ *
+ * The sort is by DUE DATE rather than by label, because '2026-Q4' and '2026-10'
+ * do not sort against each other in any way a reader would recognise: as
+ * strings the quarter sorts before every month of its own year.
+ */
 async function godBills(env, url) {
   const flat = url.searchParams.get('flat');
-  const r = await env.DB.prepare(
-    `SELECT b.id, b.flat, b.period, b.consumption, b.rate_per_kg, b.gas_amount,
-            b.other_charges, b.additional_charges, b.late_fee, b.total, b.status,
-            b.manual_total, b.adjusted_at, b.adjust_reason, o.name AS owner_name
-       FROM bills b LEFT JOIN owners o ON o.id = b.owner_id
-      ${flat ? 'WHERE b.flat = ?' : ''}
-      ORDER BY b.period DESC, b.flat`
-  ).bind(...(flat ? [flat] : [])).all();
+  // Filtered server-side when asked, so a building with years of history does
+  // not send both kinds in full to filter them away in the browser.
+  const kind = url.searchParams.get('kind');
 
-  const bills = (r.results ?? []).map((b) => ({
+  const [gas, maint] = await Promise.all([
+    kind === 'maintenance' ? { results: [] } : env.DB.prepare(
+      `SELECT b.id, b.flat, b.period, b.consumption, b.rate_per_kg, b.gas_amount,
+              b.other_charges, b.additional_charges, b.late_fee, b.total, b.status,
+              b.manual_total, b.adjusted_at, b.adjust_reason, o.name AS owner_name,
+              p.due_date
+         FROM bills b
+         LEFT JOIN owners o ON o.id = b.owner_id
+         LEFT JOIN periods p ON p.period = b.period
+        ${flat ? 'WHERE b.flat = ?' : ''}
+        ORDER BY b.period DESC, b.flat`
+    ).bind(...(flat ? [flat] : [])).all(),
+
+    kind === 'gas' ? { results: [] } : env.DB.prepare(
+      `SELECT b.id, b.flat, b.quarter, b.rate_applied, b.basis, b.late_fee, b.total,
+              b.status, b.manual_total, b.adjusted_at, b.adjust_reason,
+              o.name AS owner_name, q.due_date
+         FROM maint_bills b
+         LEFT JOIN owners o ON o.id = b.owner_id
+         LEFT JOIN maint_quarters q ON q.quarter = b.quarter
+        ${flat ? 'WHERE b.flat = ?' : ''}
+        ORDER BY b.quarter DESC, b.flat`
+    ).bind(...(flat ? [flat] : [])).all(),
+  ]);
+
+  const gasBills = (gas.results ?? []).map((b) => ({
     ...b,
+    kind: 'gas',
+    // The label the column shows. Built here so one row carries one period
+    // name, whichever kind it is, and the screen does not branch to read it.
+    periodLabel: b.period,
+    dueDate: b.due_date ?? null,
     computed: computedTotal(b),
     // Surfaced rather than merely flagged: an override that does not say what
     // the arithmetic wanted is just an unexplained number.
     mismatch: isUnexplainedMismatch(b),
   }));
+
+  const maintBills = (maint.results ?? []).map((b) => ({
+    ...b,
+    kind: 'maintenance',
+    period: b.quarter,
+    periodLabel: describeQuarter(b.quarter),
+    dueDate: b.due_date ?? null,
+    // A maintenance bill is a rate plus a fee. There is no meter arithmetic to
+    // disagree with, so `computed` is that sum and a mismatch means somebody
+    // overrode the total by hand.
+    computed: Number(b.rate_applied ?? 0) + Number(b.late_fee ?? 0),
+    mismatch: Boolean(b.manual_total) && !b.adjust_reason,
+  }));
+
+  const bills = [...gasBills, ...maintBills].sort((a, b) => {
+    const ad = a.dueDate ?? '';
+    const bd = b.dueDate ?? '';
+    if (ad !== bd) return ad < bd ? 1 : -1;   // newest first
+    return String(a.flat).localeCompare(String(b.flat));
+  });
+
   return json({ bills });
 }
 
@@ -5233,6 +6798,17 @@ async function godDiagnostics(env, url) {
       mailConfigured: mailConfigured(env),
       driveConfigured: driveConfigured(env),
       committeeShared: committeeFolderSeparate(env), remote: true,
+    },
+    // PRESENCE, NOT VALUES. checkMaintPayee reports only the NAMES of missing
+    // settings — this report is written to be pasted into a chat window, and an
+    // account number is exactly what must not survive that — so the values
+    // never leave the environment, not even into this object.
+    payee: {
+      MAINT_PAYEE_MODE: env.MAINT_PAYEE_MODE ?? '',
+      MAINT_PAYEE_NAME: env.MAINT_PAYEE_NAME ? 'set' : '',
+      MAINT_ACCOUNT_NUMBER: env.MAINT_ACCOUNT_NUMBER ? 'set' : '',
+      MAINT_IFSC: env.MAINT_IFSC ? 'set' : '',
+      MAINT_UPI_VPA: env.MAINT_UPI_VPA ? 'set' : '',
     },
   };
 

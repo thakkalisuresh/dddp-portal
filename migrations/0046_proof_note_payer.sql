@@ -1,0 +1,23 @@
+-- What the vision model reads off a payment screenshot, beyond the amount and
+-- the reference: the NOTE the payer typed, and the PAYER'S NAME.
+--
+-- Why these are stored and `date`/`payee` are not. The model already returns a
+-- date and a payee, but only at upload, to the resident — nothing persists them,
+-- so the treasurer never sees them. The note is different: for maintenance it is
+-- where the `(2B_MAINT_Q4_26)` reconciliation string lives, and with identical
+-- amounts across flats of the same kind that string plus the flat is most of
+-- what the treasurer has to match a payment to a bill. The payer name is the
+-- other half — a screenshot that says who sent the money. Both belong in the
+-- treasurer's queue, and the queue reads persisted columns, so they persist.
+--
+-- EXTRACT AND SHOW, nothing more, for now. The bill is still matched on the
+-- amount; the note is displayed, not matched on. Whether a note match is
+-- reliable enough to trust is a question the rehearsal answers before any code
+-- leans on it — a column that is only ever displayed cannot mislead a decision.
+--
+-- Plain ADD COLUMN, deliberately: `payment_proofs` carries the `reconciliations`
+-- foreign key that made 0042 rebuild the table the hard way, and adding a column
+-- needs none of that. Existing rows read NULL, which is the honest value — those
+-- screenshots were never read for a note.
+ALTER TABLE payment_proofs ADD COLUMN note       TEXT;
+ALTER TABLE payment_proofs ADD COLUMN payer_name TEXT;

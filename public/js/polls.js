@@ -19,7 +19,7 @@ import { api, ApiError } from './api.js';
 import { renderNav } from './nav.js';
 import { trackPage, trackAction } from './track.js';
 import { $, el, esc, renderViewBanner, showError, setChildren } from './ui.js';
-import { deadlineLabel, closesIn, stampLabel } from './i18n.js';
+import { deadlineLabel, closesIn, stampLabel, dayLabel, money } from './i18n.js';
 // The SAME rules the Worker enforces, not a second copy of them.
 import { validatePoll, deliveryWarnings, MAX_OPTIONS } from './poll-rules.js';
 
@@ -90,6 +90,68 @@ function pollRow(p) {
     p.closed ? null : el('p', { class: 'small' }, deadlineLabel(p.closesAt)));
 }
 
+/**
+ * The flat cannot vote because it owes maintenance. Two states, not one.
+ *
+ * THE OPTIONS STAY ON SCREEN, shown but not selectable. Hiding them was the
+ * other option and the user chose this: a flat in arrears is still part of the
+ * building, and it can at least read what the building is deciding.
+ *
+ * NAMES THE DEBT AND NEVER THE PERSON, on either side of a let flat. A tenant's
+ * arrears lock the owner's vote, so the one case where naming somebody would be
+ * easiest is the case where it does the most damage.
+ *
+ * THE SECOND STATE HAS NO PAY BUTTON. Their screenshot is already with the
+ * treasurer; offering them a Pay button is how somebody pays twice, and a
+ * duplicate credit is far more work to unpick than a missing one.
+ */
+function lockedCard(p) {
+  const v = p.voting;
+  const claimed = v.reason === 'arrears-claimed';
+  const billId = v.billIds?.[0] ?? null;
+  const quarters = v.quarters?.length ? v.quarters.join(', ') : null;
+
+  // "including the late fee" only where there IS one. A resident told their
+  // ₹9,750 includes a fee that was waived brings the screenshot to a meeting.
+  const detail = [
+    quarters,
+    v.owed ? money(v.owed) : null,
+    claimed && v.claimedAt ? `screenshot uploaded ${dayLabel(v.claimedAt)}` : null,
+    !claimed && v.lateFee ? 'including the late fee' : null,
+  ].filter(Boolean).join(' · ');
+
+  return el('div', { class: 'note note--warn stack', style: 'gap:var(--s-3)' },
+    el('p', { class: 'label' },
+      claimed ? 'Your payment is with the treasurer' : 'Voting is locked while maintenance charges are unpaid'),
+    detail ? el('p', { class: 'small' }, detail) : null,
+    claimed
+      ? el('p', { class: 'small' }, 'Voting unlocks as soon as it is confirmed. Nothing more to do.')
+      : null,
+    // The Pay button carries `from`, so the payment sheet comes back to this
+    // poll rather than leaving them somewhere else in the portal.
+    !claimed && billId
+      ? el('a', {
+          class: 'btn btn--sm',
+          href: `/pay?bill=${encodeURIComponent(billId)}&from=${encodeURIComponent(`/polls?id=${p.id}`)}`,
+        }, v.owed ? `Pay ${money(v.owed)}` : 'Pay the maintenance')
+      : null);
+}
+
+/**
+ * The line under the options, in the unpaid state only.
+ *
+ * Under them rather than in the card, because it answers the question the
+ * options themselves raise: they can see the choices, they cannot pick one, and
+ * this is what changes that. The claimed state already says its own version of
+ * this inside the card, and saying it twice would read as nagging.
+ */
+function lockedFooter(p) {
+  const v = p.voting;
+  if (!v || v.canVote || v.reason === 'arrears-claimed') return null;
+  return el('p', { class: 'small muted' },
+    'Your flat can vote as soon as the treasurer confirms the payment.');
+}
+
 /* ── one poll ──────────────────────────────────────────────────────────── */
 
 async function showPoll(id) {
@@ -118,13 +180,17 @@ function draw() {
     el('p', { class: 'notice__body' }, p.body),
     noticeCard(p),
 
-    // A tenant on a poll the committee chose to show them. Said plainly rather
-    // than by greying a control with no explanation beside it.
+    // WHY THE BALLOT IS NOT LIVE, and it is never just a greyed control. Two
+    // different people land here: a tenant, for whom the vote was never theirs,
+    // and an owner whose flat is in arrears, for whom it is a rule with a way
+    // out of it. Telling the second one the first one's sentence would be
+    // wrong, and telling them nothing at all is the dead end this replaces.
     !p.canVote && !p.closed
-      ? note('You can follow this, but the vote is your flat’s owner’s.')
+      ? (p.voting && !p.voting.canVote ? lockedCard(p) : note('You can follow this, but the vote is your flat’s owner’s.'))
       : null,
 
     el('div', { class: 'stack' }, ...p.options.map((o) => option(o, { voting, p }))),
+    !p.canVote && !p.closed && p.voting && !p.voting.canVote ? lockedFooter(p) : null,
 
     voting ? submitBar(p, voted) : null,
     !voting && voted && !p.closed ? castNote(p) : null,
@@ -231,6 +297,35 @@ function results(p) {
           class: `result__bar ${o.votes === top && top > 0 ? 'is-top' : ''}`,
           style: `width:${total ? Math.round((o.votes / total) * 100) : 0}%`,
         })))),
+    // WHY THE TURNOUT IS NOT THE WHOLE STORY. Blocked flats stay in the
+    // denominator — they are entitled voters who were barred, not absent ones —
+    // so a bare "51 of 89" invites an argument the committee then has to have
+    // at the meeting. One line answers it.
+    // THE COMMITTEE'S VIEW OF THE TURNOUT, and only theirs. The server sends
+    // these to nobody else: a resident sees the count per option and a plain
+    // "28 of 42", with blocked flats sitting in that denominator as
+    // non-voters. A published "3 flats could not vote" is a statement about the
+    // building's arrears posted to the building, and on a small poll it is
+    // close to naming them.
+    //
+    // Two different states, said separately. A flat barred by the rule and a
+    // flat the committee excused from it are not the same thing, and one
+    // sentence covering both would label the excused ones as being in arrears.
+    p.result.blockedCount
+      ? note(`${p.result.blockedCount} flat${p.result.blockedCount === 1 ? '' : 's'} could not vote — `
+        + 'maintenance outstanding from a closed quarter.')
+      : null,
+    p.result.exemptCount
+      ? note(`${p.result.exemptCount} flat${p.result.exemptCount === 1 ? '' : 's'} `
+        + 'the committee had excused from that rule voted as normal.')
+      : null,
+    p.result.blockedFlats?.length
+      ? el('p', { class: 'small muted' }, `Blocked: ${p.result.blockedFlats.join(', ')}.`)
+      : null,
+    p.result.exemptFlats?.length
+      ? el('p', { class: 'small muted' }, `Excused: ${p.result.exemptFlats.join(', ')}.`)
+      : null,
+
     // Reported, never resolved. These polls are advisory; inventing a
     // tie-break would be the portal claiming an authority nobody gave it.
     p.result.tied ? note('This poll is tied. The committee will decide from here.') : null);

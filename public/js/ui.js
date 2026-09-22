@@ -72,7 +72,14 @@ const CHIP = {
   overdue:   { cls: 'chip--overdue',  label: 'Overdue' },
   initiated: { cls: 'chip--awaiting', label: 'Checking' },
   awaiting:  { cls: 'chip--awaiting', label: 'Checking' },
-  waived:    { cls: 'chip--neutral',  label: 'Paid' },
+  // "Waived" rather than "Paid". They are different outcomes and the resident
+  // is entitled to know which one happened to them: somebody decided this did
+  // not have to be paid, and a bill labelled Paid that was never paid is a
+  // record nobody can reconcile against their own bank statement.
+  waived:    { cls: 'chip--neutral',  label: 'Waived' },
+  // A bill that should never have existed. Distinct from waived, which forgave
+  // a real debt — this one says there was no debt.
+  cancelled: { cls: 'chip--neutral',  label: 'Cancelled' },
   // Proof statuses, not bill statuses. Without these the fallback is `unpaid`,
   // which labels an approved proof "Unpaid" — worse than no chip at all.
   approved:  { cls: 'chip--paid',     label: 'Approved' },
@@ -81,9 +88,12 @@ const CHIP = {
 };
 
 /** Status always renders as dot + word, never colour alone. */
-export function statusChip(status) {
+export function statusChip(status, label) {
   const conf = CHIP[status] ?? CHIP.unpaid;
-  return el('span', { class: `chip ${conf.cls}` }, conf.label);
+  // A label override keeps the status's colour but says something more specific
+  // — "Paid in advance" wears the paid chip but is not the same news as a
+  // payment made this quarter.
+  return el('span', { class: `chip ${conf.cls}` }, label ?? conf.label);
 }
 
 /**
@@ -160,6 +170,39 @@ export function billBreakdown(bill) {
   if (bill.additional_charges) rows.push(line('Additional charges', money(bill.additional_charges)));
   if (bill.late_fee) {
     const r = line('Late fee', money(bill.late_fee));
+    r.style.color = 'var(--overdue)';
+    rows.push(r);
+  }
+  rows.push(line('Total', money(bill.total), 'total'));
+
+  return el('table', { class: 'table' }, el('tbody', {}, ...rows));
+}
+
+/**
+ * The maintenance twin of billBreakdown.
+ *
+ * A SEPARATE FUNCTION, not a branch inside that one. A maintenance bill has no
+ * consumption, no rate per kilogram and no gas amount, and the alternative —
+ * passing zeroes through the gas breakdown — would print "0.00 kg" on a bill
+ * that never measured anything. A zero is a measurement; absent is the truth.
+ *
+ * Short by design. A maintenance bill really is a rate and possibly a late fee,
+ * and the interesting part is not the arithmetic but WHY this flat was charged
+ * this rate, which the row beneath it answers.
+ */
+export function maintBreakdown(bill, { basis, rateApplied } = {}) {
+  const line = (label, value, cls) =>
+    el('tr', { class: cls }, el('td', {}, label), el('td', { class: 'r' }, value));
+
+  const rows = [
+    // Named rather than left as a bare number. "Quarterly charge" against
+    // ₹9,000 when a neighbour paid ₹7,500 is the commonest maintenance question
+    // there is, and the basis is the answer.
+    line(basis === 'tenant' ? 'Quarterly charge (rented)' : 'Quarterly charge',
+      money(rateApplied ?? bill.total)),
+  ];
+  if (bill.lateFee) {
+    const r = line('Late fee', money(bill.lateFee));
     r.style.color = 'var(--overdue)';
     rows.push(r);
   }

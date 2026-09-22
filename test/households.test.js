@@ -62,9 +62,13 @@ describe('what each person may see of it', () => {
   });
 
   it('still keeps every landlord out of the tenants\' screenshots', () => {
+    // Every owner of a let flat is liable for it, so all of them see the amount
+    // and all of them may pay it. None of them sees the tenant's screenshots —
+    // that is the line the feature exists to draw, and the only one the 2026-09
+    // rule change did not move.
     for (const viewer of [p(1, 'owner'), p(2, 'owner')]) {
       expect(billAccess({ viewer, people: LET }))
-        .toMatchObject({ amounts: true, proofs: false, canPay: false, reason: 'landlord' });
+        .toMatchObject({ amounts: true, proofs: false, canPay: true, reason: 'landlord' });
     }
   });
 

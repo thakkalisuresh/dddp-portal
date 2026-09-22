@@ -664,6 +664,13 @@ function runAvailable(data, have) {
     ...(have('owners') ? checkTenancy(data.owners ?? []) : []),
     ...(have('owners') ? checkExemptions(data.owners ?? []) : []),
     ...(have('owners') ? checkDemoData(data.owners ?? [], data.demoMarker) : []),
+    // THE CHECK THAT WAS NEVER RUN. checkMaintPayee has existed, with five
+    // tests, since the payee became configuration — and nothing called it, so
+    // the one failure it exists to catch went unreported: on staging, with the
+    // preview environment's payee secrets unset, a resident tapping Pay got
+    // "Something went wrong" and the doctor said the building was healthy.
+    // `data.payee` carries PRESENCE, never values; see the call sites.
+    ...(data.payee ? checkMaintPayee(data.payee) : []),
     ...checkDigest({ ...(data.config ?? {}), lastDigestAt: data.lastDigestAt ?? null }),
     ...checkBackup({ ...(data.config ?? {}), lastBackupAt: data.lastBackupAt ?? null }),
   ].sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));
@@ -718,4 +725,57 @@ export function toMarkdown({ findings, errors = [], meta = {} }) {
     'screenshot contents appear here — this is written to be pasted as-is.', '');
 
   return lines.join('\n');
+}
+
+/**
+ * Is the maintenance payee actually configured?
+ *
+ * WHY THIS IS A `fail` AND NOT A `warn`. Every other configuration gap in this
+ * file degrades something. This one produces a Pay button that opens a UPI app
+ * addressed to nobody, and the resident discovers it AFTER they have decided to
+ * pay — which is both the worst moment to find a fault and the one most likely
+ * to be reported as "the portal is broken" rather than as a missing setting.
+ *
+ * `maintPayee` already fails closed at runtime, returning a reason rather than
+ * assembling an address out of the halves it has. This is the other half of
+ * that bargain: the reason has to reach somebody who can fix it, rather than
+ * sitting in a branch nobody reads until a quarter is issued.
+ *
+ * Takes `env` rather than rows, so it is the one check here that reads
+ * configuration instead of data. The secrets themselves are never echoed — the
+ * report is written to be pasted into a chat window, and an account number is
+ * exactly what must not survive that.
+ */
+export function checkMaintPayee(env) {
+  const out = [];
+  const mode = env?.MAINT_PAYEE_MODE === 'upi' ? 'upi' : 'account';
+  const present = (key) => Boolean(String(env?.[key] ?? '').trim());
+
+  const missing = mode === 'upi'
+    ? ['MAINT_UPI_VPA', 'MAINT_PAYEE_NAME'].filter((k) => !present(k))
+    : ['MAINT_ACCOUNT_NUMBER', 'MAINT_IFSC', 'MAINT_PAYEE_NAME'].filter((k) => !present(k));
+
+  if (missing.length) {
+    out.push(finding('fail', 'MAINT-PAYEE', `Maintenance payee is not configured for ${mode} mode`,
+      'Residents cannot pay maintenance: the Pay button has no address to open. '
+      + 'Set the missing values as Pages secrets and REDEPLOY — Pages binds '
+      + 'secrets at deploy time, so setting one without redeploying changes '
+      + 'nothing.',
+      // Names only. Never the values.
+      missing.map((key) => ({ setting: key, mode }))));
+  }
+
+  // The half-configured case worth naming separately: the other mode's values
+  // are present, which almost always means the bank came back and somebody set
+  // the new values without moving the switch.
+  if (!missing.length && mode === 'account' && present('MAINT_UPI_VPA')) {
+    out.push(finding('info', 'MAINT-PAYEE-MODE', 'A maintenance UPI ID is set but not in use',
+      'MAINT_UPI_VPA has a value while the mode is still "account", so residents '
+      + 'are being given the account-number address. If the bank has issued the '
+      + 'UPI ID, switch MAINT_PAYEE_MODE to "upi" — it is the more reliable '
+      + 'route, and PhonePe and Paytm both refuse account-number payments.',
+      [{ mode, vpaSet: true }]));
+  }
+
+  return out;
 }

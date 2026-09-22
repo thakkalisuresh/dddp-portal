@@ -14,6 +14,7 @@
  */
 
 import { extractUtr, isBankComparable } from './proof.js';
+import { parseMaintNote } from './upi.js';
 import { fail, reportError } from './errors.js';
 
 /** A review left open this long is abandoned; the statement should not wait overnight twice. */
@@ -402,18 +403,37 @@ export async function parseStatement({ bytes, type, name = '' }) {
 /**
  * Match credits to proofs, then report what is left over on both sides.
  *
- * Two passes, strongest evidence first:
+ * Three passes, strongest evidence first:
  *   1. the 12-digit RRN, which both sides can carry
- *   2. amount and date, and only when exactly one candidate fits
+ *   2. the maintenance note in the narration, which names a flat AND a quarter
+ *   3. amount and date, and only when exactly one candidate fits
  *
  * A PhonePe or Kiwi reference never reaches the statement, so those proofs
- * always fall to pass 2. That is expected, not a failure.
+ * always fall through pass 1.
+ *
+ * WHEN THE AMOUNT IS NOT A FINGERPRINT. Gas leans, quietly, on totals being
+ * effectively unique per flat: a 310.40 credit belongs to whoever was billed
+ * 310.40, and pass 3 settles most of the month on that. Maintenance has no such
+ * property and 0042 says so in the schema -- forty-one flats owe the same rupee
+ * -- so `amountIdentifiesPayer: false` turns pass 3 OFF entirely. An amount
+ * match alone is never a match there. What is left is the reference, the note,
+ * and an admin reading the evidence; the amount only narrows the list they read.
+ *
+ * That flag is not a preference. Leaving pass 3 on for maintenance would settle
+ * the first ₹9,000 bill the loop happened to reach against the first ₹9,000
+ * credit, and report both as confirmed. Every figure downstream would agree with
+ * itself and be about the wrong flat, and the statement that could have
+ * disproved it is deleted an hour later.
  *
  * @param {object[]} credits  parsed statement credits
  * @param {object[]} proofs   pending proofs joined to their bills
  * @param {object[]} openBills unpaid bills, to suggest an owner for stray credits
+ * @param {boolean}  amountIdentifiesPayer  false for maintenance; see above
  */
-export function reconcile({ credits = [], proofs = [], openBills = [], dayWindow = DEFAULT_DAY_WINDOW } = {}) {
+export function reconcile({
+  credits = [], proofs = [], openBills = [], dayWindow = DEFAULT_DAY_WINDOW,
+  amountIdentifiesPayer = true,
+} = {}) {
   const creditState = credits.map((c, i) => ({ ...c, index: i, proofId: null }));
 
   // Deduplicated by proofId before anything else. A caller whose SQL fans out
@@ -451,18 +471,47 @@ export function reconcile({ credits = [], proofs = [], openBills = [], dayWindow
     }
   }
 
-  // Pass 2 — amount and date, unambiguous only.
+  // Pass 2 — the note the payment sheet put in the narration.
+  //
+  // `(2B_MAINT_Q4_26)` names the flat and the quarter, so this is not a guess
+  // about who paid: it is the payer telling the bank, at the moment they paid.
+  // Still required to be unambiguous — two credits carrying the same note for
+  // the same flat is a real thing worth a human's eyes, not a coin toss.
   for (const p of proofState) {
-    if (p.creditIndex != null) continue;
-    const want = paise(p.claimedAmount ?? p.billed);
-    if (want == null) continue;
-    const on = (p.createdAt ?? '').slice(0, 10);
-    const candidates = creditState.filter((c) =>
-      c.proofId == null && paise(c.amount) === want && daysBetween(c.date, on) <= dayWindow);
+    if (p.creditIndex != null || !p.flat || !p.period) continue;
+    const candidates = creditState.filter((c) => {
+      if (c.proofId != null) return false;
+      const note = parseMaintNote(c.narration);
+      return note != null && note.flat === String(p.flat).toUpperCase() && note.quarter === p.period;
+    });
     if (candidates.length === 1) {
       candidates[0].proofId = p.proofId;
       p.creditIndex = candidates[0].index;
-      p.how = 'amount-and-date';
+      p.how = 'narration';
+    }
+  }
+
+  // Pass 3 — amount and date, unambiguous only. Off where the amount cannot
+  // identify a payer; see the note on `amountIdentifiesPayer` above.
+  //
+  // The `=== 1` guard reads as if it made this safe in general. It does not: it
+  // only checks that one CREDIT fits this proof, never that one PROOF fits that
+  // credit. Where amounts repeat, the first proof in the loop takes the credit
+  // and the rest are reported as unpaid -- which is why maintenance does not
+  // run this pass at all rather than running it more carefully.
+  if (amountIdentifiesPayer) {
+    for (const p of proofState) {
+      if (p.creditIndex != null) continue;
+      const want = paise(p.claimedAmount ?? p.billed);
+      if (want == null) continue;
+      const on = (p.createdAt ?? '').slice(0, 10);
+      const candidates = creditState.filter((c) =>
+        c.proofId == null && paise(c.amount) === want && daysBetween(c.date, on) <= dayWindow);
+      if (candidates.length === 1) {
+        candidates[0].proofId = p.proofId;
+        p.creditIndex = candidates[0].index;
+        p.how = 'amount-and-date';
+      }
     }
   }
 
@@ -510,6 +559,29 @@ export function reconcile({ credits = [], proofs = [], openBills = [], dayWindow
   // pay by UPI and never open the portal at all.
   for (const c of creditState) {
     if (c.proofId != null) continue;
+
+    if (!amountIdentifiesPayer) {
+      const candidates = rankCandidates({ credit: c, openBills });
+      discrepancies.push({
+        kind: 'credit_no_proof', amount: c.amount, txnDate: c.date,
+        reference: c.reference, narration: c.narration,
+        // `suggestions` stays empty on this side ON PURPOSE. It is what the gas
+        // screen turns into one-tap "Mark 3B paid" buttons, and the whole point
+        // here is that no amount earns that tap. The ranked list below is
+        // offered for a person to choose from, which is a different promise.
+        suggestions: [],
+        candidates,
+        detail: candidates.length
+          ? 'Money arrived with no screenshot. The amount alone cannot say whose it is — assign it to a flat.'
+          // NAMES THE ROUTE OUT. A refusal with nowhere to go is the one that
+          // gets worked around by assigning the credit to the nearest plausible
+          // flat, which is how somebody else's payment settles your bill.
+          : 'Nothing owing matches this credit. If you know whose it is, record it '
+            + 'as an offline payment, which a second admin approves.',
+      });
+      continue;
+    }
+
     const suggestions = openBills
       .filter((b) => paise(b.total) === paise(c.amount))
       .slice(0, 5)
@@ -526,6 +598,11 @@ export function reconcile({ credits = [], proofs = [], openBills = [], dayWindow
   return {
     confirmed,
     discrepancies,
+    // Carried out rather than left for the caller to remember. Every screen and
+    // every bucketing downstream has to know whether an amount meant anything
+    // here, and a second copy of "maintenance means false" is a second place
+    // for it to be wrong.
+    amountIdentifiesPayer,
     totals: summarise(creditState, confirmed, discrepancies),
   };
 }
@@ -550,7 +627,9 @@ export function reconcile({ credits = [], proofs = [], openBills = [], dayWindow
  * — whether any unpaid bill has this exact amount — and that is the only signal
  * used here. No new guessing, just the existing answer put where it can be read.
  */
-export function bucketReconciliation({ confirmed = [], discrepancies = [] } = {}) {
+export function bucketReconciliation({
+  confirmed = [], discrepancies = [], amountIdentifiesPayer = true,
+} = {}) {
   const credits = discrepancies.filter((d) => d.kind === 'credit_no_proof');
 
   return {
@@ -561,11 +640,117 @@ export function bucketReconciliation({ confirmed = [], discrepancies = [] } = {}
     needsAttention: discrepancies.filter((d) => d.kind !== 'credit_no_proof'),
     // Almost certainly a resident who paid and never opened the portal: an
     // unpaid bill matches this amount to the paisa. One tap to settle.
-    likelyResident: credits.filter((c) => (c.suggestions?.length ?? 0) > 0),
+    //
+    // Empty by construction where the amount is not a fingerprint, because
+    // `reconcile` leaves `suggestions` empty there. That is the point: on the
+    // maintenance account "an unpaid bill matches this amount" is true of every
+    // flat of that kind and says nothing at all.
+    likelyResident: amountIdentifiesPayer
+      ? credits.filter((c) => (c.suggestions?.length ?? 0) > 0)
+      : [],
+    // The maintenance shape of the same bucket: money that arrived with a
+    // shortlist attached, waiting for an admin to say which flat it belongs to.
+    // A separate name from `likelyResident` rather than a reuse, because the
+    // two make different promises — that one says "this is almost certainly
+    // theirs, one tap"; this one says "here is what it could be, you decide".
+    assignable: amountIdentifiesPayer
+      ? []
+      : credits.filter((c) => !c.assignedTo && (c.candidates?.length ?? 0) > 0),
+    // Already assigned in this review, and still shown. An assignment that
+    // vanished from the screen the moment it was made would leave the treasurer
+    // unable to see what they had just done, or to notice they had done it
+    // twice — and the statement that would have told them is deleted at the end.
+    assigned: credits.filter((c) => c.assignedTo != null),
     // Nothing matches. Bank interest and refunds live here — and so does the
     // resident who underpaid, which is why this is a bucket and not a bin.
-    unmatched: credits.filter((c) => (c.suggestions?.length ?? 0) === 0),
+    unmatched: amountIdentifiesPayer
+      ? credits.filter((c) => (c.suggestions?.length ?? 0) === 0)
+      : credits.filter((c) => !c.assignedTo && (c.candidates?.length ?? 0) === 0),
   };
+}
+
+/** How many ranked candidates a credit offers before the picker takes over. */
+export const MAX_CANDIDATES = 5;
+
+/**
+ * The flats a credit could belong to, best first.
+ *
+ * NOT A MATCH AND NOT A GUESS. This is the shortlist an admin reads, and every
+ * entry on it carries the reason it is there, so the reason is what they are
+ * agreeing with when they tap. A list that ranked silently would be a guess
+ * wearing an ordering.
+ *
+ * The reasons, strongest first:
+ *   note   the narration carries `(2B_MAINT_Q4_26)` — the payer named the flat
+ *          and the quarter themselves, at the bank, at the time
+ *   flat   the narration contains the flat, but not the full note. People type
+ *          "2B maintenance" into the remarks box constantly
+ *   name   the narration contains a distinctive part of the billed person's
+ *          name, which is what a bank-to-bank transfer usually carries
+ *   amount nothing but the sum agrees, which for maintenance is the weakest
+ *          statement there is — it is true of every flat of that kind
+ *
+ * THE CANDIDATE SET IS NOT JUST THE MATCHING AMOUNTS. A bill the narration
+ * names belongs on the list even when the figures disagree, because that is
+ * exactly the underpayer B25 refused to filter away: ₹8,500 arriving against a
+ * ₹9,000 bill from a flat that wrote its number in the remarks is a person to
+ * talk to, not a mystery. `short` says the difference out loud so nobody
+ * assigns it thinking the bill is settled.
+ */
+export function rankCandidates({ credit, openBills = [] }) {
+  const note = parseMaintNote(credit?.narration);
+  const narration = String(credit?.narration ?? '').toUpperCase();
+  const want = paise(credit?.amount);
+
+  const scored = [];
+  for (const b of openBills) {
+    const flat = String(b.flat ?? '').toUpperCase();
+    const sameAmount = want != null && paise(b.total) === want;
+
+    let reason = null;
+    if (note && note.flat === flat && note.quarter === b.period) reason = 'note';
+    else if (flat && mentions(narration, flat)) reason = 'flat';
+    else if (mentionsName(narration, b.name)) reason = 'name';
+    else if (sameAmount) reason = 'amount';
+
+    if (!reason) continue;
+    scored.push({
+      billId: b.id, flat: b.flat, name: b.name, period: b.period, total: b.total,
+      reason,
+      // Rounded to the paisa the same way every other comparison here is, then
+      // back to rupees, so a float remainder never renders as ₹0.00000001 short.
+      short: sameAmount ? 0 : Math.round(((b.total ?? 0) - (credit?.amount ?? 0)) * 100) / 100,
+    });
+  }
+
+  const rank = { note: 0, flat: 1, name: 2, amount: 3 };
+  scored.sort((a, b) =>
+    rank[a.reason] - rank[b.reason]
+    // Then the oldest debt, because that is the one a payment is most likely
+    // settling and the one a treasurer most wants cleared.
+    || String(a.period).localeCompare(String(b.period))
+    || String(a.flat).localeCompare(String(b.flat)));
+  return scored.slice(0, MAX_CANDIDATES);
+}
+
+/** A flat inside a narration, not inside a longer token: `2B`, never `12BQ`. */
+function mentions(narration, token) {
+  if (!token) return false;
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^A-Z0-9])${escaped}([^A-Z0-9]|$)`).test(narration);
+}
+
+/**
+ * A distinctive word of somebody's name inside a narration.
+ *
+ * Four characters and up, so that initials and the Malayalam-transliterated
+ * particles that half the building shares — "K", "P", "Nair" is borderline and
+ * deliberately included — do not match every credit in the file. This only ever
+ * RANKS; a false positive costs an admin one glance, not a misposted payment.
+ */
+function mentionsName(narration, name) {
+  const parts = String(name ?? '').toUpperCase().split(/[^A-Z]+/).filter((w) => w.length >= 4);
+  return parts.some((w) => narration.includes(w));
 }
 
 function findDuplicateReferences(proofs) {

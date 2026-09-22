@@ -573,7 +573,27 @@ export function billAccess({ viewer, people }) {
   // Likewise by party: every owner of a let flat is liable for it, so all of
   // them see the amount. None of them sees the tenant's screenshots.
   if (viewer.relationship === 'owner' && isTenanted(people)) {
-    return { amounts: true, proofs: false, canPay: false, reason: 'landlord' };
+    // THE LANDLORD CAN PAY. Changed 17 September 2026 on the user's decision,
+    // overturning the original rule — which read "a landlord never gets a Pay
+    // button; the bill is the tenant's to settle, and two people paying one
+    // bill is a reconciliation problem nobody wants."
+    //
+    // What changed is that the worry is weaker than it was. `showPayButton`
+    // disappears the moment a proof is uploaded, and because the status lives
+    // on the BILL rather than on the viewer, an upload by either party removes
+    // the button for both — that mechanism did not exist when the rule was
+    // written. The owner is also liable for the debt, and for maintenance an
+    // unpaid quarter costs them their own vote, so refusing them the one
+    // control that fixes it was the worse failure of the two.
+    //
+    // NOT GONE, REDUCED: both parties can still tap Pay before either uploads
+    // anything. Saying on the card that somebody has already opened the payment
+    // sheet would close most of what is left, and is a candidate rather than a
+    // blocker.
+    //
+    // Proofs are untouched. A payment screenshot is a bank record belonging to
+    // whoever uploaded it, and none of the owner's business.
+    return { amounts: true, proofs: false, canPay: true, reason: 'landlord' };
   }
 
   return { amounts: false, proofs: false, canPay: false, reason: 'unrelated' };

@@ -27,7 +27,25 @@ async function init() {
     renderViewBanner(me, { onExit: async () => { await api.god.exit(); location.reload(); } });
     renderNav(me, '/proof');
 
-    bill = me.bill;
+    // me.bill is the resident's GAS bill only — dashboardPayload never joins
+    // maint_bills. A maintenance upload reaches this screen as /proof?bill=<id>
+    // from the pay sheet, so honour that param: load the specific bill, gas OR
+    // maintenance, through the same endpoint the pay sheet uses. resolveBill on
+    // the server guarantees a resident only ever loads their own or their
+    // household's bill, so there is no access check to repeat here. With no
+    // param the gas default stands, unchanged.
+    const billId = new URLSearchParams(location.search).get('bill');
+    if (billId) {
+      try {
+        const sheet = await api.paySheet(billId);
+        bill = sheet.bill;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) bill = null;
+        else throw err;
+      }
+    } else {
+      bill = me.bill;
+    }
     if (!bill) { main.replaceChildren(el('div', { class: 'note note--good' }, 'You have no bill to pay.')); return; }
     if (bill.settled) {
       main.replaceChildren(el('div', { class: 'note note--good' },
@@ -71,7 +89,7 @@ function render() {
 
   main.replaceChildren(
     el('div', { class: 'stack', style: 'gap:var(--s-2)' },
-      el('p', { class: 'label' }, periodLabel(bill.period)),
+      el('p', { class: 'label' }, bill.kind === 'maintenance' ? bill.periodLabel : periodLabel(bill.period)),
       el('h1', {}, `Upload proof of ${money(bill.total)}`),
       el('p', { class: 'muted small' },
         'A photo or screenshot from your UPI app. The treasurer checks it against the bank statement.')),

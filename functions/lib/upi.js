@@ -154,6 +154,183 @@ export function buildUpiLinks({ vpa, payee, amount, flat, period, now = new Date
   return links;
 }
 
+/* ── the maintenance payee ────────────────────────────────────────────────
+   Maintenance is paid into a DIFFERENT bank account from gas, and at the time
+   of writing that account has no UPI ID. Both routes are therefore built and
+   the live one is chosen by configuration, so that whichever the bank ends up
+   giving us is a variable change rather than a code change.
+
+   NOTHING HERE IS HARD-CODED, and that is not a style preference: this repo is
+   public. The account number and the IFSC are read from the environment and set
+   as Pages secrets, and no test fixture or default may carry the real ones.   */
+
+/** `upi` once the bank issues a VPA; `account` until then. */
+export function maintPayeeMode(env) {
+  return env?.MAINT_PAYEE_MODE === 'upi' ? 'upi' : 'account';
+}
+
+/**
+ * The address residents actually pay, and what to show beside it.
+ *
+ * In `account` mode the address is ASSEMBLED HERE, at runtime, from the two
+ * halves — `<account>@<IFSC>.ifsc.npci`, NPCI's documented form for paying an
+ * account number directly. Assembling rather than storing the finished string
+ * means neither half is ever written down anywhere but the secret store, and
+ * the diagnostics check can tell "no account configured" from "no IFSC".
+ *
+ * Returns `{ ok: false }` rather than throwing or guessing. A half-configured
+ * payee must surface as a finding an admin can read, never as a Pay button that
+ * opens a UPI app addressed to nobody — which is indistinguishable, from the
+ * resident's side, from the app being broken.
+ */
+export function maintPayee(env) {
+  const mode = maintPayeeMode(env);
+  const payee = String(env?.MAINT_PAYEE_NAME ?? '').trim();
+
+  if (mode === 'upi') {
+    const vpa = String(env?.MAINT_UPI_VPA ?? '').trim();
+    if (!vpa) return { ok: false, mode, reason: 'no-vpa' };
+    if (!payee) return { ok: false, mode, reason: 'no-payee-name' };
+    return { ok: true, mode, vpa, payee, bankDetails: null };
+  }
+
+  const account = String(env?.MAINT_ACCOUNT_NUMBER ?? '').trim();
+  const ifsc = String(env?.MAINT_IFSC ?? '').trim().toUpperCase();
+  if (!account) return { ok: false, mode, reason: 'no-account' };
+  if (!ifsc) return { ok: false, mode, reason: 'no-ifsc' };
+  if (!payee) return { ok: false, mode, reason: 'no-payee-name' };
+
+  return {
+    ok: true,
+    mode,
+    vpa: `${account}@${ifsc}.ifsc.npci`,
+    payee,
+    // Shown beside the button so a resident whose app refuses the address —
+    // PhonePe and Paytm both block account-number payments — has something to
+    // copy into a transfer by hand rather than a dead end.
+    bankDetails: { account, ifsc, name: payee },
+  };
+}
+
+/**
+ * The note that lands on the bank statement: `(2B_MAINT_Q4_26)`.
+ *
+ * THE YEAR IS NOT DECORATION. Gas stamps the day the link was built, which is
+ * unique enough in practice. Maintenance cannot borrow that: the bill is the
+ * same amount for every flat of the same kind, so the unique-paise fingerprint
+ * gas once relied on does not exist here and the note is one of only two things
+ * reconciliation has. `(2B_MAINT_Q4)` without a year repeats every fourth
+ * quarter, and a treasurer looking at two identical credits from the same flat
+ * a year apart would have no way to tell which quarter either one settled.
+ *
+ * Shaped like a label rather than a sentence, because a human reads it in a
+ * statement line: flat, what it is for, the quarter, the year.
+ */
+export function maintNote(flat, quarter) {
+  const m = /^(\d{4})-Q([1-4])$/.exec(String(quarter ?? ''));
+  if (!flat || !m) return undefined;
+  return `(${flat}_MAINT_Q${m[2]}_${m[1].slice(2)})`;
+}
+
+/**
+ * Read a maintenance note back out of a bank statement narration.
+ *
+ * THE INVERSE OF `maintNote`, and deliberately sitting against it: the format
+ * is agreed between the payment sheet that writes it and reconciliation that
+ * reads it, and two copies of that agreement in two files is how one of them
+ * quietly stops matching. Change the shape above and this fails in the same
+ * commit.
+ *
+ * This is the SECOND of the two things reconciliation has for maintenance -- the
+ * first being the reference -- and 0042 is explicit that they are all it has.
+ * A narration carrying `(2B_MAINT_Q4_26)` names the flat AND the quarter, which
+ * is a stronger claim than the amount could ever make, because the amount is
+ * the same rupee for forty-one flats.
+ *
+ * Tolerant about what surrounds it and strict about the note itself: banks pad,
+ * truncate and upper-case narrations freely, so the note is searched for rather
+ * than anchored, but a partial one is not guessed at. Returns null when there
+ * is nothing certain to say.
+ *
+ * The two-digit year is widened to 20xx. This portal did not exist in 1926 and
+ * will be somebody else's problem in 2126.
+ */
+export function parseMaintNote(narration) {
+  const m = /\(\s*([A-Za-z0-9-]{1,10})_MAINT_Q([1-4])_(\d{2})\s*\)/i.exec(String(narration ?? ''));
+  if (!m) return null;
+  return { flat: m[1].toUpperCase(), quarter: `20${m[3]}-Q${m[2]}` };
+}
+
+/**
+ * What to show beside "Maintenance" on the reconciliation account picker.
+ *
+ * LAST FOUR DIGITS, NEVER MORE, and never the IFSC. The whole reason the
+ * account and the IFSC are secrets rather than vars is that this repository is
+ * public; a helper that renders them in full on an admin screen would put them
+ * one screenshot away from being public too. Four digits are enough for a
+ * treasurer to tell which of two statements they are holding, which is the only
+ * question this line exists to answer.
+ *
+ * Returns null when the payee is not configured yet, so the picker can say so
+ * rather than drawing a blank second line nobody can interpret.
+ */
+export function maintAccountHint(env) {
+  const payee = maintPayee(env);
+  if (!payee.ok) return null;
+  if (payee.mode === 'upi') return payee.vpa;
+  const digits = String(env?.MAINT_ACCOUNT_NUMBER ?? '').replace(/\D/g, '');
+  return digits.length >= 4 ? `the account ending ${digits.slice(-4)}` : null;
+}
+
+/**
+ * The pay links for a maintenance bill.
+ *
+ * Deliberately thin over buildUpiLinks: the platform quirks it handles — the
+ * missing iOS chooser, Chrome's uneven scheme handling, the intent fallback —
+ * are properties of UPI and Android, not of which bill is being paid. The only
+ * things that differ are the payee and the note.
+ *
+ * No `tr`, for the reason buildUpiLinks states at length: without a merchant
+ * code it describes a P2M payment missing half its fields, and PSP apps answer
+ * a payload they cannot classify with a generic refusal that looks, from a
+ * browser, exactly like the app declining to open.
+ */
+export function buildMaintUpiLinks({ env, amount, flat, quarter, fallbackUrl }) {
+  const payee = maintPayee(env);
+  if (!payee.ok) fail('DDP-PAY-004', { reason: payee.reason, mode: payee.mode });
+
+  const qs = queryString(buildUpiParams({
+    vpa: payee.vpa, payee: payee.payee, amount, note: maintNote(flat, quarter),
+  }));
+
+  const links = {
+    generic: `upi://pay?${qs}`,
+    qr: `upi://pay?${qs}`,
+    intent: intentUri(qs, { fallbackUrl }),
+    androidApps: Object.fromEntries(
+      Object.entries(ANDROID_PACKAGES).map(([app, pkg]) => [app, intentUri(qs, { pkg, fallbackUrl })])
+    ),
+  };
+  for (const [app, scheme] of Object.entries(IOS_SCHEMES)) {
+    links[app] = `${scheme}?${qs}`;
+  }
+  return { ...links, mode: payee.mode, bankDetails: payee.bankDetails };
+}
+
+/** What someone types into their own UPI app when no maintenance link worked. */
+export function manualMaintPayment({ env, amount, flat, quarter }) {
+  const payee = maintPayee(env);
+  if (!payee.ok) return { ok: false, reason: payee.reason };
+  return {
+    ok: true,
+    vpa: payee.vpa,
+    payee: payee.payee,
+    amount,
+    note: maintNote(flat, quarter) ?? null,
+    bankDetails: payee.bankDetails,
+  };
+}
+
 /** What someone types into their own UPI app when no link worked. */
 export function manualPayment({ vpa, payee, amount, flat, now = new Date() }) {
   return {

@@ -10,6 +10,24 @@
 <style>
   .sect { padding: var(--s-4); border-bottom: 1px solid var(--border); background: var(--surface);
           display: flex; align-items: center; gap: var(--s-4); flex-wrap: wrap; }
+  /* The account picker. Two bank accounts (0042), two reconciliations, and the
+     control that swaps between them — a segmented control rather than a filter,
+     because the two lists must never be matched against each other. Each button
+     carries the payee as a second line so a treasurer can tell which statement
+     they are holding; 44px minimum, because this is tapped on a phone. */
+  .seg { display: flex; border: 1px solid var(--border); border-radius: var(--radius);
+         overflow: hidden; background: var(--surface); }
+  .seg__btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+              padding: var(--s-2) var(--s-4); min-height: 44px; cursor: pointer;
+              font-family: var(--font-ui); font-size: var(--text-sm); text-align: left;
+              background: transparent; border: none; border-right: 1px solid var(--border);
+              color: var(--ink-muted); }
+  .seg__btn:last-child { border-right: none; }
+  .seg__btn--on { background: var(--accent-wash); color: var(--ink); }
+  .seg__btn b { font-weight: 600; }
+  /* Forty flats owe the same rupee, so the picker past the ranked five can be a
+     long list. It must not stretch the action column off the side of a phone. */
+  .qact .input { max-width: 16rem; }
   .drop {
     margin: var(--s-4); padding: var(--s-6) var(--s-4); text-align: center;
     border: 1.5px dashed var(--border); border-radius: var(--radius); background: var(--surface);

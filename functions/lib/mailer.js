@@ -52,11 +52,24 @@ export function mailConfigured(env) {
  * commonest result is a reader shown the plain-text version with the HTML one
  * hanging off it as a stray .html file.
  */
-export function buildRawMessage({ to, from, subject, text, html, attachment = null }) {
+export function buildRawMessage({ to, from, subject, text, html, cc = null, attachment = null }) {
+  // `cc` is a string or an array of them, and it is CC RATHER THAN BCC ON
+  // PURPOSE. A landlord copied on their tenant's maintenance bill is not being
+  // copied secretly — both parties are liable for the same bill and each is
+  // entitled to know the other was told. Bcc would also be the more dangerous
+  // header to learn: this function's whole injection guard exists because a
+  // line break in an address is how an attacker writes `Bcc:` themselves, and
+  // a codebase that emits Bcc legitimately makes that one harder to spot.
+  const ccList = (Array.isArray(cc) ? cc : [cc])
+    .map((a) => String(a ?? '').trim())
+    .filter(Boolean);
+
   // Addresses go into headers verbatim. A line break in one is a header of the
   // sender's choosing (Bcc:), so refuse it here as well as where addresses are
   // written: a row saved before the write-side check still reaches this line.
-  for (const [field, value] of [['to', to], ['from', from]]) {
+  // Every Cc is checked individually — joining first and testing the result
+  // would find the break but could not say which address carried it.
+  for (const [field, value] of [['to', to], ['from', from], ...ccList.map((a) => ['cc', a])]) {
     if (/[\r\n\0]/.test(String(value ?? ''))) {
       throw Object.assign(new Error(`line break in ${field} address`), { code: 'bad-address' });
     }
@@ -68,6 +81,10 @@ export function buildRawMessage({ to, from, subject, text, html, attachment = nu
   const headers = [
     `From: ${from}`,
     `To: ${to}`,
+    // Omitted entirely when there is nobody to copy. An empty `Cc:` header is
+    // legal and some clients render it as a visible blank recipient line, which
+    // on a bill looks like the association failed to tell somebody.
+    ...(ccList.length ? [`Cc: ${ccList.join(', ')}`] : []),
     `Subject: ${encodedSubject}`,
     'MIME-Version: 1.0',
   ];
@@ -234,7 +251,7 @@ export async function mailToken(env) {
  * A token that has expired mid-batch comes back as `gmail-401`, not as a
  * silent failure: mint a fresh one and retry that message.
  */
-export async function sendEmail(env, { to, subject, text, html, attachment = null }, token = null) {
+export async function sendEmail(env, { to, subject, text, html, cc = null, attachment = null }, token = null) {
   if (!mailConfigured(env)) return { sent: false, reason: 'not-configured' };
 
   try {
@@ -248,7 +265,7 @@ export async function sendEmail(env, { to, subject, text, html, attachment = nul
           'content-type': 'application/json',
         },
         body: JSON.stringify({
-          raw: buildRawMessage({ to, from: env.MAIL_FROM, subject, text, html, attachment }),
+          raw: buildRawMessage({ to, from: env.MAIL_FROM, subject, text, html, cc, attachment }),
         }),
       }
     );

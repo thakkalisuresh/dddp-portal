@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   normaliseVisionResult, assessProof, validateUpload, extractUtr, shapeQueue, r2Key, MAX_BYTES,
-  referenceKind, isBankComparable,
+  referenceKind, isBankComparable, proofBucket,
 } from '../functions/lib/proof.js';
 import { safeJson, bytesToBase64 } from '../functions/lib/vision.js';
 import { proofVerdict } from '../public/js/ui.js';
+import { freshDb } from './support/d1.js';
 
 const bill = { total: 329.04 };
 
@@ -25,6 +26,39 @@ describe('reading what the model returned', () => {
     for (const junk of ['unknown', 'Rs.', '', null, 'n/a', 0, -5]) {
       expect(normaliseVisionResult({ amount: junk }).amount, String(junk)).toBe(null);
     }
+  });
+
+  it('reads the payment note and payer name under the keys models actually use', () => {
+    expect(normaliseVisionResult({ note: '2B_MAINT_Q4_26' }).note).toBe('2B_MAINT_Q4_26');
+    expect(normaliseVisionResult({ remarks: '2B_MAINT_Q4_26' }).note).toBe('2B_MAINT_Q4_26');
+    expect(normaliseVisionResult({ message: '2B_MAINT_Q4_26' }).note).toBe('2B_MAINT_Q4_26');
+    expect(normaliseVisionResult({ description: 'rent' }).note).toBe('rent');
+    expect(normaliseVisionResult({ payer_name: 'Asha Nair' }).payer_name).toBe('Asha Nair');
+    expect(normaliseVisionResult({ payerName: 'Asha Nair' }).payer_name).toBe('Asha Nair');
+    expect(normaliseVisionResult({ sender: 'Asha Nair' }).payer_name).toBe('Asha Nair');
+    expect(normaliseVisionResult({ paidBy: 'Asha Nair' }).payer_name).toBe('Asha Nair');
+  });
+
+  it('trims the note and payer name, and blanks read as absent', () => {
+    expect(normaliseVisionResult({ note: '  2B_MAINT_Q4_26  ' }).note).toBe('2B_MAINT_Q4_26');
+    expect(normaliseVisionResult({ payerName: '  Asha Nair ' }).payer_name).toBe('Asha Nair');
+    expect(normaliseVisionResult({ note: '   ' }).note).toBe(null);
+    expect(normaliseVisionResult({ payer_name: '' }).payer_name).toBe(null);
+  });
+
+  it('keeps the note distinct from the utr and the app reference', () => {
+    // The flat reference note must never end up in the fields matching leans on.
+    const r = normaliseVisionResult({
+      amount: 7500, utr: '621932447570', reference: 'T2608051827501900771902',
+      note: '2B_MAINT_Q4_26', payer_name: 'Asha Nair',
+      date: '2026-10-01', payee: 'DDRWA',
+    });
+    expect(r.amount).toBe(7500);
+    expect(r.utr).toBe('621932447570');
+    expect(r.date).toBe('2026-10-01');
+    expect(r.payee).toBe('DDRWA');
+    expect(r.note).toBe('2B_MAINT_Q4_26');
+    expect(r.payer_name).toBe('Asha Nair');
   });
 
   it('pulls a 12-digit UTR out of surrounding text', () => {
@@ -86,8 +120,9 @@ describe('which references can be checked against a bank statement', () => {
   });
 
   it('survives a model returning nothing useful', () => {
-    expect(normaliseVisionResult(null)).toEqual({ amount: null, utr: null, date: null, payee: null });
-    expect(normaliseVisionResult('garbage')).toEqual({ amount: null, utr: null, date: null, payee: null });
+    const empty = { amount: null, utr: null, date: null, payee: null, note: null, payer_name: null };
+    expect(normaliseVisionResult(null)).toEqual(empty);
+    expect(normaliseVisionResult('garbage')).toEqual(empty);
   });
 });
 
@@ -242,11 +277,24 @@ describe('the treasurer queue', () => {
     expect(q.claimedNoProof[0].flat).toBe('5A');
   });
 
+  it('surfaces the payment note and payer name for the treasurer, defaulting to null', () => {
+    const withNote = [
+      { id: 7, maint_bill_id: 70, kind: 'maintenance', flat: '2B', name: 'Anil', period: 'Q4 2026', total: 7500, parsed_amount: 7500, utr: '621932447570', note: '2B_MAINT_Q4_26', payer_name: 'Asha Nair', created_at: 'x' },
+    ];
+    const q = shapeQueue({ proofs: withNote, claimed });
+    expect(q.awaiting[0].note).toBe('2B_MAINT_Q4_26');
+    expect(q.awaiting[0].payerName).toBe('Asha Nair');
+    // A gas proof with no note read falls back to null, not undefined.
+    const plain = shapeQueue({ proofs, claimed });
+    expect(plain.awaiting[0].note).toBeNull();
+    expect(plain.awaiting[0].payerName).toBeNull();
+  });
+
   // A decided proof used to leave the system's view entirely: every query
   // filtered on 'pending', so approving was the last anyone saw of it.
   describe('what was already decided', () => {
     const decided = [
-      { id: 5, bill_id: 15, flat: '9B', name: 'Latha', period: '2026-05', total: 300, parsed_amount: 300, utr: '421877390099', status: 'approved', reviewer: 'Demo Admin', reviewed_at: '2026-06-02T04:00:00Z' },
+      { id: 5, bill_id: 15, flat: '9B', name: 'Latha', period: '2026-05', total: 300, parsed_amount: 300, utr: '421877390099', note: '9B_MAINT_Q4_26', payer_name: 'Latha K', status: 'approved', reviewer: 'Demo Admin', reviewed_at: '2026-06-02T04:00:00Z' },
       { id: 6, bill_id: 16, flat: '3D', name: 'Anju', period: '2026-05', total: 275, parsed_amount: null, utr: null, status: 'rejected', reviewer: 'Demo Admin', reviewed_at: '2026-06-02T05:00:00Z' },
     ];
 
@@ -271,6 +319,14 @@ describe('the treasurer queue', () => {
       const q = shapeQueue({ proofs, claimed, decided });
       expect(q.decided[1].claimedAmount).toBeNull();
     });
+
+    it('keeps the note and payer name on a decided proof, null when unread', () => {
+      const q = shapeQueue({ proofs, claimed, decided });
+      expect(q.decided[0].note).toBe('9B_MAINT_Q4_26');
+      expect(q.decided[0].payerName).toBe('Latha K');
+      expect(q.decided[1].note).toBeNull();
+      expect(q.decided[1].payerName).toBeNull();
+    });
   });
 
   it('copes with an empty month', () => {
@@ -294,5 +350,84 @@ describe('base64 encoding', () => {
     const b64 = bytesToBase64(bytes);
     expect(b64.length).toBeGreaterThan(300_000);
     expect(Buffer.from(b64, 'base64').length).toBe(bytes.length);
+  });
+});
+
+describe('which bucket a proof lives in', () => {
+  const env = { PROOFS: 'gas-bucket', MAINT_PROOFS: 'maint-bucket' };
+
+  it('sends a maintenance proof to MAINT_PROOFS', () => {
+    // A proof carries exactly one of the two bill ids (0042 CHECKs it), so a
+    // non-null maint_bill_id is the whole test the read paths key off.
+    expect(proofBucket(env, { maint_bill_id: 7 })).toBe('maint-bucket');
+  });
+
+  it('sends a gas proof to PROOFS', () => {
+    expect(proofBucket(env, { maint_bill_id: null })).toBe('gas-bucket');
+    // A row with no maint_bill_id column at all is a gas proof too, not a crash.
+    expect(proofBucket(env, {})).toBe('gas-bucket');
+    expect(proofBucket(env, null)).toBe('gas-bucket');
+  });
+});
+
+/* ── note + payer name persist, against the real migrations ───────────────── */
+
+describe('the note and payer name survive the database (0046)', () => {
+  const seed = (db) => {
+    db.exec(`
+      INSERT INTO flats (flat, floor) VALUES ('2B', 2);
+      INSERT INTO owners (id, flat, name, mobile, pw_hash, pw_salt, role, created_at)
+        VALUES (1, '2B', 'Asha Nair', '9000000001', 'x', 'y', 'owner', '2026-09-01');
+      INSERT INTO maint_quarters (quarter, owner_rate, tenant_rate, issue_date, due_date, status, created_at)
+        VALUES ('2026-Q4', 7500, 9000, '2026-10-01', '2026-10-11', 'issued', '2026-09-24');
+      INSERT INTO maint_bills (id, flat, quarter, owner_id, rate_applied, basis, total, status, created_at)
+        VALUES (500, '2B', '2026-Q4', 1, 7500, 'owner', 7500, 'awaiting', '2026-10-01');`);
+  };
+
+  // The columns 0046 added exist and take the values the upload writes.
+  it('stores the note and payer name at the proof INSERT', () => {
+    const db = freshDb();
+    seed(db);
+    db.prepare(
+      `INSERT INTO payment_proofs
+         (maint_bill_id, owner_id, r2_key, image_sha256, utr, parsed_amount, note, payer_name, status, created_at)
+       VALUES (500, 1, 'k', 'h', '621932447570', 7500, '2B_MAINT_Q4_26', 'Asha Nair', 'pending', '2026-10-05')`
+    ).run();
+    const row = db.prepare('SELECT note, payer_name FROM payment_proofs WHERE maint_bill_id = 500').get();
+    expect(row).toMatchObject({ note: '2B_MAINT_Q4_26', payer_name: 'Asha Nair' });
+  });
+
+  // Insert → the exact queue query → shapeQueue, so the round trip the treasurer
+  // sees is what is asserted, not a stand-in for it.
+  it('surfaces them through the queue query and shapeQueue', () => {
+    const db = freshDb();
+    seed(db);
+    db.prepare(
+      `INSERT INTO payment_proofs
+         (maint_bill_id, owner_id, r2_key, image_sha256, utr, parsed_amount, note, payer_name, status, created_at)
+       VALUES (500, 1, 'k', 'h', '621932447570', 7500, '2B_MAINT_Q4_26', 'Asha Nair', 'pending', '2026-10-05')`
+    ).run();
+
+    const proofs = db.prepare(`
+      SELECT p.*,
+             COALESCE(b.flat, mb.flat) AS flat,
+             COALESCE(b.period, mb.quarter) AS period,
+             CASE WHEN mb.id IS NULL THEN 'gas' ELSE 'maintenance' END AS kind,
+             COALESCE(b.total, mb.total) AS total,
+             o.name
+        FROM payment_proofs p
+        LEFT JOIN bills b ON b.id = p.bill_id
+        LEFT JOIN maint_bills mb ON mb.id = p.maint_bill_id
+        LEFT JOIN owners o ON o.id = p.owner_id
+       WHERE p.status = 'pending' AND p.deleted_at IS NULL
+       ORDER BY p.created_at`).all();
+
+    const q = shapeQueue({ proofs });
+    expect(q.awaiting).toHaveLength(1);
+    expect(q.awaiting[0]).toMatchObject({
+      flat: '2B', kind: 'maintenance', note: '2B_MAINT_Q4_26', payerName: 'Asha Nair',
+    });
+    // The reconciliation string was displayed, never folded into the match.
+    expect(q.exactMatches).toEqual([q.awaiting[0].proofId]);
   });
 });

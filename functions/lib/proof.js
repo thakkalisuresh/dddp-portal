@@ -83,7 +83,9 @@ export function isBankComparable(reference) {
  * the value it produces.
  */
 export function normaliseVisionResult(raw) {
-  if (!raw || typeof raw !== 'object') return { amount: null, utr: null, date: null, payee: null };
+  if (!raw || typeof raw !== 'object') {
+    return { amount: null, utr: null, date: null, payee: null, note: null, payer_name: null };
+  }
 
   const pick = (...keys) => {
     for (const k of keys) {
@@ -111,11 +113,25 @@ export function normaliseVisionResult(raw) {
   );
   const utr = utrRaw ? extractUtr(utrRaw) : null;
 
+  // Free text off the screenshot: trimmed, and empty becomes null so a blank
+  // remarks line does not read as a note the payer left.
+  const text = (...keys) => {
+    const v = pick(...keys);
+    if (v == null) return null;
+    const s = String(v).trim();
+    return s === '' ? null : s;
+  };
+
   return {
     amount,
     utr,
     date: pick('date', 'paidOn', 'transactionDate'),
     payee: pick('payee', 'to', 'paidTo', 'merchant'),
+    // The remarks the sender typed — where the (2B_MAINT_Q4_26) reconciliation
+    // string lives. Kept apart from utr and reference on purpose.
+    note: text('note', 'remarks', 'remark', 'message', 'description', 'narration', 'noteToPayee'),
+    // Who SENT the money, not who received it (that is payee).
+    payer_name: text('payer_name', 'payerName', 'payer', 'sender', 'senderName', 'from', 'paidBy', 'fromName'),
   };
 }
 
@@ -182,13 +198,21 @@ export function validateUpload({ type, size }) {
 export function shapeQueue({ proofs = [], claimed = [], decided = [] }) {
   const withProof = proofs.map((p) => ({
     proofId: p.id,
-    billId: p.bill_id,
+    billId: p.bill_id ?? p.maint_bill_id,
+    // Which kind of bill this screenshot answers. ONE QUEUE holds both, so
+    // every row has to say — a ₹7,500 quarter and a ₹240 month look identical
+    // until it does, and the filter on the screen works off this.
+    kind: p.kind ?? 'gas',
     flat: p.flat,
     name: p.name,
     period: p.period,
     billed: p.total,
     claimedAmount: p.parsed_amount,
     utr: p.utr,
+    // Read off the screenshot and shown, never matched on: the remarks the payer
+    // typed (where the flat reference lives) and who sent the money.
+    note: p.note ?? null,
+    payerName: p.payer_name ?? null,
     createdAt: p.created_at,
     matches: p.parsed_amount != null && Math.round(p.parsed_amount * 100) === Math.round(p.total * 100),
     unreadable: p.parsed_amount == null,
@@ -203,6 +227,7 @@ export function shapeQueue({ proofs = [], claimed = [], decided = [] }) {
     // payer's name against the bank statement — no UTR to go on.
     claimedNoProof: claimed.map((b) => ({
       billId: b.id, flat: b.flat, name: b.name, period: b.period,
+      kind: b.kind ?? 'gas',
       billed: b.total, since: b.last_intent,
     })),
     // What was already decided, so a decision can be checked afterwards rather
@@ -210,13 +235,16 @@ export function shapeQueue({ proofs = [], claimed = [], decided = [] }) {
     // rejection with no name attached is not an audit trail.
     decided: decided.map((p) => ({
       proofId: p.id,
-      billId: p.bill_id,
+      billId: p.bill_id ?? p.maint_bill_id,
+      kind: p.kind ?? 'gas',
       flat: p.flat,
       name: p.name,
       period: p.period,
       billed: p.total,
       claimedAmount: p.parsed_amount,
       utr: p.utr,
+      note: p.note ?? null,
+      payerName: p.payer_name ?? null,
       status: p.status,
       reviewer: p.reviewer,
       reviewedAt: p.reviewed_at,
@@ -226,4 +254,18 @@ export function shapeQueue({ proofs = [], claimed = [], decided = [] }) {
 
 export function r2Key(flat, period, hash) {
   return `proofs/${period}/${flat}/${hash.slice(0, 16)}.jpg`;
+}
+
+/**
+ * Which R2 bucket a payment proof's image lives in.
+ *
+ * Maintenance proofs are stored apart from gas: PROOFS is reachable from the
+ * public gas payment path, and the committee wanted the maintenance evidence in
+ * a bucket of its own. A proof carries exactly one of the two bill ids (0042
+ * CHECKs it), so a non-null maint_bill_id is the whole test — the same signal
+ * every read here already keys off. Pass a row with `maint_bill_id`, or at
+ * upload time decide from `isMaint` directly.
+ */
+export function proofBucket(env, row) {
+  return row?.maint_bill_id != null ? env.MAINT_PROOFS : env.PROOFS;
 }
