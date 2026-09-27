@@ -20,7 +20,19 @@ export const ERROR_CODES = {
   'DDP-AUTH-001': { severity: 'warn',  message: 'Login failed — unknown mobile number' },
   'DDP-AUTH-002': { severity: 'warn',  message: 'Login failed — wrong password' },
   'DDP-AUTH-003': { severity: 'warn',  message: 'Login rate limit tripped' },
-  'DDP-AUTH-004': { severity: 'error', message: 'Session token present but no matching session row' },
+  // WARN, not error. This is `resolveSession` finding a `dddp_session` cookie
+  // whose row is gone, and it runs on EVERY /api/ request — public routes
+  // included — so it fires for a not-signed-in visitor merely reloading the
+  // landing page. A cookie outliving its row is normal business: a remember-me
+  // cookie lives 90 days, but the row it points at is swept on expiry, deleted
+  // when another device logs out or the password changes (destroyAllSessionsFor),
+  // and gone entirely after a DB reset. The expired branch just below already
+  // treats the same situation as a quiet logout and never alerts. At `error` this
+  // paged the committee on a stranger's page reload — the same "normal business is
+  // not an error" reasoning that moved DDP-BILL-007 and DDP-PROOF-003 off Telegram.
+  // Kept in the log (warn is recorded, never sent) so a genuine flood is still
+  // countable under god mode without burying the real alerts.
+  'DDP-AUTH-004': { severity: 'warn', message: 'Session token present but no matching session row' },
   'DDP-AUTH-005': { severity: 'error', message: 'Password hash verify threw', planned: true },
   'DDP-AUTH-006': { severity: 'warn',  message: 'Password reset requested for unknown mobile' },
   'DDP-AUTH-007': { severity: 'error', message: 'Impersonated session attempted a credential change' },
