@@ -142,7 +142,7 @@ export default {
     const requestContext = requestContextFor(request);
     env = Object.create(env, { requestContext: { value: requestContext } });
 
-    return withSecurityHeaders(await guard(env, ctx, async () => {
+    const response = await guard(env, ctx, async () => {
       const session = await resolveSession(env, request);
       requestContext.session = session;
       const route = `${request.method} ${path}`;
@@ -685,7 +685,22 @@ export default {
       }
 
       return problem(404, 'DDP-SYS-001', 'No such endpoint.');
-    }));
+    });
+
+    // A dead token (row swept, expired, or an account signed out elsewhere)
+    // would otherwise be re-sent on every request, re-raising its alert and
+    // leaving the device stuck presenting a token that can never resolve. Drop
+    // it here, the same way logout and "signed out elsewhere" do — unless the
+    // handler is already issuing its own cookie (login sets a fresh one), in
+    // which case that Set-Cookie stands.
+    if (requestContext.dropCookie && !response.headers.has('set-cookie')) {
+      const headers = new Headers(response.headers);
+      headers.append('set-cookie', clearCookieHeader());
+      return withSecurityHeaders(new Response(response.body, {
+        status: response.status, statusText: response.statusText, headers,
+      }));
+    }
+    return withSecurityHeaders(response);
   },
 
   async scheduled(event, env, ctx) {

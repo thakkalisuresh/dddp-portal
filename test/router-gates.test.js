@@ -132,3 +132,46 @@ describe('an ordinary session', () => {
     expect(impersonationRefuses(s, 'POST', '/api/admin/late-fee-exemption/bulk')).toBeNull();
   });
 });
+
+/**
+ * A cookie whose session row is gone — swept, expired, or an account signed out
+ * on another device (a password change or god edit ends every session it holds,
+ * but only the device that did it gets a fresh cookie). Without the drop, the
+ * dead token is re-sent on every request: DDP-AUTH-004 fires each time and the
+ * browser never recovers on its own.
+ */
+describe('a cookie whose session row is gone', () => {
+  const cleared = (res) => {
+    const c = res.headers.get('set-cookie') ?? '';
+    return c.includes(COOKIE) && /max-age=0/i.test(c);
+  };
+
+  it('is dropped, so the same dead token is not re-sent', async () => {
+    const env = fakeEnv(null); // the session lookup finds no row
+    const res = await call(env, 'GET', '/api/anything');
+    expect(res.status).toBe(401);
+    expect((await res.json()).error.code).toBe('DDP-AUTH-004');
+    expect(cleared(res)).toBe(true);
+  });
+
+  it('is dropped even on a public route that needed no session at all', async () => {
+    const env = fakeEnv(null);
+    const res = await call(env, 'GET', '/api/public/notices');
+    expect(res.status).toBe(200);
+    expect(cleared(res)).toBe(true);
+  });
+
+  it('still records DDP-AUTH-004 so a genuinely vanished token is visible', async () => {
+    const env = fakeEnv(null);
+    await call(env, 'GET', '/api/public/notices');
+    expect(env.touched.some((sql) =>
+      sql.includes('INSERT INTO error_log'))).toBe(true);
+  });
+
+  it('leaves a live session’s cookie alone', async () => {
+    const env = fakeEnv(sessionRow());
+    const res = await call(env, 'GET', '/api/anything'); // 404, but session resolved
+    expect(res.status).toBe(404);
+    expect(cleared(res)).toBe(false);
+  });
+});
