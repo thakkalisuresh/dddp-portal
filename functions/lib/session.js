@@ -75,6 +75,20 @@ export async function createSession(env, { actorId, subjectId = actorId, mode = 
   return { token, expiresAt: expires, maxAge: ttlSeconds };
 }
 
+/**
+ * A token was presented that will never resolve again — its row is gone, has
+ * expired, or belongs to a deactivated account. Flag the request so the router
+ * drops the cookie. Without this the browser re-sends the dead token on every
+ * request: DDP-AUTH-004 fires again each time (this is the "2 more since the
+ * last alert" burst), and the device stays stuck presenting a token that
+ * cannot work — which is what an admin whose sessions were ended elsewhere (a
+ * password change, a god edit, being signed out on another device) sees when
+ * their phone still holds the 90-day "remember me" cookie.
+ */
+function forgetToken(env) {
+  if (env.requestContext) env.requestContext.dropCookie = true;
+}
+
 /** Resolve a request to { session, actor, subject } or null. */
 export async function resolveSession(env, request) {
   const token = readCookie(request);
@@ -102,10 +116,12 @@ export async function resolveSession(env, request) {
 
   if (!row) {
     await reportError(env, 'DDP-AUTH-004', { tokenPrefix: token.slice(0, 6) });
+    forgetToken(env);
     return null;
   }
   if (new Date(row.expires_at) < new Date()) {
     await destroySession(env, token);
+    forgetToken(env);
     return null;
   }
 
@@ -123,6 +139,7 @@ export async function resolveSession(env, request) {
   if (Number(row.actor_active ?? 1) !== 1) {
     await reportError(env, 'DDP-AUTH-019', { actorId: row.actor_id, tokenPrefix: token.slice(0, 6) });
     await destroySession(env, token);
+    forgetToken(env);
     return null;
   }
 
