@@ -15,7 +15,7 @@ Ask the bot a code and it will explain it.
 | `DDP-AUTH-001` | warn | live | Login failed — unknown mobile number |
 | `DDP-AUTH-002` | warn | live | Login failed — wrong password |
 | `DDP-AUTH-003` | warn | live | Login rate limit tripped |
-| `DDP-AUTH-004` | warn | live | Session token present but no matching session row |
+| `DDP-AUTH-004` | error | live | Session token present but no matching session row |
 | `DDP-AUTH-005` | error | planned | Password hash verify threw |
 | `DDP-AUTH-006` | warn | live | Password reset requested for unknown mobile |
 | `DDP-AUTH-007` | error | live | Impersonated session attempted a credential change |
