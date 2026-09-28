@@ -507,6 +507,75 @@ a.card:focus-visible { outline: var(--focus-ring) solid var(--accent); outline-o
    when the tabs are crowded, and a 22px glyph collapses to a dot. */
 [data-nav="top"] .bottomnav__item svg { flex: 0 0 auto; }
 
+/* DRAWER — a left slide-in panel opened by a ☰ in the top-left of the appbar.
+   The bar element itself becomes the panel; JS (setupDrawer in nav.js) adds the
+   ☰ and the scrim, and owns the open/close, focus trap and inert background. */
+
+/* The ☰, matched to the other appbar controls but square and on the LEFT (no
+   margin-left:auto), ahead of the title. Only ever present in drawer mode —
+   nav.js adds it there and removes it otherwise — so it needs no gating. */
+.appbar__menu {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--surface);
+  background: none;
+  border: 1px solid rgb(255 255 255 / 0.3);
+  border-radius: var(--radius);
+  min-height: 36px;
+  min-width: 36px;
+  padding: var(--s-2);
+  cursor: pointer;
+}
+.appbar__menu:hover { border-color: rgb(255 255 255 / 0.6); }
+
+[data-nav="drawer"] .bottomnav {
+  position: fixed;
+  inset: 0 auto 0 0;                 /* pinned to the full left edge */
+  width: min(80vw, 300px);
+  flex-direction: column;
+  align-items: stretch;
+  background: var(--surface);
+  border-bottom: none;
+  border-right: 1px solid var(--border);
+  padding: var(--s-2) 0;
+  overflow-y: auto;
+  z-index: 200;
+  transform: translateX(-100%);      /* off-screen until opened */
+  transition: transform var(--transition);
+}
+[data-nav="drawer"] .bottomnav.is-open { transform: translateX(0); }
+[data-nav="drawer"] .bottomnav__item {
+  flex: 0 0 auto;
+  justify-content: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  font-size: var(--text-sm);
+  border-bottom: none;
+  /* Current-location marker on the leading edge, where a vertical list reads it. */
+  border-top: none;
+  border-left: 3px solid transparent;
+}
+[data-nav="drawer"] .bottomnav__item.is-current {
+  border-left-color: var(--accent);
+  border-bottom-color: transparent;
+}
+
+/* The scrim dims and swallows clicks to the page behind an open drawer. It stays
+   in the DOM and is made click-through when closed, so there is nothing to hide
+   or show — only an opacity to fade. Decorative: closing by keyboard is Esc, and
+   the background is made `inert` for assistive tech, so the scrim is aria-hidden. */
+.navscrim {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  background: rgb(0 0 0 / 0.4);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition);
+}
+.navscrim.is-open { opacity: 1; pointer-events: auto; }
+
 /* ── support footer ───────────────────────────────────────────────────────
    On every screen, because a fault does not choose a convenient page. Quiet by
    design: it is the answer to a question somebody is already asking, not an

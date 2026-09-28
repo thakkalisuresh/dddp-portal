@@ -31,9 +31,7 @@ const GOD = { href: '/god', label: 'God', icon: 'M12 2l9 5v6c0 5-4 8-9 9-5-1-9-4
 // in step with NAV_LAYOUTS in functions/index.js and the picker in profile.js.
 // `default` and null both mean "no data-nav" — the automatic responsive nav,
 // whose CSS is written as `:root:not([data-nav])` so it is left untouched.
-// `drawer` is deliberately absent here until its own phase wires the panel; a
-// saved 'drawer' falls back to the automatic nav rather than half-rendering.
-const NAV_LAYOUTS = ['bottom', 'top'];
+const NAV_LAYOUTS = ['bottom', 'top', 'drawer'];
 
 /**
  * Reflect the resident's saved menu position onto <html> as `data-nav`, the one
@@ -44,6 +42,113 @@ function applyNavLayout(value) {
   const root = document.documentElement;
   if (NAV_LAYOUTS.includes(value)) root.setAttribute('data-nav', value);
   else root.removeAttribute('data-nav');
+}
+
+/**
+ * The left drawer, and everything a modal panel owes a keyboard and a screen
+ * reader.
+ *
+ * The nav bar itself IS the panel — the same #appnav the other layouts render,
+ * restyled by [data-nav="drawer"] into a fixed left column that slides in. This
+ * adds the two pieces CSS cannot: the ☰ in the appbar and the scrim, and it owns
+ * the behaviour a drawer must have to be usable without a mouse:
+ *
+ *   - focus moves INTO the panel on open and is TRAPPED there (Tab cycles);
+ *   - Escape and a click on the scrim both close it;
+ *   - focus RETURNS to the ☰ on close (or to wherever it was, if that survived);
+ *   - the ☰ carries aria-expanded and aria-controls;
+ *   - the rest of the page is `inert` while open, so neither Tab nor a screen
+ *     reader can wander behind the panel; and the closed, off-screen panel is
+ *     itself inert, so its links are not silently in the tab order.
+ *
+ * Called on every render with whether this page is in drawer mode. When it is
+ * not, any ☰/scrim left from a previous state is removed and the panel's inert
+ * flag cleared, so the other layouts are never touched.
+ */
+function setupDrawer(bar, isDrawer) {
+  const appbar = document.querySelector('.appbar');
+
+  if (!isDrawer || !appbar) {
+    appbar?.querySelector('.appbar__menu')?.remove();
+    document.querySelector('.navscrim')?.remove();
+    bar.classList.remove('is-open');
+    bar.inert = false;
+    return;
+  }
+
+  // The panel is focusable as a last resort (a role with no nav items would
+  // otherwise have nowhere to send focus on open).
+  bar.tabIndex = -1;
+
+  let btn = appbar.querySelector('.appbar__menu');
+  if (!btn) {
+    // Prepended, so it lands ahead of the title AND ahead of any admin-back the
+    // render added a moment ago — the way in belongs at the very left.
+    btn = el('button', {
+      class: 'appbar__menu', type: 'button',
+      'aria-label': 'Menu', 'aria-expanded': 'false', 'aria-controls': 'appnav',
+    }, icon('M3 6h18M3 12h18M3 18h18'));
+    appbar.prepend(btn);
+  }
+
+  let scrim = document.querySelector('.navscrim');
+  if (!scrim) {
+    scrim = el('div', { class: 'navscrim', 'aria-hidden': 'true' });
+    document.body.append(scrim);
+  }
+
+  // A closed drawer starts off-screen and out of reach; only opening lets a
+  // keyboard into it. Guarded so a re-render mid-open does not slam it shut.
+  if (!bar.classList.contains('is-open')) bar.inert = true;
+
+  // Listeners once, like wireLogout — renderNav runs on every page.
+  if (btn.dataset.wired) return;
+  btn.dataset.wired = '1';
+
+  let lastFocus = null;
+  const background = () =>
+    [...document.body.children].filter((c) => c !== bar && c !== scrim);
+  const focusables = () => bar.querySelectorAll(
+    'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])');
+
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if (e.key !== 'Tab') return;
+    const f = focusables();
+    if (!f.length) { e.preventDefault(); return; }
+    const first = f[0];
+    const last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+
+  function open() {
+    lastFocus = document.activeElement;
+    bar.inert = false;
+    bar.classList.add('is-open');
+    scrim.classList.add('is-open');
+    btn.setAttribute('aria-expanded', 'true');
+    // After focus is safely inside the panel, seal the rest of the page off.
+    (focusables()[0] || bar).focus();
+    background().forEach((c) => { c.inert = true; });
+    document.addEventListener('keydown', onKey, true);
+  }
+
+  function close() {
+    bar.classList.remove('is-open');
+    scrim.classList.remove('is-open');
+    btn.setAttribute('aria-expanded', 'false');
+    background().forEach((c) => { c.inert = false; });
+    bar.inert = true;
+    document.removeEventListener('keydown', onKey, true);
+    // Back where they were, so a keyboard user is not dropped at the top of the
+    // page. The ☰ is the honest fallback if that element is gone.
+    (lastFocus && document.contains(lastFocus) ? lastFocus : btn).focus();
+  }
+
+  btn.addEventListener('click',
+    () => (btn.getAttribute('aria-expanded') === 'true' ? close() : open()));
+  scrim.addEventListener('click', close);
 }
 
 function itemsFor(me) {
@@ -165,6 +270,9 @@ export function renderNav(me, current = location.pathname) {
   } else {
     document.body.classList.add('has-bottomnav');
   }
+  // The drawer turns this same bar into a slide-in panel and adds the ☰; other
+  // layouts get their ☰/scrim torn down here so nothing lingers.
+  setupDrawer(bar, me?.navLayout === 'drawer');
   measureBar(bar);
 }
 
