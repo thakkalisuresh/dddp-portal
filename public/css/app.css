@@ -580,6 +580,33 @@ a.card:focus-visible { outline: var(--focus-ring) solid var(--accent); outline-o
    Set on <html> by setupDrawer and cleared on close. */
 .nav-locked { overflow: hidden; }
 
+/* ── menu-position picker (Me page) ─────────────────────────────────────────
+   Four choices, each a tappable row around a radio. Phase 4 adds a screenshot
+   tile ahead of the text; the row is laid out to take one. */
+.navopts {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s-2);
+}
+.navopt {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+/* The whole row reads as selected, not just the dot. Falls back gracefully: the
+   radio itself still shows the state where :has() is unsupported. */
+.navopt:has(input:checked) { border-color: var(--accent); background: var(--accent-wash); }
+.navopt input { margin-top: 3px; flex: 0 0 auto; }
+.navopt__body { display: flex; flex-direction: column; gap: 2px; }
+.navopt__label { font-family: var(--font-ui); font-weight: 600; }
+.navopt__hint { font-size: var(--text-xs); color: var(--ink-muted); }
+
 /* ── support footer ───────────────────────────────────────────────────────
    On every screen, because a fault does not choose a convenient page. Quiet by
    design: it is the answer to a question somebody is already asking, not an

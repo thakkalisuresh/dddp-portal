@@ -14,6 +14,17 @@ import { checkPassword, describePolicy } from './password-rules.js';
 
 const main = $('#main');
 
+// The menu positions offered here, in step with NAV_LAYOUTS in nav.js and
+// functions/index.js. `default` is a real, stored choice (not NULL) — picking it
+// is how a resident says "keep the automatic one" and stops the one-time prompt.
+// Phase 4 slots a real screenshot tile into each row; the labels stand in for now.
+const NAV_OPTIONS = [
+  { value: 'default', label: 'Automatic', hint: 'Bottom bar on a phone, tabs on a computer. The current setting.' },
+  { value: 'bottom', label: 'Bottom bar', hint: 'A row of buttons along the bottom, within thumb reach.' },
+  { value: 'top', label: 'Top tabs', hint: 'A row of tabs across the top of every screen.' },
+  { value: 'drawer', label: 'Left menu', hint: 'A ☰ button that slides a menu in from the left.' },
+];
+
 trackPage('/profile');
 init();
 
@@ -75,6 +86,8 @@ function render(me) {
       },
     }, 'Save'),
 
+    menuPositionSection(me),
+
     el('hr', { class: 'rule' }),
     el('p', { class: 'label' }, 'Change password'),
     pwStatus,
@@ -104,5 +117,53 @@ function render(me) {
       },
     }, 'Change password'),
     el('p', { class: 'small muted' }, "You'll be signed out on every device.")
+  );
+}
+
+/**
+ * Menu position — the resident's own choice of where the nav sits.
+ *
+ * Its own section, written through PATCH /api/me/nav (api.setNavLayout), NOT the
+ * name/email Save above: the two are unrelated edits, and keeping them apart is
+ * what lets patchProfile keep insisting on a name while this writes a single
+ * field on its own.
+ *
+ * SOFT APPLY. The choice is read live from /api/me on the next page load, so
+ * changing it here does not rearrange the screen underneath the resident — hence
+ * the "next time you open the app" line rather than a redraw.
+ *
+ * `default` shown as selected when nothing has been chosen yet: it is the
+ * behaviour they are already getting. Selecting it (or any option) writes a
+ * value, which is also what retires the one-time prompt.
+ */
+function menuPositionSection(me) {
+  const status = el('div');
+  const current = me.navLayout || 'default';
+
+  return el('div', {},
+    el('hr', { class: 'rule' }),
+    el('p', { class: 'label' }, 'Menu position'),
+    el('p', { class: 'small muted' },
+      'Where the menu sits on your screens. Changes apply the next time you open the app.'),
+    status,
+    el('fieldset', { class: 'navopts' },
+      el('legend', { class: 'visually-hidden' }, 'Menu position'),
+      ...NAV_OPTIONS.map((opt) => el('label', { class: 'navopt' },
+        el('input', {
+          type: 'radio', name: 'navlayout', value: opt.value,
+          checked: opt.value === current ? true : null,
+          onchange: async () => {
+            try {
+              await api.setNavLayout(opt.value);
+              status.replaceChildren(el('div', { class: 'note note--good' },
+                'Saved. It takes effect the next time you open the app.'));
+            } catch (err) { showError(status, err); }
+          },
+        }),
+        // Phase 4 drops a real screenshot tile in here, before the text.
+        el('span', { class: 'navopt__body' },
+          el('span', { class: 'navopt__label' }, opt.label),
+          el('span', { class: 'navopt__hint' }, opt.hint))))
+    )
   );
 }
