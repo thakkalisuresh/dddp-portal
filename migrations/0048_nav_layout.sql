@@ -1,0 +1,23 @@
+-- Per-login menu position.
+--
+-- Which navigation a resident sees is now their own choice, stored per owner
+-- row rather than baked into the session. Four values are allowed in the
+-- application layer (default | bottom | top | drawer); `default` is today's
+-- responsive nav (top tabs on a desktop, a fixed bottom bar on a phone) and is
+-- what every existing resident already has, so choosing it changes nothing.
+--
+-- NULLABLE, NO DEFAULT — and that is the point, not an oversight. A plain
+-- ADD COLUMN is safe here the same way 0047 was: nothing points a foreign key
+-- at `owners.nav_layout`, so no table rebuild is needed. Leaving it nullable
+-- means every existing row reads NULL, and a NULL is the signal the app uses to
+-- show the one-time "where do you want the menu?" prompt on next login. Giving
+-- it a DEFAULT of 'default' would instead mark everyone as having already
+-- chosen, and nobody would ever be asked. The rollout wave IS the wall of
+-- NULLs. New owners are inserted with explicit column lists that omit this one,
+-- so they too are born NULL and get the same prompt on first login.
+--
+-- The four legal values are enforced in patchProfile (functions/index.js), not
+-- by a CHECK constraint here: widening a CHECK later forces the table rebuild
+-- this migration is specifically avoiding, and the write path is the only way a
+-- value reaches this column.
+ALTER TABLE owners ADD COLUMN nav_layout TEXT;

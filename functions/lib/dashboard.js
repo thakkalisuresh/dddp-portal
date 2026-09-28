@@ -292,6 +292,9 @@ export async function dashboardPayload(env, subject, userAgent = '', origin = ''
     // — the badge has to be available on the dashboard, not only on the notice
     // board it points at.
     unreadNotices,
+    // The resident's menu-position choice (migration 0048), so renderNav can set
+    // the layout on page load. NULL until they answer the one-time prompt.
+    navLayout: subject.navLayout ?? null,
   };
 }
 

@@ -27,6 +27,245 @@ const RESIDENT = [
 const ADMIN = { href: '/admin/', label: 'Admin', icon: 'M3 6h18M3 12h18M3 18h18' };
 const GOD = { href: '/god', label: 'God', icon: 'M12 2l9 5v6c0 5-4 8-9 9-5-1-9-4-9-9V7z' };
 
+// The menu positions a resident can choose beyond the automatic default. Kept
+// in step with NAV_LAYOUTS in functions/index.js and the picker in profile.js.
+// `default` and null both mean "no data-nav" — the automatic responsive nav,
+// whose CSS is written as `:root:not([data-nav])` so it is left untouched.
+const NAV_LAYOUTS = ['bottom', 'top', 'drawer'];
+
+// The choices in the one-time login prompt, in step with profile.js's NAV_OPTIONS
+// and the tiles in public/img/. Hints are terser here than on the Me page — a
+// bottom sheet is glanced at, not studied. `default` covers both the Automatic
+// tile and the Skip button (Skip = keep Automatic).
+const NAV_PROMPT_OPTIONS = [
+  { value: 'default', label: 'Automatic', hint: 'Bottom on a phone, top on a computer.' },
+  { value: 'bottom', label: 'Bottom bar', hint: 'Along the bottom, within thumb reach.' },
+  { value: 'top', label: 'Top tabs', hint: 'Across the top of every screen.' },
+  { value: 'drawer', label: 'Left menu', hint: 'A ☰ that opens a panel from the left.' },
+];
+
+/**
+ * Reflect the resident's saved menu position onto <html> as `data-nav`, the one
+ * thing every layout rule in app.css keys off. No recognised value means no
+ * attribute, which is the automatic default.
+ */
+function applyNavLayout(value) {
+  const root = document.documentElement;
+  if (NAV_LAYOUTS.includes(value)) root.setAttribute('data-nav', value);
+  else root.removeAttribute('data-nav');
+}
+
+/**
+ * The left drawer, and everything a modal panel owes a keyboard and a screen
+ * reader.
+ *
+ * The nav bar itself IS the panel — the same #appnav the other layouts render,
+ * restyled by [data-nav="drawer"] into a fixed left column that slides in. This
+ * adds the two pieces CSS cannot: the ☰ in the appbar and the scrim, and it owns
+ * the behaviour a drawer must have to be usable without a mouse:
+ *
+ *   - focus moves INTO the panel on open and is TRAPPED there (Tab cycles);
+ *   - Escape and a click on the scrim both close it;
+ *   - focus RETURNS to the ☰ on close (or to wherever it was, if that survived);
+ *   - the ☰ carries aria-expanded and aria-controls;
+ *   - the rest of the page is `inert` while open, so neither Tab nor a screen
+ *     reader can wander behind the panel; and the closed, off-screen panel is
+ *     itself inert, so its links are not silently in the tab order.
+ *
+ * Called on every render with whether this page is in drawer mode. When it is
+ * not, any ☰/scrim left from a previous state is removed and the panel's inert
+ * flag cleared, so the other layouts are never touched.
+ */
+function setupDrawer(bar, isDrawer) {
+  const appbar = document.querySelector('.appbar');
+
+  if (!isDrawer || !appbar) {
+    appbar?.querySelector('.appbar__menu')?.remove();
+    document.querySelector('.navscrim')?.remove();
+    bar.classList.remove('is-open');
+    bar.inert = false;
+    document.documentElement.classList.remove('nav-locked');
+    return;
+  }
+
+  // The panel is focusable as a last resort (a role with no nav items would
+  // otherwise have nowhere to send focus on open).
+  bar.tabIndex = -1;
+
+  let btn = appbar.querySelector('.appbar__menu');
+  if (!btn) {
+    // Prepended, so it lands ahead of the title AND ahead of any admin-back the
+    // render added a moment ago — the way in belongs at the very left.
+    btn = el('button', {
+      class: 'appbar__menu', type: 'button',
+      'aria-label': 'Menu', 'aria-expanded': 'false', 'aria-controls': 'appnav',
+    }, icon('M3 6h18M3 12h18M3 18h18'));
+    appbar.prepend(btn);
+  }
+
+  let scrim = document.querySelector('.navscrim');
+  if (!scrim) {
+    scrim = el('div', { class: 'navscrim', 'aria-hidden': 'true' });
+    document.body.append(scrim);
+  }
+
+  // A closed drawer starts off-screen and out of reach; only opening lets a
+  // keyboard into it. Guarded so a re-render mid-open does not slam it shut.
+  if (!bar.classList.contains('is-open')) bar.inert = true;
+
+  // Listeners once, like wireLogout — renderNav runs on every page.
+  if (btn.dataset.wired) return;
+  btn.dataset.wired = '1';
+
+  let lastFocus = null;
+  const background = () =>
+    [...document.body.children].filter((c) => c !== bar && c !== scrim);
+  const focusables = () => bar.querySelectorAll(
+    'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])');
+
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if (e.key !== 'Tab') return;
+    const f = focusables();
+    if (!f.length) { e.preventDefault(); return; }
+    const first = f[0];
+    const last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+
+  function open() {
+    lastFocus = document.activeElement;
+    bar.inert = false;
+    bar.classList.add('is-open');
+    scrim.classList.add('is-open');
+    // Lock the page behind the scrim. `inert` stops interaction and focus but not
+    // scrolling — a wheel or a drag could still move the page under the panel —
+    // so the scroll is frozen here and released on close.
+    document.documentElement.classList.add('nav-locked');
+    btn.setAttribute('aria-expanded', 'true');
+    // After focus is safely inside the panel, seal the rest of the page off.
+    (focusables()[0] || bar).focus();
+    background().forEach((c) => { c.inert = true; });
+    document.addEventListener('keydown', onKey, true);
+  }
+
+  function close() {
+    bar.classList.remove('is-open');
+    scrim.classList.remove('is-open');
+    document.documentElement.classList.remove('nav-locked');
+    btn.setAttribute('aria-expanded', 'false');
+    background().forEach((c) => { c.inert = false; });
+    bar.inert = true;
+    document.removeEventListener('keydown', onKey, true);
+    // Back where they were, so a keyboard user is not dropped at the top of the
+    // page. The ☰ is the honest fallback if that element is gone.
+    (lastFocus && document.contains(lastFocus) ? lastFocus : btn).focus();
+  }
+
+  btn.addEventListener('click',
+    () => (btn.getAttribute('aria-expanded') === 'true' ? close() : open()));
+  scrim.addEventListener('click', close);
+}
+
+/**
+ * The one-time "where should the menu go?" bottom sheet.
+ *
+ * Shown ONCE, on the first authenticated page a resident lands on after the
+ * column exists and before they have answered — which is any load while
+ * `navLayout` is null. Any choice, and Skip too, writes a value through
+ * /api/me/nav, so the very next load reads a non-null navLayout and this never
+ * runs again. Keyed to the account, not the device (the value is on their row).
+ *
+ * SUPPRESSED under impersonation, hard. A superadmin viewing as a resident is
+ * still looking at that resident's null navLayout — showing the sheet, and
+ * writing an answer, would set the RESIDENT's row from the admin's screen. The
+ * write endpoint refuses impersonation too; this is the belt to that braces.
+ *
+ * Modal: the background is inert and the page scroll is locked while it is up, so
+ * it is answered rather than navigated around. Skip is the always-present, easy
+ * way out — Escape triggers it — so it is a decision, not a trap.
+ */
+function showNavPrompt(me) {
+  if (me?.navLayout != null) return;              // already chosen — never again
+  if (me?.impersonation?.active) return;          // never write a resident's row while viewing as them
+  if (document.querySelector('.navsheet')) return; // once per load
+
+  const lastFocus = document.activeElement;
+  const scrim = el('div', { class: 'navsheet-scrim', 'aria-hidden': 'true' });
+  const sheet = el('div', {
+    class: 'navsheet', role: 'dialog', 'aria-modal': 'true',
+    'aria-labelledby': 'navsheet-title', tabindex: '-1',
+  });
+
+  const background = () =>
+    [...document.body.children].filter((c) => c !== scrim && c !== sheet);
+  const focusables = () => sheet.querySelectorAll('button:not([disabled]), a[href]');
+
+  function close() {
+    scrim.classList.remove('is-open');
+    sheet.classList.remove('is-open');
+    document.removeEventListener('keydown', onKey, true);
+    background().forEach((c) => { c.inert = false; });
+    document.documentElement.classList.remove('nav-locked');
+    // Let the slide-down finish before the nodes go.
+    setTimeout(() => { scrim.remove(); sheet.remove(); }, 220);
+    if (lastFocus && document.contains(lastFocus)) lastFocus.focus?.();
+  }
+
+  // Choose (or Skip): write the value, then dismiss. On a failed write the sheet
+  // stays and the button re-enables, so a dropped answer is not lost silently.
+  async function choose(value, btn) {
+    if (btn) btn.disabled = true;
+    try { await api.setNavLayout(value); }
+    catch { if (btn) btn.disabled = false; return; }
+    close();
+  }
+
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); choose('default'); return; }
+    if (e.key !== 'Tab') return;
+    const f = focusables();
+    if (!f.length) return;
+    const first = f[0];
+    const last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+
+  sheet.append(
+    el('h2', { class: 'navsheet__title', id: 'navsheet-title' }, 'Where should the menu go?'),
+    el('p', { class: 'navsheet__sub' },
+      'Pick where you want to find it. You can change this anytime in Me → Menu position.'),
+    el('div', { class: 'navsheet__opts' },
+      ...NAV_PROMPT_OPTIONS.map((opt) => el('button', {
+        class: 'navsheet__opt', type: 'button',
+        onclick: (e) => choose(opt.value, e.currentTarget),
+      },
+      el('img', {
+        class: 'navsheet__tile', src: `img/nav-preview-${opt.value}.png`,
+        alt: '', width: '600', height: '400', loading: 'lazy',
+      }),
+      el('span', { class: 'navsheet__optbody' },
+        el('span', { class: 'navsheet__optlabel' }, opt.label),
+        el('span', { class: 'navsheet__opthint' }, opt.hint))))),
+    el('button', {
+      class: 'btn btn--ghost navsheet__skip', type: 'button',
+      onclick: (e) => choose('default', e.currentTarget),
+    }, 'Skip for now'),
+  );
+
+  document.body.append(scrim, sheet);
+  requestAnimationFrame(() => {
+    scrim.classList.add('is-open');
+    sheet.classList.add('is-open');
+  });
+  document.documentElement.classList.add('nav-locked');
+  background().forEach((c) => { c.inert = true; });
+  (focusables()[0] || sheet).focus();
+  document.addEventListener('keydown', onKey, true);
+}
+
 function itemsFor(me) {
   const items = [...RESIDENT];
   if (me?.role === 'admin' || me?.role === 'superadmin') items.push(ADMIN);
@@ -80,6 +319,9 @@ function renderAdminBack(current) {
  * @param current pathname to mark as the active destination
  */
 export function renderNav(me, current = location.pathname) {
+  // Before anything is drawn, so the bar is built into the layout it will keep
+  // rather than flashing the default first.
+  applyNavLayout(me?.navLayout);
   const items = itemsFor(me);
   renderAdminBack(current);
   // Every screen that draws the nav also gets its way out, whether the page
@@ -134,9 +376,22 @@ export function renderNav(me, current = location.pathname) {
             : null));
   }));
 
-  // The bar is fixed, so content needs room or the last row hides behind it.
-  document.body.classList.add('has-bottomnav');
+  // A fixed bottom bar is the only layout that needs the page to reserve room
+  // beneath it. The automatic default (on a phone) and an explicit bottom bar
+  // both do; top tabs — and, later, the drawer — must not, or every page keeps a
+  // phantom strip of padding at its foot.
+  if (me?.navLayout === 'top' || me?.navLayout === 'drawer') {
+    document.body.classList.remove('has-bottomnav');
+  } else {
+    document.body.classList.add('has-bottomnav');
+  }
+  // The drawer turns this same bar into a slide-in panel and adds the ☰; other
+  // layouts get their ☰/scrim torn down here so nothing lingers.
+  setupDrawer(bar, me?.navLayout === 'drawer');
   measureBar(bar);
+  // First run for a resident who has never chosen: ask, once. No-op once a value
+  // is on their row, and suppressed under impersonation.
+  showNavPrompt(me);
 }
 
 /**
