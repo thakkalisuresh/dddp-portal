@@ -603,6 +603,17 @@ a.card:focus-visible { outline: var(--focus-ring) solid var(--accent); outline-o
    radio itself still shows the state where :has() is unsupported. */
 .navopt:has(input:checked) { border-color: var(--accent); background: var(--accent-wash); }
 .navopt input { margin-top: 3px; flex: 0 0 auto; }
+/* The screenshot tile. Fixed width, real 3:2 aspect, so the row height is
+   predictable whatever the shot contains. */
+.navopt__tile {
+  flex: 0 0 auto;
+  width: 104px;
+  height: auto;
+  aspect-ratio: 3 / 2;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  object-fit: cover;
+}
 .navopt__body { display: flex; flex-direction: column; gap: 2px; }
 .navopt__label { font-family: var(--font-ui); font-weight: 600; }
 .navopt__hint { font-size: var(--text-xs); color: var(--ink-muted); }

@@ -17,7 +17,11 @@ const main = $('#main');
 // The menu positions offered here, in step with NAV_LAYOUTS in nav.js and
 // functions/index.js. `default` is a real, stored choice (not NULL) — picking it
 // is how a resident says "keep the automatic one" and stops the one-time prompt.
-// Phase 4 slots a real screenshot tile into each row; the labels stand in for now.
+//
+// Each row shows a REAL screenshot tile, public/img/nav-preview-<value>.png.
+// These are captured, not drawn, so they go stale silently: RE-SHOOT ALL FOUR on
+// any change to the nav or the app bar (both are in the shot), per the recipe in
+// docs/NAV-PREVIEW-CAPTURE.md. `default` is a phone+desktop composite.
 const NAV_OPTIONS = [
   { value: 'default', label: 'Automatic', hint: 'Bottom bar on a phone, tabs on a computer. The current setting.' },
   { value: 'bottom', label: 'Bottom bar', hint: 'A row of buttons along the bottom, within thumb reach.' },
@@ -160,7 +164,12 @@ function menuPositionSection(me) {
             } catch (err) { showError(status, err); }
           },
         }),
-        // Phase 4 drops a real screenshot tile in here, before the text.
+        // Real screenshot, decorative here (alt=''): the label and hint beside it
+        // already name the choice, so an alt would only repeat them to a reader.
+        el('img', {
+          class: 'navopt__tile', src: `img/nav-preview-${opt.value}.png`,
+          alt: '', width: '600', height: '400', loading: 'lazy',
+        }),
         el('span', { class: 'navopt__body' },
           el('span', { class: 'navopt__label' }, opt.label),
           el('span', { class: 'navopt__hint' }, opt.hint))))
