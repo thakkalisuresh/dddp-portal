@@ -27,6 +27,25 @@ const RESIDENT = [
 const ADMIN = { href: '/admin/', label: 'Admin', icon: 'M3 6h18M3 12h18M3 18h18' };
 const GOD = { href: '/god', label: 'God', icon: 'M12 2l9 5v6c0 5-4 8-9 9-5-1-9-4-9-9V7z' };
 
+// The menu positions a resident can choose beyond the automatic default. Kept
+// in step with NAV_LAYOUTS in functions/index.js and the picker in profile.js.
+// `default` and null both mean "no data-nav" — the automatic responsive nav,
+// whose CSS is written as `:root:not([data-nav])` so it is left untouched.
+// `drawer` is deliberately absent here until its own phase wires the panel; a
+// saved 'drawer' falls back to the automatic nav rather than half-rendering.
+const NAV_LAYOUTS = ['bottom', 'top'];
+
+/**
+ * Reflect the resident's saved menu position onto <html> as `data-nav`, the one
+ * thing every layout rule in app.css keys off. No recognised value means no
+ * attribute, which is the automatic default.
+ */
+function applyNavLayout(value) {
+  const root = document.documentElement;
+  if (NAV_LAYOUTS.includes(value)) root.setAttribute('data-nav', value);
+  else root.removeAttribute('data-nav');
+}
+
 function itemsFor(me) {
   const items = [...RESIDENT];
   if (me?.role === 'admin' || me?.role === 'superadmin') items.push(ADMIN);
@@ -80,6 +99,9 @@ function renderAdminBack(current) {
  * @param current pathname to mark as the active destination
  */
 export function renderNav(me, current = location.pathname) {
+  // Before anything is drawn, so the bar is built into the layout it will keep
+  // rather than flashing the default first.
+  applyNavLayout(me?.navLayout);
   const items = itemsFor(me);
   renderAdminBack(current);
   // Every screen that draws the nav also gets its way out, whether the page
@@ -134,8 +156,15 @@ export function renderNav(me, current = location.pathname) {
             : null));
   }));
 
-  // The bar is fixed, so content needs room or the last row hides behind it.
-  document.body.classList.add('has-bottomnav');
+  // A fixed bottom bar is the only layout that needs the page to reserve room
+  // beneath it. The automatic default (on a phone) and an explicit bottom bar
+  // both do; top tabs — and, later, the drawer — must not, or every page keeps a
+  // phantom strip of padding at its foot.
+  if (me?.navLayout === 'top' || me?.navLayout === 'drawer') {
+    document.body.classList.remove('has-bottomnav');
+  } else {
+    document.body.classList.add('has-bottomnav');
+  }
   measureBar(bar);
 }
 

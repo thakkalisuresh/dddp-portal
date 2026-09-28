@@ -408,9 +408,16 @@ a.card:focus-visible { outline: var(--focus-ring) solid var(--accent); outline-o
   font-weight: 600;
 }
 
-/* A touch device small enough to be held: put the bar under the thumb. */
+/* A touch device small enough to be held: put the bar under the thumb.
+
+   GATED behind `:root:not([data-nav])` — this is the AUTOMATIC nav, the one a
+   resident gets until they choose otherwise. The moment renderNav sets
+   `data-nav` on <html> from a saved choice, this whole block stops applying and
+   the explicit rules further down take over. In the default case there is no
+   `data-nav`, so `:root:not([data-nav])` matches and the behaviour is exactly
+   what it always was. */
 @media (pointer: coarse) and (max-width: 820px) {
-  .bottomnav {
+  :root:not([data-nav]) .bottomnav {
     position: fixed;
     inset: auto 0 0 0;
     border-bottom: none;
@@ -418,7 +425,7 @@ a.card:focus-visible { outline: var(--focus-ring) solid var(--accent); outline-o
     /* Clears the iPhone home indicator. */
     padding-bottom: env(safe-area-inset-bottom, 0);
   }
-  .bottomnav__item {
+  :root:not([data-nav]) .bottomnav__item {
     flex: 1;
     flex-direction: column;
     gap: 3px;
@@ -427,11 +434,11 @@ a.card:focus-visible { outline: var(--focus-ring) solid var(--accent); outline-o
     border-bottom: none;
     border-top: 2px solid transparent;
   }
-  .bottomnav__item.is-current { border-top-color: var(--accent); border-bottom-color: transparent; }
+  :root:not([data-nav]) .bottomnav__item.is-current { border-top-color: var(--accent); border-bottom-color: transparent; }
   /* Tighter next to a 12px label, so the pair reads as one word-and-count
      rather than a label with a coin next to it. */
-  .bottomnav__label { gap: 4px; }
-  .bottomnav__badge { min-width: 1rem; line-height: 1rem; }
+  :root:not([data-nav]) .bottomnav__label { gap: 4px; }
+  :root:not([data-nav]) .bottomnav__badge { min-width: 1rem; line-height: 1rem; }
 
   /* A fixed bar hides content unless the page reserves room for it.
 
@@ -444,11 +451,61 @@ a.card:focus-visible { outline: var(--focus-ring) solid var(--accent); outline-o
      A third rule lifted a `.footbar` by the same amount. No stylesheet gave
      that class a position to lift, no page ever carried one, and nothing in
      the repository mentioned it but the rule itself — so it is gone. */
-  .has-bottomnav .page { padding-bottom: calc(var(--s-8) + var(--bottomnav-h, 64px)); }
+  :root:not([data-nav]) .has-bottomnav .page { padding-bottom: calc(var(--s-8) + var(--bottomnav-h, 64px)); }
   /* The support line is the last thing on the page, so on a phone it is the
      thing the fixed bar would sit on top of. */
-  .has-bottomnav .supportfoot { margin-bottom: var(--bottomnav-h, 64px); }
+  :root:not([data-nav]) .has-bottomnav .supportfoot { margin-bottom: var(--bottomnav-h, 64px); }
 }
+
+/* ── chosen menu positions ──────────────────────────────────────────────────
+   These apply ONLY when renderNav has set `data-nav` on <html> from the
+   resident's saved choice (migration 0048). With no choice there is no
+   attribute and none of this matches, so the automatic nav above is left
+   exactly as it was — the default path is pixel-identical.
+
+   The base `.bottomnav` rules (a sticky top row) still supply everything these
+   share; each block below only states what its position changes. */
+
+/* BOTTOM — the thumb bar, on every viewport rather than only a held phone.
+   The same shape the automatic bar takes on a phone, keyed on the choice
+   instead of the pointer. */
+[data-nav="bottom"] .bottomnav {
+  position: fixed;
+  inset: auto 0 0 0;
+  border-bottom: none;
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+[data-nav="bottom"] .bottomnav__item {
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--s-2) var(--s-1);
+  font-size: var(--text-xs);
+  border-bottom: none;
+  border-top: 2px solid transparent;
+}
+[data-nav="bottom"] .bottomnav__item.is-current { border-top-color: var(--accent); border-bottom-color: transparent; }
+[data-nav="bottom"] .bottomnav__label { gap: 4px; }
+[data-nav="bottom"] .bottomnav__badge { min-width: 1rem; line-height: 1rem; }
+/* Reserve the fixed bar's room on every viewport, not only the phone one. */
+[data-nav="bottom"] .page { padding-bottom: calc(var(--s-8) + var(--bottomnav-h, 64px)); }
+[data-nav="bottom"] .supportfoot { margin-bottom: var(--bottomnav-h, 64px); }
+
+/* TOP — the tab row, on every viewport including a held phone. The base is
+   already a sticky top row; here the tabs share the width evenly and, on a phone
+   too narrow for that, the bar scrolls sideways rather than clipping. It reserves
+   no bottom room at all. */
+[data-nav="top"] .bottomnav { overflow-x: auto; }
+[data-nav="top"] .bottomnav__item {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: center;
+  white-space: nowrap;
+}
+/* The icon carries a fixed size; without this it is the first thing flex shrinks
+   when the tabs are crowded, and a 22px glyph collapses to a dot. */
+[data-nav="top"] .bottomnav__item svg { flex: 0 0 auto; }
 
 /* ── support footer ───────────────────────────────────────────────────────
    On every screen, because a fault does not choose a convenient page. Quiet by
