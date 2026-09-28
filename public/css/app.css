@@ -659,6 +659,9 @@ a.card:focus-visible { outline: var(--focus-ring) solid var(--accent); outline-o
   width: 100%;
   padding: var(--s-2) var(--s-3);
   text-align: left;
+  /* Explicit, or iOS Safari paints <button> text its system blue — the label
+     inherits it while the muted hint (which sets its own colour) does not. */
+  color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
