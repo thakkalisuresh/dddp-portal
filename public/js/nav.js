@@ -33,6 +33,17 @@ const GOD = { href: '/god', label: 'God', icon: 'M12 2l9 5v6c0 5-4 8-9 9-5-1-9-4
 // whose CSS is written as `:root:not([data-nav])` so it is left untouched.
 const NAV_LAYOUTS = ['bottom', 'top', 'drawer'];
 
+// The choices in the one-time login prompt, in step with profile.js's NAV_OPTIONS
+// and the tiles in public/img/. Hints are terser here than on the Me page — a
+// bottom sheet is glanced at, not studied. `default` covers both the Automatic
+// tile and the Skip button (Skip = keep Automatic).
+const NAV_PROMPT_OPTIONS = [
+  { value: 'default', label: 'Automatic', hint: 'Bottom on a phone, top on a computer.' },
+  { value: 'bottom', label: 'Bottom bar', hint: 'Along the bottom, within thumb reach.' },
+  { value: 'top', label: 'Top tabs', hint: 'Across the top of every screen.' },
+  { value: 'drawer', label: 'Left menu', hint: 'A ☰ that opens a panel from the left.' },
+];
+
 /**
  * Reflect the resident's saved menu position onto <html> as `data-nav`, the one
  * thing every layout rule in app.css keys off. No recognised value means no
@@ -155,6 +166,104 @@ function setupDrawer(bar, isDrawer) {
   btn.addEventListener('click',
     () => (btn.getAttribute('aria-expanded') === 'true' ? close() : open()));
   scrim.addEventListener('click', close);
+}
+
+/**
+ * The one-time "where should the menu go?" bottom sheet.
+ *
+ * Shown ONCE, on the first authenticated page a resident lands on after the
+ * column exists and before they have answered — which is any load while
+ * `navLayout` is null. Any choice, and Skip too, writes a value through
+ * /api/me/nav, so the very next load reads a non-null navLayout and this never
+ * runs again. Keyed to the account, not the device (the value is on their row).
+ *
+ * SUPPRESSED under impersonation, hard. A superadmin viewing as a resident is
+ * still looking at that resident's null navLayout — showing the sheet, and
+ * writing an answer, would set the RESIDENT's row from the admin's screen. The
+ * write endpoint refuses impersonation too; this is the belt to that braces.
+ *
+ * Modal: the background is inert and the page scroll is locked while it is up, so
+ * it is answered rather than navigated around. Skip is the always-present, easy
+ * way out — Escape triggers it — so it is a decision, not a trap.
+ */
+function showNavPrompt(me) {
+  if (me?.navLayout != null) return;              // already chosen — never again
+  if (me?.impersonation?.active) return;          // never write a resident's row while viewing as them
+  if (document.querySelector('.navsheet')) return; // once per load
+
+  const lastFocus = document.activeElement;
+  const scrim = el('div', { class: 'navsheet-scrim', 'aria-hidden': 'true' });
+  const sheet = el('div', {
+    class: 'navsheet', role: 'dialog', 'aria-modal': 'true',
+    'aria-labelledby': 'navsheet-title', tabindex: '-1',
+  });
+
+  const background = () =>
+    [...document.body.children].filter((c) => c !== scrim && c !== sheet);
+  const focusables = () => sheet.querySelectorAll('button:not([disabled]), a[href]');
+
+  function close() {
+    scrim.classList.remove('is-open');
+    sheet.classList.remove('is-open');
+    document.removeEventListener('keydown', onKey, true);
+    background().forEach((c) => { c.inert = false; });
+    document.documentElement.classList.remove('nav-locked');
+    // Let the slide-down finish before the nodes go.
+    setTimeout(() => { scrim.remove(); sheet.remove(); }, 220);
+    if (lastFocus && document.contains(lastFocus)) lastFocus.focus?.();
+  }
+
+  // Choose (or Skip): write the value, then dismiss. On a failed write the sheet
+  // stays and the button re-enables, so a dropped answer is not lost silently.
+  async function choose(value, btn) {
+    if (btn) btn.disabled = true;
+    try { await api.setNavLayout(value); }
+    catch { if (btn) btn.disabled = false; return; }
+    close();
+  }
+
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); choose('default'); return; }
+    if (e.key !== 'Tab') return;
+    const f = focusables();
+    if (!f.length) return;
+    const first = f[0];
+    const last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+
+  sheet.append(
+    el('h2', { class: 'navsheet__title', id: 'navsheet-title' }, 'Where should the menu go?'),
+    el('p', { class: 'navsheet__sub' },
+      'Pick where you want to find it. You can change this anytime in Me → Menu position.'),
+    el('div', { class: 'navsheet__opts' },
+      ...NAV_PROMPT_OPTIONS.map((opt) => el('button', {
+        class: 'navsheet__opt', type: 'button',
+        onclick: (e) => choose(opt.value, e.currentTarget),
+      },
+      el('img', {
+        class: 'navsheet__tile', src: `img/nav-preview-${opt.value}.png`,
+        alt: '', width: '600', height: '400', loading: 'lazy',
+      }),
+      el('span', { class: 'navsheet__optbody' },
+        el('span', { class: 'navsheet__optlabel' }, opt.label),
+        el('span', { class: 'navsheet__opthint' }, opt.hint))))),
+    el('button', {
+      class: 'btn btn--ghost navsheet__skip', type: 'button',
+      onclick: (e) => choose('default', e.currentTarget),
+    }, 'Skip for now'),
+  );
+
+  document.body.append(scrim, sheet);
+  requestAnimationFrame(() => {
+    scrim.classList.add('is-open');
+    sheet.classList.add('is-open');
+  });
+  document.documentElement.classList.add('nav-locked');
+  background().forEach((c) => { c.inert = true; });
+  (focusables()[0] || sheet).focus();
+  document.addEventListener('keydown', onKey, true);
 }
 
 function itemsFor(me) {
@@ -280,6 +389,9 @@ export function renderNav(me, current = location.pathname) {
   // layouts get their ☰/scrim torn down here so nothing lingers.
   setupDrawer(bar, me?.navLayout === 'drawer');
   measureBar(bar);
+  // First run for a resident who has never chosen: ask, once. No-op once a value
+  // is on their row, and suppressed under impersonation.
+  showNavPrompt(me);
 }
 
 /**

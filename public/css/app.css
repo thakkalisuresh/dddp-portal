@@ -614,9 +614,70 @@ a.card:focus-visible { outline: var(--focus-ring) solid var(--accent); outline-o
   border-radius: var(--radius);
   object-fit: cover;
 }
-.navopt__body { display: flex; flex-direction: column; gap: 2px; }
+/* min-width:0 lets the text column shrink so its lines wrap, instead of taking
+   its content's intrinsic width and pushing the row past a narrow screen. */
+.navopt__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .navopt__label { font-family: var(--font-ui); font-weight: 600; }
 .navopt__hint { font-size: var(--text-xs); color: var(--ink-muted); }
+
+/* ── one-time menu-position prompt (bottom sheet) ────────────────────────────
+   Mounted by renderNav while nav_layout is null; writes on any choice or Skip
+   and is gone next load. Modal, so it uses its own scrim (the page is inert
+   behind it and scroll is locked via .nav-locked). */
+.navsheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgb(0 0 0 / 0.4);
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+.navsheet-scrim.is-open { opacity: 1; }
+.navsheet {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: 310;
+  margin-inline: auto;
+  max-width: 560px;
+  max-height: 85vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: 16px 16px 0 0;
+  padding: var(--s-5) var(--s-4) calc(var(--s-5) + env(safe-area-inset-bottom, 0));
+  box-shadow: 0 -6px 24px rgb(0 0 0 / 0.15);
+  transform: translateY(100%);
+  transition: transform var(--transition);
+}
+.navsheet.is-open { transform: translateY(0); }
+.navsheet__title { margin: 0 0 var(--s-1); font-size: var(--text-lg); }
+.navsheet__sub { margin: 0 0 var(--s-4); font-size: var(--text-sm); color: var(--ink-muted); }
+.navsheet__opts { display: grid; gap: var(--s-2); }
+.navsheet__opt {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  padding: var(--s-2) var(--s-3);
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.navsheet__opt:hover { border-color: var(--accent); }
+.navsheet__tile {
+  flex: 0 0 auto;
+  width: 92px;
+  height: auto;
+  aspect-ratio: 3 / 2;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  object-fit: cover;
+}
+.navsheet__optbody { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.navsheet__optlabel { font-family: var(--font-ui); font-weight: 600; }
+.navsheet__opthint { font-size: var(--text-xs); color: var(--ink-muted); }
+.navsheet__skip { width: 100%; margin-top: var(--s-4); }
 
 /* ── support footer ───────────────────────────────────────────────────────
    On every screen, because a fault does not choose a convenient page. Quiet by
