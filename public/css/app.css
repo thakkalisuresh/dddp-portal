@@ -576,6 +576,10 @@ a.card:focus-visible { outline: var(--focus-ring) solid var(--accent); outline-o
 }
 .navscrim.is-open { opacity: 1; pointer-events: auto; }
 
+/* Frozen while the drawer is open, so the page cannot scroll behind the scrim.
+   Set on <html> by setupDrawer and cleared on close. */
+.nav-locked { overflow: hidden; }
+
 /* ── support footer ───────────────────────────────────────────────────────
    On every screen, because a fault does not choose a convenient page. Quiet by
    design: it is the answer to a question somebody is already asking, not an

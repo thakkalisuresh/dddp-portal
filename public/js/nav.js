@@ -73,6 +73,7 @@ function setupDrawer(bar, isDrawer) {
     document.querySelector('.navscrim')?.remove();
     bar.classList.remove('is-open');
     bar.inert = false;
+    document.documentElement.classList.remove('nav-locked');
     return;
   }
 
@@ -127,6 +128,10 @@ function setupDrawer(bar, isDrawer) {
     bar.inert = false;
     bar.classList.add('is-open');
     scrim.classList.add('is-open');
+    // Lock the page behind the scrim. `inert` stops interaction and focus but not
+    // scrolling — a wheel or a drag could still move the page under the panel —
+    // so the scroll is frozen here and released on close.
+    document.documentElement.classList.add('nav-locked');
     btn.setAttribute('aria-expanded', 'true');
     // After focus is safely inside the panel, seal the rest of the page off.
     (focusables()[0] || bar).focus();
@@ -137,6 +142,7 @@ function setupDrawer(bar, isDrawer) {
   function close() {
     bar.classList.remove('is-open');
     scrim.classList.remove('is-open');
+    document.documentElement.classList.remove('nav-locked');
     btn.setAttribute('aria-expanded', 'false');
     background().forEach((c) => { c.inert = false; });
     bar.inert = true;
