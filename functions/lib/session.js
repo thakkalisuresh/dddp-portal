@@ -90,6 +90,10 @@ export async function resolveSession(env, request) {
             b.name  AS subject_name, b.role AS subject_role, b.flat AS subject_flat,
             b.mobile AS subject_mobile, b.email AS subject_email,
             b.must_change_pw AS subject_must_change_pw,
+            -- The subject's own menu-position choice (migration 0048). NULL until
+            -- they answer the one-time prompt; carried on the subject so /api/me
+            -- serves it and every screen renders the nav the resident picked.
+            b.nav_layout AS subject_nav_layout,
             -- Needed by the tenancy rules. Without them billAccess reads
             -- undefined as "departed" and locks everyone out of their own
             -- dashboard, which is exactly what happened.
@@ -155,6 +159,9 @@ export async function resolveSession(env, request) {
       mustChangePassword: !!row.subject_must_change_pw,
       relationship: row.subject_relationship ?? 'owner',
       active: row.subject_active ?? 1,
+      // Menu position. NULL means "never chose" — the client shows the one-time
+      // prompt. Validated on write in patchNavLayout, never trusted from here.
+      navLayout: row.subject_nav_layout ?? null,
     },
   };
 }

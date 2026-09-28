@@ -99,6 +99,9 @@ export const api = {
 
   onboard:       (body)      => request('POST', '/api/onboard', body),
   updateProfile: (name, email) => request('PATCH', '/api/me', { name, email }),
+  // Menu position (migration 0048). Its own route, not part of updateProfile, so
+  // the login prompt and the Me setting can set it without touching name/email.
+  setNavLayout: (navLayout) => request('PATCH', '/api/me/nav', { navLayout }),
   forgot: (mobile) => request('POST', '/api/forgot', { mobile }),
   reset:  (mobile, code, password) => request('POST', '/api/reset', { mobile, code, password }),
   // The link's way through. No mobile and no code: the token is the proof.

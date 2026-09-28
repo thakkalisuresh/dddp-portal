@@ -205,6 +205,7 @@ export default {
       if (route === 'POST /api/password') return changePassword(request, env, session);
       if (route === 'POST /api/onboard') return onboard(request, env, session);
       if (route === 'PATCH /api/me') return patchProfile(request, env, session);
+      if (route === 'PATCH /api/me/nav') return patchNavLayout(request, env, session);
       if (route === 'POST /api/activity') return recordActivity(request, env, session);
       if (route === 'GET /api/capture')   return captureState(env);
       if (route === 'POST /api/clicks')   return recordClicks(request, env, session);
@@ -2445,6 +2446,43 @@ async function patchProfile(request, env, session) {
     .bind(name, email, session.actor.id).run();
   await audit(env, session, 'profile.update', { name, email });
   return json({ name, email });
+}
+
+/**
+ * The four menu positions a resident may choose (migration 0048).
+ *
+ * `default` is today's responsive nav and is a real stored value, distinct from
+ * NULL: choosing it (or skipping the prompt) writes 'default', which is what
+ * stops the one-time prompt returning. The client mirrors this list in nav.js
+ * and profile.js; keep them in step.
+ */
+const NAV_LAYOUTS = ['default', 'bottom', 'top', 'drawer'];
+
+/**
+ * Set the menu position for the logged-in resident.
+ *
+ * A sub-route of its own, not part of patchProfile, so the name/email form's
+ * "name is required" invariant stays absolute — both writers here (the one-time
+ * login prompt and the Me → Menu position tiles) send only navLayout, and
+ * neither should be able to blank a name by omission.
+ *
+ * REFUSES under impersonation, at the endpoint rather than only hiding the UI:
+ * an admin viewing as a resident who opened the Me setting would otherwise write
+ * their choice into the RESIDENT's row. Same rule patchProfile enforces.
+ */
+async function patchNavLayout(request, env, session) {
+  if (session.impersonating) {
+    return problem(403, 'DDP-AUTH-007', 'Cannot change the menu position while viewing as another resident.');
+  }
+  const body = await readJson(request);
+  const navLayout = body?.navLayout;
+  if (!NAV_LAYOUTS.includes(navLayout)) {
+    return problem(400, 'DDP-NOTICE-003', 'That menu position is not one of the choices.');
+  }
+  await env.DB.prepare('UPDATE owners SET nav_layout = ? WHERE id = ?')
+    .bind(navLayout, session.actor.id).run();
+  await audit(env, session, 'profile.nav_layout', { navLayout });
+  return json({ navLayout });
 }
 
 async function postNotice(request, env, session, ctx) {
